@@ -465,6 +465,26 @@ export default function SmartWorkspaceNameField({
   //     entirely; the input's Enter handler falls through to onPlainEnter.
   const isQueryStale = value.trim().length > 0 && debouncedQuery.trim() !== value.trim()
 
+  // Why: when the typed value is unambiguously a source reference — a
+  // GitHub issue/PR shorthand ("#1234"), a github.com issue/pull URL, or a
+  // Linear identifier ("STA-123") — the user is clearly looking up that
+  // specific source rather than naming a workspace. Once a matching row
+  // appears in the results, snap the highlight onto it so Enter picks it
+  // instead of the typed-text fallback.
+  const sourceIntent = useMemo<'github' | 'linear' | null>(() => {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+    if (/^#\d+$/.test(trimmed) || parseGitHubIssueOrPRLink(trimmed) !== null) {
+      return 'github'
+    }
+    if (/^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(trimmed)) {
+      return 'linear'
+    }
+    return null
+  }, [value])
+
   useEffect(() => {
     if (rows.length === 0) {
       return
@@ -478,10 +498,23 @@ export default function SmartWorkspaceNameField({
       setCommandValue(typedTextRow ? typedTextRow.value : '')
       return
     }
+    if (sourceIntent === 'github') {
+      const githubRow = rows.find((row) => row.kind === 'github')
+      if (githubRow) {
+        setCommandValue(githubRow.value)
+        return
+      }
+    } else if (sourceIntent === 'linear') {
+      const linearRow = rows.find((row) => row.kind === 'linear')
+      if (linearRow) {
+        setCommandValue(linearRow.value)
+        return
+      }
+    }
     setCommandValue((current) =>
       rows.some((row) => row.value === current) ? current : rows[0].value
     )
-  }, [isQueryStale, rows])
+  }, [isQueryStale, rows, sourceIntent])
 
   const loading = githubLoading || branchesLoading || linearLoading
   const ActiveInputIcon = mode === 'text' ? CaseSensitive : loading ? LoaderCircle : Search
