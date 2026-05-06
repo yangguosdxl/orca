@@ -16,6 +16,11 @@ const GEMINI_SILENT_WORKING = '\u23F2' // ⏲
 const GEMINI_IDLE = '\u25C7' // ◇
 const GEMINI_PERMISSION = '\u270B' // ✋
 
+// Why: this list is for OSC-title detection only. It is intentionally narrower
+// than the full set of launchable agents because short names like "amp" are
+// unsafe under the substring-based detector and would classify ordinary shell
+// titles like "timestamp ready" as agent activity. Product telemetry uses the
+// explicit launch/session facts Orca owns, not this inference path.
 export const AGENT_NAMES = ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'aider']
 
 // Why: idle keywords used inside `detectAgentStatusFromTitle` to map titles
@@ -433,4 +438,24 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   }
 
   return null
+}
+
+// Why: shared between the runtime (dispatch guard, tui-idle fallback) and the
+// renderer (agent-ready-wait, new-workspace). A bare shell is the only process
+// type that garbles injected preambles, so this is the negative signal for
+// "is an agent running".
+const SHELL_NAMES = new Set([
+  '',
+  'bash',
+  'zsh',
+  'sh',
+  'fish',
+  'cmd.exe',
+  'powershell.exe',
+  'pwsh.exe',
+  'nu'
+])
+
+export function isShellProcess(processName: string): boolean {
+  return SHELL_NAMES.has(processName.trim().toLowerCase())
 }

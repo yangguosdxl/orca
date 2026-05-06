@@ -9,6 +9,7 @@ const { browserWindowMock, openExternalMock, attachGuestPoliciesMock, isMock } =
 }))
 
 vi.mock('electron', () => ({
+  app: { on: vi.fn(), removeListener: vi.fn() },
   BrowserWindow: browserWindowMock,
   ipcMain: { on: vi.fn(), removeListener: vi.fn() },
   nativeTheme: { shouldUseDarkColors: false },
@@ -493,7 +494,7 @@ describe('createMainWindow', () => {
     syncListener?.({} as never, 1.2)
 
     if (process.platform === 'darwin') {
-      expect(browserWindowInstance.setWindowButtonPosition).toHaveBeenCalledWith({ x: 16, y: 18 })
+      expect(browserWindowInstance.setWindowButtonPosition).toHaveBeenCalledWith({ x: 16, y: 16 })
       return
     }
 

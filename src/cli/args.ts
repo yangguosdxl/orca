@@ -64,7 +64,7 @@ export function supportsBrowserPageFlag(commandPath: string[]): boolean {
   if (['repo', 'worktree', 'terminal'].includes(commandPath[0])) {
     return false
   }
-  return !['tab list', 'tab create'].includes(joined)
+  return !['tab list', 'tab create', 'tab current'].includes(joined)
 }
 
 export function isCommandGroup(commandPath: string[]): boolean {
@@ -82,7 +82,8 @@ export function isCommandGroup(commandPath: string[]): boolean {
         'set',
         'clipboard',
         'dialog',
-        'storage'
+        'storage',
+        'orchestration'
       ].includes(commandPath[0])) ||
     (commandPath.length === 2 &&
       commandPath[0] === 'storage' &&

@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import type { RightSidebarTab, ActivityBarPosition } from '@/store/slices/editor'
 import type { CheckStatus } from '../../../../shared/types'
-import { AGENT_DASHBOARD_ENABLED } from '../../../../shared/constants'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
@@ -22,7 +21,6 @@ import FileExplorer from './FileExplorer'
 import SourceControl from './SourceControl'
 import SearchPanel from './Search'
 import ChecksPanel from './ChecksPanel'
-import DashboardBottomPanel from './DashboardBottomPanel'
 import PortsPanel from './PortsPanel'
 
 const MIN_WIDTH = 220
@@ -125,13 +123,6 @@ function RightSidebarInner(): React.JSX.Element {
   const checksStatus = useAppStore(getActiveChecksStatus)
   const activityBarPosition = useAppStore((s) => s.activityBarPosition)
   const setActivityBarPosition = useAppStore((s) => s.setActivityBarPosition)
-  // Why: the bottom-docked agent dashboard is opt-out via Settings → Agents.
-  // Users who prefer a quieter sidebar can hide the panel without losing any
-  // in-terminal agent status — the per-tab status indicators remain. While
-  // settings are still loading, render the panel so it doesn't flash in once
-  // settings arrive.
-  const showAgentDashboard = useAppStore((s) => s.settings?.showAgentDashboard !== false)
-
   // Why: source control and checks are meaningless for non-git folders.
   // Hide those tabs so the activity bar only shows relevant actions.
   const activeRepo = useRepoById(activeWorktree?.repoId ?? null)
@@ -243,10 +234,11 @@ function RightSidebarInner(): React.JSX.Element {
           that froze the app for seconds on Windows.  Each panel now reacts
           to activeWorktreeId changes via store subscriptions and reset
           effects, keeping the component instance alive across switches. */}
-      {/* Why: the active tab content takes the top of the sidebar. The agent
-          dashboard docks at the bottom regardless of which tab is selected,
-          so users keep a glanceable view of agent status while they browse
-          files, search, etc. */}
+      {/* Why: live agent activity now renders inline inside each workspace
+          card (WorktreeCardAgents, toggled by the 'inline-agents' card
+          property) rather than in a bottom-docked dashboard panel that
+          competed with file Explorer/Search for vertical space. The right
+          sidebar is back to tab-only content. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveTab === 'explorer' && <FileExplorer />}
         {effectiveTab === 'search' && <SearchPanel />}
@@ -254,7 +246,6 @@ function RightSidebarInner(): React.JSX.Element {
         {effectiveTab === 'checks' && <ChecksPanel />}
         {effectiveTab === 'ports' && <PortsPanel />}
       </div>
-      {AGENT_DASHBOARD_ENABLED && showAgentDashboard && <DashboardBottomPanel />}
     </div>
   )
 
@@ -311,7 +302,7 @@ function RightSidebarInner(): React.JSX.Element {
           /* ── Top activity bar: horizontal icon row ── */
           <ContextMenu>
             <ContextMenuTrigger asChild>
-              <div className="flex items-center justify-between border-b border-border h-[42px] min-h-[42px] pl-2 pr-1">
+              <div className="flex items-center justify-between border-b border-border h-[36px] min-h-[36px] pl-2 pr-1">
                 <TooltipProvider delayDuration={400}>
                   <div className="flex items-center">{activityBarIcons}</div>
                   {closeButton}
@@ -325,7 +316,7 @@ function RightSidebarInner(): React.JSX.Element {
           </ContextMenu>
         ) : (
           /* ── Side layout: static title header ── */
-          <div className="flex items-center justify-between h-[42px] min-h-[42px] px-3 border-b border-border">
+          <div className="flex items-center justify-between h-[36px] min-h-[36px] px-3 border-b border-border">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground">
               {visibleItems.find((item) => item.id === effectiveTab)?.title ?? ''}
             </span>
@@ -418,7 +409,7 @@ function ActivityBarButton({
         <button
           className={cn(
             'relative flex items-center justify-center transition-colors',
-            isTop ? 'h-[42px] w-9' : 'w-10 h-10',
+            isTop ? 'h-[36px] w-9' : 'w-10 h-10',
             active ? 'text-foreground' : 'text-muted-foreground/60 hover:text-muted-foreground'
           )}
           onClick={onClick}

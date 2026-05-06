@@ -1,18 +1,12 @@
 /* eslint-disable max-lines */
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import {
-  AGENT_DASHBOARD_ENABLED,
-  DEFAULT_STATUS_BAR_ITEMS,
-  DEFAULT_WORKTREE_CARD_PROPERTIES
-} from '../../shared/constants'
+import { DEFAULT_STATUS_BAR_ITEMS, DEFAULT_WORKTREE_CARD_PROPERTIES } from '../../shared/constants'
 
 import { ArrowLeft, ArrowRight, Minimize2, PanelLeft, PanelRight } from 'lucide-react'
-import {
-  FOCUS_TERMINAL_PANE_EVENT,
-  SYNC_FIT_PANES_EVENT,
-  TOGGLE_TERMINAL_PANE_EXPAND_EVENT
-} from '@/constants/terminal'
+import { SYNC_FIT_PANES_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
+import { buildAppFontFamily } from '@/lib/app-font-family'
+import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -22,15 +16,17 @@ import { useIpcEvents } from './hooks/useIpcEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
 import Sidebar from './components/Sidebar'
 import Terminal from './components/Terminal'
-import { shutdownBufferCaptures } from './components/terminal-pane/TerminalPane'
+import { shutdownBufferCaptures } from './components/terminal-pane/shutdown-buffer-captures'
 import RightSidebar from './components/right-sidebar'
 import { StatusBar } from './components/status-bar/StatusBar'
 import { UpdateCard } from './components/UpdateCard'
 import { StarNagCard } from './components/StarNagCard'
+import { TelemetryFirstLaunchSurface } from './components/TelemetryFirstLaunchSurface'
 import { ZoomOverlay } from './components/ZoomOverlay'
 import { SshPassphraseDialog } from './components/settings/SshPassphraseDialog'
 import { useGitStatusPolling } from './components/right-sidebar/useGitStatusPolling'
 import { useEditorExternalWatch } from './hooks/useEditorExternalWatch'
+import { useAutoAckViewedAgent } from './hooks/useAutoAckViewedAgent'
 import {
   setRuntimeGraphStoreStateGetter,
   setRuntimeGraphSyncEnabled
@@ -40,6 +36,7 @@ import { registerUpdaterBeforeUnloadBypass } from './lib/updater-beforeunload'
 import { buildWorkspaceSessionPayload } from './lib/workspace-session'
 import { countWorkingAgents, getWorkingAgentsPerWorktree } from './lib/agent-status'
 import { activateAndRevealWorktree } from './lib/worktree-activation'
+import { applyDocumentTheme } from './lib/document-theme'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { findWorktreeById, getRepoIdFromWorktreeId } from '@/store/slices/worktree-helpers'
 import {
@@ -55,6 +52,9 @@ const Settings = lazy(() => import('./components/settings/Settings'))
 const QuickOpen = lazy(() => import('./components/QuickOpen'))
 const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
 const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
+// Why: lazy-loaded so the WebP asset + overlay module aren't fetched unless
+// the user opts into the experimental flag.
+const SidekickOverlay = lazy(() => import('./components/sidekick/SidekickOverlay'))
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -96,7 +96,6 @@ function App(): React.JSX.Element {
       hydrateEditorSession: s.hydrateEditorSession,
       hydrateBrowserSession: s.hydrateBrowserSession,
       fetchBrowserSessionProfiles: s.fetchBrowserSessionProfiles,
-      fetchDetectedBrowsers: s.fetchDetectedBrowsers,
       reconnectPersistedTerminals: s.reconnectPersistedTerminals,
       setDeferredSshReconnectTargets: s.setDeferredSshReconnectTargets,
       setSshConnectionState: s.setSshConnectionState,
@@ -106,7 +105,9 @@ function App(): React.JSX.Element {
       toggleRightSidebar: s.toggleRightSidebar,
       setRightSidebarOpen: s.setRightSidebarOpen,
       setRightSidebarTab: s.setRightSidebarTab,
-      updateSettings: s.updateSettings
+      updateSettings: s.updateSettings,
+      pruneLastVisitedTimestamps: s.pruneLastVisitedTimestamps,
+      seedActiveWorktreeLastVisitedIfMissing: s.seedActiveWorktreeLastVisitedIfMissing
     }))
   )
 
@@ -136,12 +137,22 @@ function App(): React.JSX.Element {
   const groupBy = useAppStore((s) => s.groupBy)
   const sortBy = useAppStore((s) => s.sortBy)
   const showActiveOnly = useAppStore((s) => s.showActiveOnly)
+  const hideDefaultBranchWorkspace = useAppStore((s) => s.hideDefaultBranchWorkspace)
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
   const persistedUIReady = useAppStore((s) => s.persistedUIReady)
   const rightSidebarWidth = useAppStore((s) => s.rightSidebarWidth)
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const isFullScreen = useAppStore((s) => s.isFullScreen)
   const settings = useAppStore((s) => s.settings)
+  // Why: render-level gate for the experimental agent dashboard retention
+  // sync. Reading the flag here (rather than only inside useDashboardData /
+  // useRetainedAgentsSync) lets us skip mounting RetainedAgentsSyncGate
+  // entirely for non-toggled users, which drops all feature-tied
+  // subscriptions (agentStatusByPaneKey, agentStatusEpoch, etc.) instead of
+  // keeping them alive behind an early-return inside the hook bodies.
+  const agentDashboardEnabled = useAppStore((s) => s.settings?.experimentalAgentDashboard === true)
+  const sidekickEnabled = useAppStore((s) => s.settings?.experimentalSidekick === true)
+  const sidekickVisible = useAppStore((s) => s.sidekickVisible)
   const canGoBackWorktree = useAppStore(canGoBackWorktreeHistory)
   const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
@@ -150,10 +161,10 @@ function App(): React.JSX.Element {
 
   // Subscribe to IPC push events
   useIpcEvents()
-  // Why: retention must run at App level (not inside AgentDashboard) because
-  // the sidebar hovercard also reads retained entries. If retention only ran
-  // when the dashboard is mounted, "done" agents would vanish from the hover
-  // any time the user collapses the dashboard panel.
+  // Why: retention must run at App level so the inline per-card agents list
+  // always sees retained entries. If retention ran inside the sidebar-card
+  // subtree, "done" agents would vanish any time the user collapsed a card's
+  // inline agents section.
   //
   // The retention hooks are hosted inside <RetainedAgentsSyncGate /> (a leaf
   // component that renders null) rather than being called inline here.
@@ -162,9 +173,17 @@ function App(): React.JSX.Element {
   // event frequency), re-rendering the entire app tree on every agent status
   // update. Hosting the subscriptions in a leaf isolates that churn.
   //
-  // The AGENT_DASHBOARD_ENABLED gate still lives inside the hooks themselves
-  // (useDashboardData early-returns [] from its memo; useRetainedAgentsSync
-  // early-returns from its effect), so the gate component is cheap when off.
+  // The render-level gate on <RetainedAgentsSyncGate /> (see
+  // agentDashboardEnabled above) keeps the experimental feature fully dark
+  // for non-toggled users: without the gate mounted, none of its feature-tied
+  // zustand selectors (agentStatusByPaneKey / agentStatusEpoch / etc.) are
+  // ever subscribed, so PTY agent-status events cause zero work for them.
+  //
+  // The inner hook guards (useDashboardData early-returns [] from its memo;
+  // useRetainedAgentsSync early-returns from its effect) remain as
+  // defense-in-depth: they keep both hooks safe to call from any future
+  // callsite, and they handle the in-session off→on toggle transition
+  // cleanly without relying on a remount race when the setting flips.
   // Why: git conflict-operation state also drives the worktree cards. Polling
   // cannot live under RightSidebar because App unmounts that subtree when the
   // sidebar is closed, which leaves stale "Rebasing"/"Merging" badges behind
@@ -178,6 +197,7 @@ function App(): React.JSX.Element {
   // of tying reloads to the Explorer UI lifecycle.
   useEditorExternalWatch()
   useGlobalFileDrop()
+  useAutoAckViewedAgent()
 
   // Why: sidebar open/close flips width instantaneously. useLayoutEffect
   // runs synchronously after React commits the DOM but before paint, so
@@ -205,10 +225,8 @@ function App(): React.JSX.Element {
         const persistedUI = await window.api.ui.get()
         const session = await window.api.session.get()
         // Why: settings must be loaded before hydrateWorkspaceSession so that
-        // it can read experimentalTerminalDaemon to decide whether to stage
-        // pendingReconnectPtyIdByTabId. Without this, opted-in daemon users
-        // would silently lose session reattach on every launch because
-        // s.settings would still be null at hydration time.
+        // hydration has access to user preferences. Without this, settings
+        // would still be null at hydration time.
         await actions.fetchSettings()
         if (!cancelled) {
           actions.hydratePersistedUI(persistedUI)
@@ -216,8 +234,17 @@ function App(): React.JSX.Element {
           actions.hydrateTabsSession(session)
           actions.hydrateEditorSession(session)
           actions.hydrateBrowserSession(session)
+          // Why: prune lastVisitedAtByWorktreeId entries whose worktrees
+          // no longer exist. Must run AFTER hydration — before this point,
+          // async repo loads may not have populated worktreesByRepo yet and
+          // pruning would delete timestamps for worktrees that are about to
+          // appear. Seed the restored active worktree's timestamp if missing
+          // so users upgrading from a pre-feature build don't see the active
+          // worktree sink in the empty-query list.
+          // See docs/cmd-j-empty-query-ordering.md.
+          actions.pruneLastVisitedTimestamps()
+          actions.seedActiveWorktreeLastVisitedIfMissing()
           await actions.fetchBrowserSessionProfiles()
-          await actions.fetchDetectedBrowsers()
 
           // Why: SSH connections must be re-established BEFORE terminal
           // reconnect so that reconnectPersistedTerminals can route SSH-backed
@@ -314,8 +341,9 @@ function App(): React.JSX.Element {
             sidebarWidth: 280,
             rightSidebarWidth: 350,
             groupBy: 'none',
-            sortBy: 'name',
+            sortBy: 'recent',
             showActiveOnly: false,
+            hideDefaultBranchWorkspace: false,
             filterRepoIds: [],
             collapsedGroups: [],
             uiZoomLevel: 0,
@@ -407,7 +435,7 @@ function App(): React.JSX.Element {
       if (!useAppStore.getState().workspaceSessionReady) {
         return
       }
-      for (const capture of shutdownBufferCaptures) {
+      for (const capture of shutdownBufferCaptures.values()) {
         try {
           capture()
         } catch {
@@ -446,6 +474,7 @@ function App(): React.JSX.Element {
         groupBy,
         sortBy,
         showActiveOnly,
+        hideDefaultBranchWorkspace,
         filterRepoIds
       })
     }, 150)
@@ -458,6 +487,7 @@ function App(): React.JSX.Element {
     groupBy,
     sortBy,
     showActiveOnly,
+    hideDefaultBranchWorkspace,
     filterRepoIds
   ])
 
@@ -467,25 +497,28 @@ function App(): React.JSX.Element {
       return
     }
 
-    const applyTheme = (dark: boolean): void => {
-      document.documentElement.classList.toggle('dark', dark)
-    }
-
     if (settings.theme === 'dark') {
-      applyTheme(true)
+      applyDocumentTheme('dark')
       return undefined
     } else if (settings.theme === 'light') {
-      applyTheme(false)
+      applyDocumentTheme('light')
       return undefined
     } else {
       // system
       const mq = window.matchMedia('(prefers-color-scheme: dark)')
-      applyTheme(mq.matches)
-      const handler = (e: MediaQueryListEvent): void => applyTheme(e.matches)
+      applyDocumentTheme('system')
+      const handler = (): void => applyDocumentTheme('system')
       mq.addEventListener('change', handler)
       return () => mq.removeEventListener('change', handler)
     }
   }, [settings])
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      '--app-font-family',
+      buildAppFontFamily(settings?.appFontFamily)
+    )
+  }, [settings?.appFontFamily])
 
   // Refresh GitHub data (PR/issue status) when window regains focus
   useEffect(() => {
@@ -497,65 +530,6 @@ function App(): React.JSX.Element {
     document.addEventListener('visibilitychange', handler)
     return () => document.removeEventListener('visibilitychange', handler)
   }, [actions])
-
-  // Why: v1.3.0 shipped the persistent-terminal daemon ON by default. v1.3.1+
-  // defaults it OFF and gates it behind an Experimental toggle. On the first
-  // launch after that upgrade, main detects a still-running daemon, shuts it
-  // down (killing any surviving `sleep 9999`-style sessions), and stashes a
-  // one-shot notice. We consume that notice here and inform the user so their
-  // vanished sessions don't look like a bug. The renderer-side
-  // `experimentalTerminalDaemonNoticeShown` flag guarantees the toast fires at
-  // most once per install, even if main stashes a notice again on a later
-  // launch.
-  const transitionNoticeHandledRef = useRef(false)
-  useEffect(() => {
-    if (!settings || transitionNoticeHandledRef.current) {
-      return
-    }
-    if (settings.experimentalTerminalDaemonNoticeShown) {
-      transitionNoticeHandledRef.current = true
-      return
-    }
-    transitionNoticeHandledRef.current = true
-    void (async () => {
-      let notice: { killedCount: number } | null = null
-      try {
-        notice = await window.api.app.consumeDaemonTransitionNotice()
-      } catch {
-        // Informational only — if the IPC fails, don't fire the toast and
-        // don't flip the "shown" flag so we can retry on next launch.
-        return
-      }
-      if (!notice) {
-        return
-      }
-      const killedCount = notice.killedCount
-      const killedClause =
-        killedCount > 0
-          ? ` Cleaned up ${killedCount} background session${killedCount === 1 ? '' : 's'} from the previous version.`
-          : ''
-      toast.info('Persistent terminal sessions are now opt-in.', {
-        description: `${killedClause} You can re-enable them in Settings → Experimental.`.trim(),
-        duration: 15000,
-        action: {
-          label: 'Open settings',
-          onClick: () => {
-            useAppStore.getState().openSettingsTarget({
-              pane: 'experimental',
-              repoId: null
-            })
-            useAppStore.getState().openSettingsPage()
-          }
-        }
-      })
-      try {
-        await actions.updateSettings({ experimentalTerminalDaemonNoticeShown: true })
-      } catch {
-        // If persistence fails, the toast may re-fire on a later launch —
-        // acceptable tradeoff vs. silently dropping the notification.
-      }
-    })()
-  }, [actions, settings])
 
   const tabs = activeWorktreeId ? (tabsByWorktree[activeWorktreeId] ?? []) : []
   const hasTabBar = tabs.length >= 2
@@ -709,26 +683,6 @@ function App(): React.JSX.Element {
         dispatchClearModifierHints()
         e.preventDefault()
         actions.setRightSidebarTab('source-control')
-        actions.setRightSidebarOpen(true)
-        return
-      }
-
-      // Cmd/Ctrl+Shift+D — open right sidebar (agent dashboard is now
-      // docked at the sidebar bottom, so only toggle visibility).
-      // Why: skip when a terminal is focused — that combo is the terminal
-      // split-pane shortcut (see terminal-shortcut-policy.ts). Both listeners
-      // share the window capture phase and registration order can vary with
-      // React effect re-runs, so a DOM check is the reliable coordination
-      // mechanism (same pattern as Cmd+Shift+G above). xterm-helper-textarea
-      // is the focus target the terminal handler itself uses to detect
-      // terminal focus (see keyboard-handlers.ts isEditableTarget).
-      if (AGENT_DASHBOARD_ENABLED && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
-        const active = document.activeElement as HTMLElement | null
-        if (active?.classList.contains('xterm-helper-textarea')) {
-          return
-        }
-        dispatchClearModifierHints()
-        e.preventDefault()
         actions.setRightSidebarOpen(true)
         return
       }
@@ -887,22 +841,7 @@ function App(): React.JSX.Element {
                             className="titlebar-agent-hovercard-agent"
                             onClick={() => {
                               activateAndRevealWorktree(worktreeId)
-                              useAppStore.getState().setActiveTab(agent.tabId)
-                              if (agent.paneId !== null) {
-                                // Why: a split-terminal tab can host multiple
-                                // agents. After selecting the tab, wait one
-                                // frame so the active TerminalPane can mount
-                                // and then focus the specific pane the user
-                                // clicked instead of leaving whichever pane
-                                // was previously active highlighted.
-                                requestAnimationFrame(() => {
-                                  window.dispatchEvent(
-                                    new CustomEvent(FOCUS_TERMINAL_PANE_EVENT, {
-                                      detail: { tabId: agent.tabId, paneId: agent.paneId }
-                                    })
-                                  )
-                                })
-                              }
+                              activateTabAndFocusPane(agent.tabId, agent.paneId)
                             }}
                           >
                             <span className="titlebar-agent-hovercard-agent-label">
@@ -1008,122 +947,140 @@ function App(): React.JSX.Element {
       }
     >
       <TooltipProvider delayDuration={400}>
-        {/* Why: leaf-mounted retention sync. Hosts useDashboardData() +
-            useRetainedAgentsSync() so their high-churn store subscriptions
-            re-render a null component rather than the entire App tree. */}
-        <RetainedAgentsSyncGate />
-        {/* Why: in workspace view (split groups always enabled), the full-width
-            titlebar is removed so tab groups + terminal extend to the top of
-            the window. Left titlebar controls move to a header above the sidebar.
-            Settings, landing, and the tasks page keep the full-width titlebar. */}
-        {!workspaceActive ? (
-          <div className="titlebar">
-            <div
-              className={`flex items-center${showSidebar && sidebarOpen ? ' overflow-hidden shrink-0' : ' shrink-0 mr-2'}`}
-              style={{ width: showSidebar && sidebarOpen ? sidebarWidth : undefined }}
-            >
-              {titlebarLeftControls}
-            </div>
-            <div
-              id="titlebar-tabs"
-              className={`flex flex-1 min-w-0 self-stretch${activeView !== 'terminal' || !activeWorktreeId ? ' invisible pointer-events-none' : ''}`}
-            />
-            {showTitlebarExpandButton && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="titlebar-icon-button"
-                    onClick={handleToggleExpand}
-                    aria-label="Collapse pane"
-                    disabled={!activeTabCanExpand}
-                  >
-                    <Minimize2 size={14} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={6}>
-                  Collapse pane
-                </TooltipContent>
-              </Tooltip>
-            )}
-            {rightSidebarToggle}
-          </div>
-        ) : null}
+        {/* Why: leaf-mounted retention sync, gated at the render level by
+            agentDashboardEnabled. Hosting useDashboardData() +
+            useRetainedAgentsSync() inside a null-rendering leaf keeps their
+            high-churn store subscriptions from re-rendering the App tree;
+            the outer conditional drops those subscriptions entirely for
+            users who have not toggled the experimental agent dashboard on,
+            so PTY agent-status events do no feature-tied work for them.
+            The hooks' internal early-returns remain as defense-in-depth
+            (see the comment above useIpcEvents()). */}
+        {agentDashboardEnabled ? <RetainedAgentsSyncGate /> : null}
         <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
-          {showSidebar ? (
-            workspaceActive ? (
-              /* Why: left column wraps the sidebar with a titlebar-height
-                 header above it. The header holds the same controls
-                 (traffic lights, sidebar toggle, "Orca" title, agent badge)
-                 that the full-width titlebar held while the center and right
-                 columns keep their own top strips at the same 42px height.
-                 When the sidebar is collapsed, take this header out of flex
-                 layout so the terminal/editor reclaim the left edge instead of
-                 leaving behind a content-width blank strip. */
-              <div
-                className={`flex min-h-0 flex-col shrink-0${sidebarOpen ? '' : ' relative w-0 overflow-visible'}`}
-              >
+          {/* Why: the non-workspace titlebar lives inside this left+center
+              wrapper so it does not span over the right-sidebar column —
+              when the right sidebar is open, its own header anchors at the
+              top alongside the titlebar instead of being pushed below it. */}
+          <div className="flex flex-col flex-1 min-w-0 min-h-0">
+            {/* Why: in workspace view (split groups always enabled), the
+                full-width titlebar is removed so tab groups + terminal extend
+                to the top of the window. Left titlebar controls move to a
+                header above the sidebar. Settings, landing, and the tasks
+                page keep the titlebar. */}
+            {!workspaceActive ? (
+              <div className="titlebar">
                 <div
-                  // Why: when the sidebar is collapsed, titlebar-left floats
-                  // absolutely on top of the center column's own `border-l`
-                  // (see TabGroupSplitLayout), occluding that seam. Add a
-                  // `border-r` in the floating state so the vertical line
-                  // between the traffic-light/nav cluster and the tab strip
-                  // stays visible in both states.
-                  className={`titlebar-left${sidebarOpen ? '' : ' absolute top-0 left-0 z-10 border-r border-border'}`}
-                  style={{
-                    // Why: the Sidebar resize hook updates the sidebar DOM width
-                    // directly during drag and only persists to Zustand on
-                    // mouseup. In workspace view, size this header from the
-                    // wrapper's live width so it tracks those in-flight resizes
-                    // instead of leaving a stale-width gap until the drag ends.
-                    width: sidebarOpen ? '100%' : undefined
-                  }}
+                  className={`flex items-center${showSidebar && sidebarOpen ? ' overflow-hidden shrink-0' : ' shrink-0 mr-2'}`}
+                  style={{ width: showSidebar && sidebarOpen ? sidebarWidth : undefined }}
                 >
                   {titlebarLeftControls}
                 </div>
-                <div className="flex min-h-0 flex-1">
-                  {/* Why: the workspace-view wrapper adds a fixed 42px header
-                      above the sidebar. Without a flex-1/min-h-0 slot here,
-                      the sidebar falls back to its content height, so the
-                      worktree list loses its scroll viewport and the fixed
-                      bottom toolbar (including Add Project) gets pushed offscreen. */}
+                <div
+                  id="titlebar-tabs"
+                  className={`flex flex-1 min-w-0 self-stretch${activeView !== 'terminal' || !activeWorktreeId ? ' invisible pointer-events-none' : ''}`}
+                />
+                {showTitlebarExpandButton && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        className="titlebar-icon-button"
+                        onClick={handleToggleExpand}
+                        aria-label="Collapse pane"
+                        disabled={!activeTabCanExpand}
+                      >
+                        <Minimize2 size={14} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={6}>
+                      Collapse pane
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* Why: when the right sidebar is open, its own header renders
+                    an identical close button — hide this copy so only one is
+                    visible at a time. */}
+                {!rightSidebarOpen && rightSidebarToggle}
+              </div>
+            ) : null}
+            <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
+              {showSidebar ? (
+                workspaceActive ? (
+                  /* Why: left column wraps the sidebar with a titlebar-height
+                     header above it. The header holds the same controls
+                     (traffic lights, sidebar toggle, "Orca" title, agent badge)
+                     that the full-width titlebar held while the center and right
+                     columns keep their own top strips at the same 36px height.
+                     When the sidebar is collapsed, take this header out of flex
+                     layout so the terminal/editor reclaim the left edge instead of
+                     leaving behind a content-width blank strip. */
+                  <div
+                    className={`flex min-h-0 flex-col shrink-0${sidebarOpen ? '' : ' relative w-0 overflow-visible'}`}
+                  >
+                    <div
+                      // Why: when the sidebar is collapsed, titlebar-left floats
+                      // absolutely on top of the center column's own `border-l`
+                      // (see TabGroupSplitLayout), occluding that seam. Add a
+                      // `border-r` in the floating state so the vertical line
+                      // between the traffic-light/nav cluster and the tab strip
+                      // stays visible in both states.
+                      className={`titlebar-left${sidebarOpen ? '' : ' absolute top-0 left-0 z-10 border-r border-border'}`}
+                      style={{
+                        // Why: the Sidebar resize hook updates the sidebar DOM width
+                        // directly during drag and only persists to Zustand on
+                        // mouseup. In workspace view, size this header from the
+                        // wrapper's live width so it tracks those in-flight resizes
+                        // instead of leaving a stale-width gap until the drag ends.
+                        width: sidebarOpen ? '100%' : undefined
+                      }}
+                    >
+                      {titlebarLeftControls}
+                    </div>
+                    <div className="flex min-h-0 flex-1">
+                      {/* Why: the workspace-view wrapper adds a fixed 36px header
+                          above the sidebar. Without a flex-1/min-h-0 slot here,
+                          the sidebar falls back to its content height, so the
+                          worktree list loses its scroll viewport and the fixed
+                          bottom toolbar (including Add Project) gets pushed offscreen. */}
+                      <Sidebar />
+                    </div>
+                  </div>
+                ) : (
                   <Sidebar />
+                )
+              ) : null}
+              <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
+                {/* Why: right sidebar toggle floats at the top-right of the center
+                    column so it's always accessible whether the right sidebar is
+                    open or closed. Match the RightSidebar header's 36px height and
+                    top-0 anchor so the icon's vertical center is identical between
+                    open and closed states — otherwise toggling makes the icon jump
+                    a few pixels, which reads as layout jitter. */}
+                {workspaceActive && !rightSidebarOpen && (
+                  <div
+                    className="absolute top-0 right-0 z-10 flex items-center h-[36px]"
+                    style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  >
+                    {rightSidebarToggle}
+                  </div>
+                )}
+                <div className="flex flex-1 min-w-0 min-h-0 flex-col">
+                  <div
+                    className={
+                      activeView !== 'terminal' || !activeWorktreeId
+                        ? 'hidden flex-1 min-w-0 min-h-0'
+                        : 'flex flex-1 min-w-0 min-h-0'
+                    }
+                  >
+                    <Terminal />
+                  </div>
+                  <Suspense fallback={null}>
+                    {activeView === 'settings' ? <Settings /> : null}
+                    {activeView === 'tasks' ? <TaskPage /> : null}
+                    {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
+                  </Suspense>
                 </div>
               </div>
-            ) : (
-              <Sidebar />
-            )
-          ) : null}
-          <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
-            {/* Why: right sidebar toggle floats at the top-right of the center
-                column so it's always accessible whether the right sidebar is
-                open or closed. Match the RightSidebar header's 42px height and
-                top-0 anchor so the icon's vertical center is identical between
-                open and closed states — otherwise toggling makes the icon jump
-                a few pixels, which reads as layout jitter. */}
-            {workspaceActive && !rightSidebarOpen && (
-              <div
-                className="absolute top-0 right-0 z-10 flex items-center h-[42px]"
-                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-              >
-                {rightSidebarToggle}
-              </div>
-            )}
-            <div className="flex flex-1 min-w-0 min-h-0 flex-col">
-              <div
-                className={
-                  activeView !== 'terminal' || !activeWorktreeId
-                    ? 'hidden flex-1 min-w-0 min-h-0'
-                    : 'flex flex-1 min-w-0 min-h-0'
-                }
-              >
-                <Terminal />
-              </div>
-              <Suspense fallback={null}>
-                {activeView === 'settings' ? <Settings /> : null}
-                {activeView === 'tasks' ? <TaskPage /> : null}
-                {activeView === 'terminal' && !activeWorktreeId ? <Landing /> : null}
-              </Suspense>
             </div>
           </div>
           {/* Why: keep RightSidebar mounted even when closed so that its
@@ -1146,8 +1103,25 @@ function App(): React.JSX.Element {
         {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
         {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
       </Suspense>
+      {/* Why: mount SidekickOverlay only when the experimental flag is on AND
+          the user hasn't hit "Hide sidekick" in the status-bar menu. Both
+          conditions must be true — see design doc (sidekick-overlay.md) on why
+          the two toggles are kept independent. */}
+      {sidekickEnabled && sidekickVisible ? (
+        <Suspense fallback={null}>
+          <SidekickOverlay />
+        </Suspense>
+      ) : null}
       <UpdateCard />
       <StarNagCard />
+      {/* Why: the existing-user opt-in banner mounts at App root so it
+          renders once per renderer session, not per view. It gates
+          internally on the cohort markers populated by the migration,
+          so it only shows for users who installed before the telemetry
+          release and have not yet resolved consent. New users get no
+          first-launch surface — see telemetry-plan.md §First-launch
+          experience. */}
+      <TelemetryFirstLaunchSurface />
       <ZoomOverlay />
       <SshPassphraseDialog />
       <Toaster closeButton toastOptions={{ className: 'font-sans text-sm' }} />

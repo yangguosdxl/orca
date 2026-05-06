@@ -20,7 +20,10 @@ const {
   openCodeClearPtyMock,
   buildAgentHookEnvMock,
   piBuildPtyEnvMock,
-  piClearPtyMock
+  piClearPtyMock,
+  isPwshAvailableMock,
+  trackMock,
+  classifyErrorMock
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
   onMock: vi.fn(),
@@ -35,10 +38,13 @@ const {
   getPathMock: vi.fn(),
   spawnMock: vi.fn(),
   openCodeBuildPtyEnvMock: vi.fn(),
+  isPwshAvailableMock: vi.fn(),
   openCodeClearPtyMock: vi.fn(),
   buildAgentHookEnvMock: vi.fn(),
   piBuildPtyEnvMock: vi.fn(),
-  piClearPtyMock: vi.fn()
+  piClearPtyMock: vi.fn(),
+  trackMock: vi.fn(),
+  classifyErrorMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -89,6 +95,18 @@ vi.mock('../pi/titlebar-extension-service', () => ({
     clearPty: piClearPtyMock
   }
 }))
+
+vi.mock('../pwsh', () => ({
+  isPwshAvailable: isPwshAvailableMock
+}))
+
+vi.mock('../telemetry/client', () => ({
+  track: trackMock
+}))
+
+vi.mock('../telemetry/classify-error', () => ({
+  classifyError: classifyErrorMock
+}))
 import { LocalPtyProvider } from '../providers/local-pty-provider'
 import {
   registerPtyHandlers,
@@ -112,8 +130,11 @@ describe('registerPtyHandlers', () => {
     }
   }
 
+  const savedPiAgentDir = process.env.PI_CODING_AGENT_DIR
+
   beforeEach(() => {
     delete process.env.OPENCODE_CONFIG_DIR
+    delete process.env.PI_CODING_AGENT_DIR
     handlers.clear()
     handleMock.mockReset()
     onMock.mockReset()
@@ -132,6 +153,9 @@ describe('registerPtyHandlers', () => {
     buildAgentHookEnvMock.mockReset()
     piBuildPtyEnvMock.mockReset()
     piClearPtyMock.mockReset()
+    isPwshAvailableMock.mockReset()
+    trackMock.mockReset()
+    classifyErrorMock.mockReset()
     mainWindow.webContents.on.mockReset()
     mainWindow.webContents.send.mockReset()
 
@@ -156,6 +180,7 @@ describe('registerPtyHandlers', () => {
         ? '/tmp/orca-pi-agent-overlay'
         : '/tmp/orca-pi-agent-overlay'
     }))
+    isPwshAvailableMock.mockReturnValue(false)
     spawnMock.mockReturnValue({
       onData: vi.fn(() => makeDisposable()),
       onExit: vi.fn(() => makeDisposable()),
@@ -170,6 +195,9 @@ describe('registerPtyHandlers', () => {
   afterEach(() => {
     unregisterSshPtyProvider('ssh-1')
     setLocalPtyProvider(new LocalPtyProvider())
+    if (savedPiAgentDir !== undefined) {
+      process.env.PI_CODING_AGENT_DIR = savedPiAgentDir
+    }
   })
 
   function createMockProc() {
@@ -798,7 +826,61 @@ describe('registerPtyHandlers', () => {
     )
 
     await handlers.get('pty:kill')!(null, { id: 'remote-pty' })
-    expect(sshShutdown).toHaveBeenCalledWith('remote-pty', true)
+    expect(sshShutdown).toHaveBeenCalledWith('remote-pty', {
+      immediate: true,
+      keepHistory: false
+    })
+  })
+
+  it('injects ORCA_TERMINAL_HANDLE for non-local PTY providers', async () => {
+    const spawn = vi.fn(async () => ({ id: 'remote-pty' }))
+    registerSshPtyProvider('ssh-1', {
+      spawn,
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn(),
+      acknowledgeDataEvent: vi.fn()
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_remote'),
+      registerPreAllocatedHandleForPty: vi.fn()
+    }
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      connectionId: 'ssh-1',
+      env: { EXISTING: '1' }
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          EXISTING: '1',
+          ORCA_TERMINAL_HANDLE: 'term_remote'
+        })
+      })
+    )
+    expect(runtime.registerPreAllocatedHandleForPty).toHaveBeenCalledWith(
+      'remote-pty',
+      'term_remote'
+    )
   })
 
   describe('Windows UTF-8 code page', () => {
@@ -936,6 +1018,178 @@ describe('registerPtyHandlers', () => {
         ],
         expect.any(Object)
       )
+    })
+
+    it('spawns powershell.exe when PowerShell family keeps the inbox implementation', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\cmd.exe'
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'powershell.exe',
+            terminalWindowsPowerShellImplementation: 'powershell.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'powershell.exe',
+        [
+          '-NoExit',
+          '-Command',
+          'try { . $PROFILE } catch {}; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8'
+        ],
+        expect.any(Object)
+      )
+    })
+
+    it('spawns pwsh.exe when PowerShell 7 is selected and available', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\cmd.exe'
+      isPwshAvailableMock.mockReturnValue(true)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'powershell.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'pwsh.exe',
+        [
+          '-NoExit',
+          '-Command',
+          'try { . $PROFILE } catch {}; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8'
+        ],
+        expect.any(Object)
+      )
+    })
+
+    it('falls back to powershell.exe when PowerShell 7 is selected but unavailable', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\cmd.exe'
+      isPwshAvailableMock.mockReturnValue(false)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'powershell.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'powershell.exe',
+        [
+          '-NoExit',
+          '-Command',
+          'try { . $PROFILE } catch {}; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8'
+        ],
+        expect.any(Object)
+      )
+    })
+
+    it('falls back to powershell.exe when shellOverride requests pwsh.exe but pwsh is unavailable', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\cmd.exe'
+      isPwshAvailableMock.mockReturnValue(false)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'powershell.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, shellOverride: 'pwsh.exe' })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'powershell.exe',
+        [
+          '-NoExit',
+          '-Command',
+          'try { . $PROFILE } catch {}; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8'
+        ],
+        expect.any(Object)
+      )
+    })
+
+    it('ignores the PowerShell implementation setting for cmd.exe', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\powershell.exe'
+      isPwshAvailableMock.mockReturnValue(true)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'cmd.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'cmd.exe',
+        ['/K', 'chcp 65001 > nul'],
+        expect.any(Object)
+      )
+    })
+
+    it('ignores the PowerShell implementation setting for wsl.exe', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\powershell.exe'
+      isPwshAvailableMock.mockReturnValue(true)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'wsl.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+
+      expect(spawnMock).toHaveBeenCalledWith('wsl.exe', expect.any(Array), expect.any(Object))
+    })
+
+    it('keeps shellOverride priority for one-off tabs', () => {
+      process.env.COMSPEC = 'C:\\Windows\\system32\\cmd.exe'
+      isPwshAvailableMock.mockReturnValue(false)
+
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        undefined,
+        () =>
+          ({
+            terminalWindowsShell: 'powershell.exe',
+            terminalWindowsPowerShellImplementation: 'pwsh.exe'
+          }) as never
+      )
+      handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        shellOverride: 'wsl.exe'
+      })
+
+      expect(spawnMock).toHaveBeenCalledWith('wsl.exe', expect.any(Array), expect.any(Object))
     })
   })
 
@@ -1252,12 +1506,17 @@ describe('registerPtyHandlers', () => {
   it('disposes PTY listeners before manual kill IPC', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    // Why: hold a stable reference to the kill spy. On POSIX, destroyPtyProcess
+    // in local-pty-provider reassigns proc.kill to a no-op to defuse the
+    // SIGHUP-to-recycled-pid hazard (see docs/fix-pty-fd-leak.md). Reading
+    // proc.kill.mock after that runs would yield a non-mock and crash.
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1272,22 +1531,23 @@ describe('registerPtyHandlers', () => {
     await handlers.get('pty:kill')!(null, { id: spawnResult.id })
 
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 
   it('disposes PTY listeners before runtime controller kill', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1295,7 +1555,8 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyData: vi.fn(),
-      onPtyExit: vi.fn()
+      onPtyExit: vi.fn(),
+      preAllocateHandleForPty: vi.fn()
     }
     spawnMock.mockReturnValue(proc)
 
@@ -1310,22 +1571,23 @@ describe('registerPtyHandlers', () => {
 
     expect(runtimeController.kill(spawnResult.id)).toBe(true)
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 
   it('disposes PTY listeners before did-finish-load orphan cleanup', async () => {
     const onDataDisposable = makeDisposable()
     const onExitDisposable = makeDisposable()
+    const killSpy = vi.fn()
     const proc = {
       onData: vi.fn(() => onDataDisposable),
       onExit: vi.fn(() => onExitDisposable),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill: killSpy,
       process: 'zsh',
       pid: 12345
     }
@@ -1333,7 +1595,8 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyData: vi.fn(),
-      onPtyExit: vi.fn()
+      onPtyExit: vi.fn(),
+      preAllocateHandleForPty: vi.fn()
     }
     spawnMock.mockReturnValue(proc)
 
@@ -1350,10 +1613,10 @@ describe('registerPtyHandlers', () => {
     didFinishLoad?.()
 
     expect(onDataDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
     expect(onExitDisposable.dispose.mock.invocationCallOrder[0]).toBeLessThan(
-      proc.kill.mock.invocationCallOrder[0]
+      killSpy.mock.invocationCallOrder[0]
     )
   })
 
@@ -1382,5 +1645,227 @@ describe('registerPtyHandlers', () => {
     expect(await handlers.get('pty:hasChildProcesses')!(null, { id: spawnResult.id })).toBe(false)
     expect(openCodeClearPtyMock).toHaveBeenCalledWith(spawnResult.id)
     expect(piClearPtyMock).toHaveBeenCalledWith(spawnResult.id)
+  })
+
+  describe('agent_started telemetry', () => {
+    // Why: telemetry-plan.md§Agent launch semantics — agent_started must
+    // fire only after provider.spawn resolves. The renderer threads
+    // launch metadata through `pty:spawn`; a missing or malformed
+    // payload must not produce a silently-malformed event.
+    it('emits agent_started after a successful spawn when telemetry is supplied', async () => {
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never)
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        telemetry: {
+          agent_kind: 'claude-code',
+          launch_source: 'new_workspace_composer',
+          request_kind: 'new'
+        }
+      })
+      expect(trackMock).toHaveBeenCalledWith('agent_started', {
+        agent_kind: 'claude-code',
+        launch_source: 'new_workspace_composer',
+        request_kind: 'new'
+      })
+    })
+
+    it('does not emit agent_started when telemetry is omitted (bare-shell tab)', async () => {
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never)
+      await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+      expect(trackMock).not.toHaveBeenCalled()
+    })
+
+    it('drops the event when any telemetry field is outside its closed enum', async () => {
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never)
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        telemetry: {
+          agent_kind: 'claude-code',
+          launch_source: 'not_a_real_surface',
+          request_kind: 'new'
+        }
+      })
+      expect(trackMock).not.toHaveBeenCalledWith('agent_started', expect.anything())
+    })
+
+    it('does not emit agent_started when provider.spawn throws', async () => {
+      // Why: telemetry-plan contract is that agent_started fires only on
+      // confirmed launch. Inject a provider whose spawn throws so we hit
+      // the catch path with no race against the real LocalPtyProvider.
+      setLocalPtyProvider({
+        spawn: vi.fn(async () => {
+          throw new Error('spawn boom')
+        }),
+        write: vi.fn(),
+        resize: vi.fn(),
+        kill: vi.fn(),
+        shutdown: vi.fn(),
+        onData: vi.fn(() => vi.fn()),
+        onExit: vi.fn(() => vi.fn()),
+        listProcesses: vi.fn(async () => []),
+        getForegroundProcess: vi.fn(async () => null)
+      } as never)
+      classifyErrorMock.mockReturnValue({ error_class: 'unknown' })
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never)
+      await expect(
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          command: 'claude',
+          telemetry: {
+            agent_kind: 'claude-code',
+            launch_source: 'new_workspace_composer',
+            request_kind: 'new'
+          }
+        })
+      ).rejects.toThrow(/spawn boom/)
+      expect(trackMock).not.toHaveBeenCalledWith('agent_started', expect.anything())
+    })
+  })
+
+  describe('serializeBuffer dispatch', () => {
+    type SerializeListener = (
+      _event: unknown,
+      args: {
+        requestId?: string
+        snapshot?: { data?: unknown; cols?: unknown; rows?: unknown; lastTitle?: unknown } | null
+      }
+    ) => void
+    type SerializeController = {
+      serializeBuffer: (
+        ptyId: string,
+        opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
+      ) => Promise<{ data: string; cols: number; rows: number; lastTitle?: string } | null>
+    }
+
+    function setup(): { listener: SerializeListener; controller: SerializeController } {
+      const runtime = {
+        setPtyController: vi.fn(),
+        onPtySpawned: vi.fn(),
+        onPtyData: vi.fn(),
+        onPtyExit: vi.fn(),
+        preAllocateHandleForPty: vi.fn()
+      }
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      const onCall = onMock.mock.calls.find(
+        (call: unknown[]) => call[0] === 'pty:serializeBuffer:response'
+      )
+      if (!onCall) {
+        throw new Error('expected pty:serializeBuffer:response listener registration')
+      }
+      const listener = onCall[1] as SerializeListener
+      const controller = runtime.setPtyController.mock.calls[0]?.[0] as SerializeController
+      return { listener, controller }
+    }
+
+    function getSentRequestIds(): string[] {
+      return mainWindow.webContents.send.mock.calls
+        .filter((call: unknown[]) => call[0] === 'pty:serializeBuffer:request')
+        .map((call: unknown[]) => (call[1] as { requestId: string }).requestId)
+    }
+
+    it('registers exactly one persistent listener regardless of concurrent in-flight requests', async () => {
+      const { listener, controller } = setup()
+      const inflight = [
+        controller.serializeBuffer('pty-1'),
+        controller.serializeBuffer('pty-2'),
+        controller.serializeBuffer('pty-3'),
+        controller.serializeBuffer('pty-4'),
+        controller.serializeBuffer('pty-5'),
+        controller.serializeBuffer('pty-6'),
+        controller.serializeBuffer('pty-7'),
+        controller.serializeBuffer('pty-8'),
+        controller.serializeBuffer('pty-9'),
+        controller.serializeBuffer('pty-10'),
+        controller.serializeBuffer('pty-11'),
+        controller.serializeBuffer('pty-12')
+      ]
+      // Why: the bug being fixed registered one listener per request, so 12
+      // concurrent calls would register 12 listeners and trip Node's MaxListeners.
+      const responseChannelRegistrations = onMock.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'pty:serializeBuffer:response'
+      )
+      expect(responseChannelRegistrations.length).toBe(1)
+      // Drain the in-flight requests so the test doesn't leak timers.
+      for (const requestId of getSentRequestIds()) {
+        listener(null, { requestId, snapshot: null })
+      }
+      await Promise.all(inflight)
+    })
+
+    it('routes each response to the originating request via requestId', async () => {
+      const { listener, controller } = setup()
+      const a = controller.serializeBuffer('pty-a')
+      const b = controller.serializeBuffer('pty-b')
+      const ids = getSentRequestIds()
+      const requestIdA = ids[0]
+      const requestIdB = ids[1]
+
+      listener(null, {
+        requestId: requestIdB,
+        snapshot: { data: 'B-data', cols: 80, rows: 24 }
+      })
+      listener(null, {
+        requestId: requestIdA,
+        snapshot: { data: 'A-data', cols: 100, rows: 30, lastTitle: 'A-title' }
+      })
+
+      await expect(b).resolves.toEqual({ data: 'B-data', cols: 80, rows: 24 })
+      await expect(a).resolves.toEqual({
+        data: 'A-data',
+        cols: 100,
+        rows: 30,
+        lastTitle: 'A-title'
+      })
+    })
+
+    it('ignores responses with unknown requestId without affecting pending requests', async () => {
+      const { listener, controller } = setup()
+      const pending = controller.serializeBuffer('pty-1')
+      const realRequestId = getSentRequestIds()[0]
+
+      listener(null, {
+        requestId: 'not-a-real-id',
+        snapshot: { data: 'irrelevant', cols: 1, rows: 1 }
+      })
+      listener(null, { requestId: undefined, snapshot: null })
+
+      let resolved = false
+      void pending.then(() => {
+        resolved = true
+      })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(resolved).toBe(false)
+
+      listener(null, { requestId: realRequestId, snapshot: { data: 'ok', cols: 80, rows: 24 } })
+      await expect(pending).resolves.toEqual({ data: 'ok', cols: 80, rows: 24 })
+    })
+
+    it('resolves to null and removes the entry when the 750ms timeout fires', async () => {
+      vi.useFakeTimers()
+      try {
+        const { controller } = setup()
+        const pending = controller.serializeBuffer('pty-stuck')
+        vi.advanceTimersByTime(750)
+        await expect(pending).resolves.toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('resolves to null when the response snapshot is malformed', async () => {
+      const { listener, controller } = setup()
+      const pending = controller.serializeBuffer('pty-bad')
+      const requestId = getSentRequestIds()[0]
+      listener(null, { requestId, snapshot: { data: 'ok', cols: 'not-a-number' } })
+      await expect(pending).resolves.toBeNull()
+    })
   })
 })

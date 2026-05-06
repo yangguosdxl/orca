@@ -17,6 +17,7 @@ import type {
 import { isAuthError } from '../ssh/ssh-connection-utils'
 import { registerSshBrowseHandler } from './ssh-browse'
 import { requestCredential, registerCredentialHandler } from './ssh-passphrase'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 
 let sshStore: SshConnectionStore | null = null
 let connectionManager: SshConnectionManager | null = null
@@ -146,7 +147,8 @@ async function restorePortForwards(
 
 export function registerSshHandlers(
   store: Store,
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  runtime?: OrcaRuntimeService
 ): { connectionManager: SshConnectionManager; sshStore: SshConnectionStore } {
   // Why: on macOS, app re-activation creates a new BrowserWindow and re-calls
   // this function. ipcMain.handle() throws if a handler is already registered,
@@ -160,6 +162,7 @@ export function registerSshHandlers(
     'ssh:connect',
     'ssh:disconnect',
     'ssh:getState',
+    'ssh:needsPassphrasePrompt',
     'ssh:testConnection',
     'ssh:addPortForward',
     'ssh:updatePortForward',
@@ -297,6 +300,7 @@ export function registerSshHandlers(
       getMainWindow,
       store,
       portForwardManager!,
+      runtime,
       (tid, ports, _platform) => {
         broadcastDetectedPorts(getMainWindow, tid, ports)
       }
@@ -419,6 +423,21 @@ export function registerSshHandlers(
 
   ipcMain.handle('ssh:getState', (_event, args: { targetId: string }) => {
     return connectionManager!.getState(args.targetId)
+  })
+
+  // Why: callers that want to auto-connect (Cmd+J jump, terminal reattach) need
+  // to know whether doing so will pop a passphrase/password dialog. Auto-firing
+  // the connect is fine when no prompt is needed, but surprising otherwise —
+  // the user expects to enter the credential before the app starts connecting.
+  // Returns true if the target's last successful connect required a credential
+  // AND the live SshConnection (if any) does not already have one cached.
+  ipcMain.handle('ssh:needsPassphrasePrompt', (_event, args: { targetId: string }) => {
+    const target = sshStore!.getTarget(args.targetId)
+    if (!target?.lastRequiredPassphrase) {
+      return false
+    }
+    const conn = connectionManager!.getConnection(args.targetId)
+    return !conn?.hasCachedCredential()
   })
 
   ipcMain.handle('ssh:testConnection', async (_event, args: { targetId: string }) => {

@@ -24,6 +24,7 @@ vi.mock('node:os', async () => {
 })
 
 function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
+  const appFontFamily = overrides.appFontFamily ?? 'Geist'
   return {
     workspaceDir: testState.fakeHomeDir,
     nestWorkspaces: false,
@@ -33,10 +34,12 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     theme: 'system',
     editorAutoSave: false,
     editorAutoSaveDelayMs: 1000,
+    editorMinimapEnabled: false,
     terminalFontSize: 14,
     terminalFontFamily: 'JetBrains Mono',
     terminalFontWeight: 500,
     terminalLineHeight: 1,
+    terminalGpuAcceleration: 'auto',
     terminalLigatures: 'auto',
     terminalCursorStyle: 'block',
     terminalCursorBlink: false,
@@ -58,14 +61,14 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     openLinksInApp: false,
     rightSidebarOpenByDefault: true,
     showTitlebarAgentActivity: true,
-    showAgentDashboard: true,
-    showTaskProviderIcons: true,
+    showTasksButton: true,
     diffDefaultView: 'inline',
     notifications: {
       enabled: true,
       agentTaskComplete: true,
       terminalBell: false,
-      suppressWhenFocused: true
+      suppressWhenFocused: true,
+      customSoundPath: null
     },
     promptCacheTimerEnabled: false,
     promptCacheTtlMs: 300_000,
@@ -80,14 +83,21 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     defaultTaskSource: 'github',
     defaultRepoSelection: null,
     defaultLinearTeamSelection: null,
+    opencodeSessionCookie: '',
+    opencodeWorkspaceId: '',
+    geminiCliOAuthEnabled: false,
     agentCmdOverrides: {},
     terminalMacOptionAsAlt: 'false',
     terminalMacOptionAsAltMigrated: true,
-    experimentalTerminalDaemon: false,
-    experimentalTerminalDaemonNoticeShown: false,
+    experimentalAgentDashboard: false,
+    experimentalMobile: false,
+    experimentalSidekick: false,
+    experimentalWorktreeSymlinks: false,
     terminalWindowsShell: 'powershell.exe',
+    terminalWindowsPowerShellImplementation: 'powershell.exe',
     enableGitHubAttribution: true,
-    ...overrides
+    ...overrides,
+    appFontFamily
   }
 }
 
@@ -110,13 +120,15 @@ function createStore(settings: GlobalSettings) {
 
 function createRateLimits() {
   return {
-    refreshForCodexAccountChange: vi.fn().mockResolvedValue(undefined)
+    refreshForCodexAccountChange: vi.fn().mockResolvedValue(undefined),
+    evictInactiveCodexCache: vi.fn()
   }
 }
 
 function createRuntimeHome() {
   return {
-    syncForCurrentSelection: vi.fn()
+    syncForCurrentSelection: vi.fn(),
+    clearLastWrittenAuthJson: vi.fn()
   }
 }
 
@@ -553,7 +565,8 @@ describe('CodexAccountService config sync', () => {
     const rateLimits = {
       refreshForCodexAccountChange: vi.fn(async () => {
         callOrder.push('refresh')
-      })
+      }),
+      evictInactiveCodexCache: vi.fn()
     }
     const runtimeHome = createRuntimeHome()
 

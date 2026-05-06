@@ -10,14 +10,18 @@ const {
   registerStatsHandlersMock,
   registerMemoryHandlersMock,
   registerNotificationHandlersMock,
+  registerDeveloperPermissionHandlersMock,
   registerSettingsHandlersMock,
+  registerTelemetryHandlersMock,
   registerShellHandlersMock,
+  registerSidekickHandlersMock,
   registerSessionHandlersMock,
   registerUIHandlersMock,
   registerFilesystemHandlersMock,
   registerRuntimeHandlersMock,
   registerCodexAccountHandlersMock,
   registerAgentHookHandlersMock,
+  registerAgentTrustHandlersMock,
   registerClaudeAccountHandlersMock,
   registerClipboardHandlersMock,
   registerUpdaterHandlersMock,
@@ -39,14 +43,18 @@ const {
   registerStatsHandlersMock: vi.fn(),
   registerMemoryHandlersMock: vi.fn(),
   registerNotificationHandlersMock: vi.fn(),
+  registerDeveloperPermissionHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
+  registerTelemetryHandlersMock: vi.fn(),
   registerShellHandlersMock: vi.fn(),
+  registerSidekickHandlersMock: vi.fn(),
   registerSessionHandlersMock: vi.fn(),
   registerUIHandlersMock: vi.fn(),
   registerFilesystemHandlersMock: vi.fn(),
   registerRuntimeHandlersMock: vi.fn(),
   registerCodexAccountHandlersMock: vi.fn(),
   registerAgentHookHandlersMock: vi.fn(),
+  registerAgentTrustHandlersMock: vi.fn(),
   registerClaudeAccountHandlersMock: vi.fn(),
   registerClipboardHandlersMock: vi.fn(),
   registerUpdaterHandlersMock: vi.fn(),
@@ -100,12 +108,24 @@ vi.mock('./notifications', () => ({
   registerNotificationHandlers: registerNotificationHandlersMock
 }))
 
+vi.mock('./developer-permissions', () => ({
+  registerDeveloperPermissionHandlers: registerDeveloperPermissionHandlersMock
+}))
+
 vi.mock('./settings', () => ({
   registerSettingsHandlers: registerSettingsHandlersMock
 }))
 
+vi.mock('./telemetry', () => ({
+  registerTelemetryHandlers: registerTelemetryHandlersMock
+}))
+
 vi.mock('./shell', () => ({
   registerShellHandlers: registerShellHandlersMock
+}))
+
+vi.mock('./sidekick', () => ({
+  registerSidekickHandlers: registerSidekickHandlersMock
 }))
 
 vi.mock('./session', () => ({
@@ -138,6 +158,10 @@ vi.mock('./codex-accounts', () => ({
 
 vi.mock('./agent-hooks', () => ({
   registerAgentHookHandlers: registerAgentHookHandlersMock
+}))
+
+vi.mock('./agent-trust', () => ({
+  registerAgentTrustHandlers: registerAgentTrustHandlersMock
 }))
 
 vi.mock('./claude-accounts', () => ({
@@ -176,14 +200,18 @@ describe('registerCoreHandlers', () => {
     registerStatsHandlersMock.mockReset()
     registerMemoryHandlersMock.mockReset()
     registerNotificationHandlersMock.mockReset()
+    registerDeveloperPermissionHandlersMock.mockReset()
     registerSettingsHandlersMock.mockReset()
+    registerTelemetryHandlersMock.mockReset()
     registerShellHandlersMock.mockReset()
+    registerSidekickHandlersMock.mockReset()
     registerSessionHandlersMock.mockReset()
     registerUIHandlersMock.mockReset()
     registerFilesystemHandlersMock.mockReset()
     registerRuntimeHandlersMock.mockReset()
     registerCodexAccountHandlersMock.mockReset()
     registerAgentHookHandlersMock.mockReset()
+    registerAgentTrustHandlersMock.mockReset()
     registerClaudeAccountHandlersMock.mockReset()
     registerClipboardHandlersMock.mockReset()
     registerUpdaterHandlersMock.mockReset()
@@ -222,6 +250,7 @@ describe('registerCoreHandlers', () => {
     expect(registerCodexUsageHandlersMock).toHaveBeenCalledWith(codexUsage)
     expect(registerCodexAccountHandlersMock).toHaveBeenCalledWith(codexAccounts)
     expect(registerAgentHookHandlersMock).toHaveBeenCalled()
+    expect(registerSidekickHandlersMock).toHaveBeenCalled()
     expect(registerClaudeAccountHandlersMock).toHaveBeenCalledWith(claudeAccounts)
     expect(registerRateLimitHandlersMock).toHaveBeenCalledWith(rateLimits)
     expect(registerGitHubHandlersMock).toHaveBeenCalledWith(store, stats)
@@ -229,8 +258,10 @@ describe('registerCoreHandlers', () => {
     expect(registerFeedbackHandlersMock).toHaveBeenCalled()
     expect(registerStatsHandlersMock).toHaveBeenCalledWith(stats)
     expect(registerMemoryHandlersMock).toHaveBeenCalledWith(store)
-    expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store)
+    expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store, runtime)
+    expect(registerDeveloperPermissionHandlersMock).toHaveBeenCalled()
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store)
+    expect(registerTelemetryHandlersMock).toHaveBeenCalledWith(store)
     expect(registerSessionHandlersMock).toHaveBeenCalledWith(store)
     expect(registerUIHandlersMock).toHaveBeenCalledWith(store)
     expect(registerFilesystemHandlersMock).toHaveBeenCalledWith(store)

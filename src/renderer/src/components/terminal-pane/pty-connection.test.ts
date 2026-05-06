@@ -1,6 +1,18 @@
 /* oxlint-disable max-lines */
+import type * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { POST_REPLAY_FOCUS_REPORTING_RESET, POST_REPLAY_MODE_RESET } from './layout-serialization'
+import type * as UseNotificationDispatchModule from './use-notification-dispatch'
+
+// Why: the fresh-spawn and reattach paths now chain pre-signal → spawn →
+// register/settle through multiple microtasks. Tests that previously flushed
+// once with `await Promise.resolve()` must drain a few extra ticks before
+// asserting against IPC mocks. See docs/mobile-prefer-renderer-scrollback.md.
+async function flushAsyncTicks(count = 6): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve()
+  }
+}
 
 const toastInfo = vi.fn()
 
@@ -12,7 +24,7 @@ type StoreState = {
   repos: { id: string; connectionId?: string | null }[]
   sshConnectionStates: Map<string, { status: string }>
   cacheTimerByKey: Record<string, number | null>
-  settings: { promptCacheTimerEnabled?: boolean; experimentalTerminalDaemon?: boolean } | null
+  settings: { promptCacheTimerEnabled?: boolean } | null
   codexRestartNoticeByPtyId: Record<
     string,
     { previousAccountLabel: string; nextAccountLabel: string }
@@ -81,6 +93,24 @@ vi.mock('sonner', () => ({
   }
 }))
 
+// Why: the working→idle test imports the real useNotificationDispatch to
+// verify producer → IPC end-to-end. useCallback is pure memoization for
+// that hook, so pass-through here lets it be invoked outside React.
+//
+// Scope note: this mock applies to every test in this file, not just the
+// working→idle test. It is safe today because no other test in this file
+// depends on useCallback identity stability — the suite does not render
+// React components. If that ever changes, either narrow this with
+// vi.doMock inside the it() block or extract the hook body into a plain
+// non-hook function so the test does not need to bypass React at all.
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof React>()
+  return {
+    ...actual,
+    useCallback: <T extends (...args: unknown[]) => unknown>(fn: T): T => fn
+  }
+})
+
 vi.mock('./pty-transport', () => ({
   createIpcPtyTransport: vi.fn((options: Record<string, unknown>) => {
     createdTransportOptions.push(options)
@@ -119,8 +149,10 @@ function createPane(paneId: number) {
       rows: 40,
       write: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
-      onResize: vi.fn(() => ({ dispose: vi.fn() }))
+      onResize: vi.fn(() => ({ dispose: vi.fn() })),
+      onTitleChange: vi.fn(() => ({ dispose: vi.fn() }))
     },
+    container: { dataset: {} },
     fitAddon: {
       fit: vi.fn()
     }
@@ -216,7 +248,15 @@ describe('connectPanePty', () => {
         },
         pty: {
           signal: vi.fn(),
-          ackColdRestore: vi.fn()
+          ackColdRestore: vi.fn(),
+          onSerializeBufferRequest: vi.fn(() => vi.fn()),
+          declarePendingPaneSerializer: vi.fn().mockResolvedValue(1),
+          settlePaneSerializer: vi.fn().mockResolvedValue(undefined),
+          clearPendingPaneSerializer: vi.fn().mockResolvedValue(undefined)
+        },
+        notifications: {
+          dispatch: vi.fn().mockResolvedValue({ delivered: true }),
+          playSound: vi.fn().mockResolvedValue({ played: true })
         }
       }
     }
@@ -506,8 +546,7 @@ describe('connectPanePty', () => {
     mockStoreState = {
       ...mockStoreState,
       settings: {
-        ...mockStoreState.settings,
-        experimentalTerminalDaemon: true
+        ...mockStoreState.settings
       }
     } as StoreState
     const pane = createPane(2)
@@ -547,8 +586,7 @@ describe('connectPanePty', () => {
     mockStoreState = {
       ...mockStoreState,
       settings: {
-        ...mockStoreState.settings,
-        experimentalTerminalDaemon: true
+        ...mockStoreState.settings
       }
     } as StoreState
     const pane = createPane(2)
@@ -592,8 +630,7 @@ describe('connectPanePty', () => {
         'wt-1': [{ id: 'tab-1', ptyId: 'tab-pty' }]
       },
       settings: {
-        ...mockStoreState.settings,
-        experimentalTerminalDaemon: true
+        ...mockStoreState.settings
       }
     } as StoreState
 
@@ -605,7 +642,7 @@ describe('connectPanePty', () => {
     })
 
     connectPanePty(pane as never, manager as never, deps as never)
-    await Promise.resolve()
+    await flushAsyncTicks(20)
 
     expect(pane.terminal.write).toHaveBeenCalledWith('\x1b[2J\x1b[3J\x1b[H', expect.any(Function))
     expect(pane.terminal.write).toHaveBeenCalledWith(
@@ -622,7 +659,7 @@ describe('connectPanePty', () => {
     )
   })
 
-  it('reuses the existing local PTY on split remount when the daemon is disabled', async () => {
+  it('reattaches via daemon sessionId when an in-session PTY is live', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transportFactoryQueue.push(transport)
@@ -633,47 +670,7 @@ describe('connectPanePty', () => {
         'wt-1': [{ id: 'tab-1', ptyId: 'pty-local-detached' }]
       },
       settings: {
-        ...mockStoreState.settings,
-        // Why: with the daemon off, split/remount should still keep the
-        // in-process PTY alive within the same app session. This regression
-        // came from treating every remount like a daemon session reattach.
-        experimentalTerminalDaemon: false
-      }
-    } as StoreState
-
-    const pane = createPane(2)
-    const manager = createManager(2)
-    const deps = createDeps({
-      restoredLeafId: 'pane:2',
-      restoredPtyIdByLeafId: { 'pane:2': 'pty-local-detached' }
-    })
-
-    connectPanePty(pane as never, manager as never, deps as never)
-
-    expect(transport.attach).toHaveBeenCalledWith(
-      expect.objectContaining({ existingPtyId: 'pty-local-detached' })
-    )
-    expect(transport.connect).not.toHaveBeenCalled()
-    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'pty-local-detached')
-    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-local-detached')
-  })
-
-  it('reattaches via daemon sessionId when the daemon is enabled and an in-session PTY is live', async () => {
-    const { connectPanePty } = await import('./pty-connection')
-    const transport = createMockTransport()
-    transportFactoryQueue.push(transport)
-
-    mockStoreState = {
-      ...mockStoreState,
-      tabsByWorktree: {
-        'wt-1': [{ id: 'tab-1', ptyId: 'pty-local-detached' }]
-      },
-      settings: {
-        ...mockStoreState.settings,
-        // Why: complement of the daemon-off case — with the daemon on, the
-        // in-session remount path must go through connect({sessionId}) so
-        // the daemon's createOrAttach runs at the pane's real dimensions.
-        experimentalTerminalDaemon: true
+        ...mockStoreState.settings
       }
     } as StoreState
 
@@ -687,7 +684,7 @@ describe('connectPanePty', () => {
       expect.objectContaining({ sessionId: 'pty-local-detached' })
     )
     expect(transport.attach).not.toHaveBeenCalled()
-    await Promise.resolve()
+    await flushAsyncTicks()
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'pty-local-detached')
   })
 
@@ -711,7 +708,7 @@ describe('connectPanePty', () => {
     })
 
     connectPanePty(restartPane as never, restartManager as never, restartDeps as never)
-    await Promise.resolve()
+    await flushAsyncTicks()
 
     expect(spawnedPtyId).toBe('pty-restarted')
     expect(restartDeps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'pty-restarted')
@@ -722,8 +719,7 @@ describe('connectPanePty', () => {
         'wt-1': [{ id: 'tab-1', ptyId: 'pty-restarted' }]
       },
       settings: {
-        ...mockStoreState.settings,
-        experimentalTerminalDaemon: true
+        ...mockStoreState.settings
       }
     }
 
@@ -907,9 +903,7 @@ describe('connectPanePty', () => {
     })
 
     connectPanePty(pane as never, manager as never, deps as never)
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve()
-    }
+    await flushAsyncTicks(20)
 
     const api = (
       globalThis as unknown as {
@@ -964,9 +958,7 @@ describe('connectPanePty', () => {
     })
 
     connectPanePty(pane as never, manager as never, deps as never)
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve()
-    }
+    await flushAsyncTicks(20)
 
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalledWith(
       expect.any(Number),
@@ -983,14 +975,33 @@ describe('connectPanePty', () => {
   // unread — those stay BEL-only so non-agent long-running tasks remain
   // first-class attention sources. Double-firing with a concurrent BEL is
   // collapsed by the per-worktree dedupe in main/ipc/notifications.ts.
+  //
+  // This test deliberately wires the real useNotificationDispatch hook into
+  // connectPanePty instead of a vi.fn() stub. A stub would let the producer
+  // be silently deleted and the test still pass by asserting "not called";
+  // routing through the real hook to window.api.notifications.dispatch means
+  // removing the producer breaks the IPC assertion, which is the user-facing
+  // contract.
   it('dispatches agent-task-complete on working→idle but does not raise tab/worktree unread', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    const { useNotificationDispatch } = await vi.importActual<typeof UseNotificationDispatchModule>(
+      './use-notification-dispatch'
+    )
     const transport = createMockTransport()
     transportFactoryQueue.push(transport)
 
+    // Why: useNotificationDispatch uses useCallback internally; bypass the
+    // React machinery by invoking its body directly through a module call.
+    // Safe here because useCallback is pure memoization — the returned
+    // function has the same behavior as the callback passed in.
+    // Depends on the file-level vi.mock('react', ...) near the top of this
+    // file that replaces useCallback with a pass-through. Removing that
+    // mock breaks this test with a rules-of-hooks error.
+    const dispatchNotification = useNotificationDispatch('wt-1')
+
     const pane = createPane(1)
     const manager = createManager(1)
-    const deps = createDeps()
+    const deps = createDeps({ dispatchNotification })
 
     connectPanePty(pane as never, manager as never, deps as never)
 
@@ -1005,10 +1016,13 @@ describe('connectPanePty', () => {
 
     expect(deps.markWorktreeUnread).not.toHaveBeenCalled()
     expect(deps.markTerminalTabUnread).not.toHaveBeenCalled()
-    expect(deps.dispatchNotification).toHaveBeenCalledWith({
-      source: 'agent-task-complete',
-      terminalTitle: '* Claude done'
-    })
+    expect(window.api.notifications.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'agent-task-complete',
+        worktreeId: 'wt-1',
+        terminalTitle: '* Claude done'
+      })
+    )
   })
 
   // Why: onAgentExited must clear any running prompt-cache countdown so the

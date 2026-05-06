@@ -34,6 +34,7 @@ import type { SshPortForwardManager } from './ssh-port-forward'
 import type { SshConnection } from './ssh-connection'
 import type { DetectedPort } from '../../shared/ssh-types'
 import type { Store } from '../persistence'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
@@ -54,6 +55,7 @@ export class SshRelaySession {
     private getMainWindow: () => BrowserWindow | null,
     private store: Store,
     private portForwardManager: SshPortForwardManager,
+    private runtime?: OrcaRuntimeService,
     private onDetectedPortsChanged?: (
       targetId: string,
       ports: DetectedPort[],
@@ -462,6 +464,7 @@ export class SshRelaySession {
   private wireUpPtyEvents(ptyProvider: SshPtyProvider): void {
     const getWin = this.getMainWindow
     ptyProvider.onData((payload) => {
+      this.runtime?.onPtyData(payload.id, payload.data, Date.now())
       const win = getWin()
       if (win && !win.isDestroyed()) {
         win.webContents.send('pty:data', payload)
@@ -476,6 +479,7 @@ export class SshRelaySession {
     ptyProvider.onExit((payload) => {
       clearProviderPtyState(payload.id)
       deletePtyOwnership(payload.id)
+      this.runtime?.onPtyExit(payload.id, payload.code)
       const win = getWin()
       if (win && !win.isDestroyed()) {
         win.webContents.send('pty:exit', payload)

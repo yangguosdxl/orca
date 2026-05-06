@@ -1,3 +1,7 @@
+/* eslint-disable max-lines -- Why: all GitHub IPC handlers stay co-located so
+the repo-path validation, preference-threading, and stats wiring patterns are
+reviewable as one surface. Splitting by feature area would risk drifting
+validation/gate conventions across handler files. */
 import { ipcMain } from 'electron'
 import { resolve } from 'path'
 import type { Repo, GitHubIssueUpdate } from '../../shared/types'
@@ -11,6 +15,7 @@ import {
   listWorkItems,
   countWorkItems,
   getWorkItem,
+  getWorkItemByOwnerRepo,
   createIssue,
   updateIssue,
   addIssueComment,
@@ -28,7 +33,45 @@ import {
   starOrca
 } from '../github/client'
 import { getWorkItemDetails, getPRFileContents } from '../github/work-item-details'
+import { getRateLimit } from '../github/rate-limit'
+import { diagnoseGhAuth } from '../github/auth-diagnose'
 import type { GitHubPRFile } from '../../shared/types'
+import { dispatchWorkItem, type WorkItemArgs } from './github-work-item-args'
+import {
+  getProjectViewTable,
+  listAccessibleProjects,
+  resolveProjectRef,
+  listProjectViews,
+  getWorkItemDetailsBySlug,
+  updateProjectItemFieldValue,
+  clearProjectItemFieldValue,
+  updateIssueBySlug,
+  updatePullRequestBySlug,
+  addIssueCommentBySlug,
+  updateIssueCommentBySlug,
+  deleteIssueCommentBySlug,
+  listLabelsBySlug,
+  listAssignableUsersBySlug,
+  listIssueTypesBySlug,
+  updateIssueTypeBySlug
+} from '../github/project-view'
+import type {
+  AddIssueCommentBySlugArgs,
+  ClearProjectItemFieldArgs,
+  DeleteIssueCommentBySlugArgs,
+  GetProjectViewTableArgs,
+  ListAssignableUsersBySlugArgs,
+  ListIssueTypesBySlugArgs,
+  ListLabelsBySlugArgs,
+  ListProjectViewsArgs,
+  ProjectWorkItemDetailsBySlugArgs,
+  ResolveProjectRefArgs,
+  UpdateIssueBySlugArgs,
+  UpdateIssueCommentBySlugArgs,
+  UpdateIssueTypeBySlugArgs,
+  UpdateProjectItemFieldArgs,
+  UpdatePullRequestBySlugArgs
+} from '../../shared/github-project-types'
 
 // Why: returns the full Repo object instead of just the path string so that
 // callers have access to repo.id for stat tracking and other context.
@@ -42,22 +85,25 @@ function assertRegisteredRepo(repoPath: string, store: Store): Repo {
 }
 
 export function registerGitHubHandlers(store: Store, stats: StatsCollector): void {
-  ipcMain.handle('gh:prForBranch', async (_event, args: { repoPath: string; branch: string }) => {
-    const repo = assertRegisteredRepo(args.repoPath, store)
-    const pr = await getPRForBranch(repo.path, args.branch)
-    // Emit pr_created when a PR is first detected for a branch.
-    // Why here: the renderer polls gh:prForBranch to check PR status per worktree.
-    // This captures PRs opened from any workflow (Orca UI, gh CLI, github.com).
-    if (pr && !stats.hasCountedPR(pr.url)) {
-      stats.record({
-        type: 'pr_created',
-        at: Date.now(),
-        repoId: repo.id,
-        meta: { prNumber: pr.number, prUrl: pr.url }
-      })
+  ipcMain.handle(
+    'gh:prForBranch',
+    async (_event, args: { repoPath: string; branch: string; linkedPRNumber?: number | null }) => {
+      const repo = assertRegisteredRepo(args.repoPath, store)
+      const pr = await getPRForBranch(repo.path, args.branch, args.linkedPRNumber ?? null)
+      // Emit pr_created when a PR is first detected for a branch.
+      // Why here: the renderer polls gh:prForBranch to check PR status per worktree.
+      // This captures PRs opened from any workflow (Orca UI, gh CLI, github.com).
+      if (pr && !stats.hasCountedPR(pr.url)) {
+        stats.record({
+          type: 'pr_created',
+          at: Date.now(),
+          repoId: repo.id,
+          meta: { prNumber: pr.number, prUrl: pr.url }
+        })
+      }
+      return pr
     }
-    return pr
-  })
+  )
 
   ipcMain.handle('gh:issue', (_event, args: { repoPath: string; number: number }) => {
     const repo = assertRegisteredRepo(args.repoPath, store)
@@ -66,14 +112,17 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
 
   ipcMain.handle('gh:listIssues', (_event, args: { repoPath: string; limit?: number }) => {
     const repo = assertRegisteredRepo(args.repoPath, store)
-    return listIssues(repo.path, args.limit)
+    // Why: listIssues now returns { items, error? }. The IPC handler unwraps to
+    // the items array for the existing contract; feature 1's UI consumes the
+    // richer envelope through `gh:listWorkItems` instead.
+    return listIssues(repo.path, args.limit, repo.issueSourcePreference).then((r) => r.items)
   })
 
   ipcMain.handle(
     'gh:createIssue',
     (_event, args: { repoPath: string; title: string; body: string }) => {
       const repo = assertRegisteredRepo(args.repoPath, store)
-      return createIssue(repo.path, args.title, args.body)
+      return createIssue(repo.path, args.title, args.body, repo.issueSourcePreference)
     }
   )
 
@@ -81,24 +130,46 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     'gh:listWorkItems',
     (_event, args: { repoPath: string; limit?: number; query?: string; before?: string }) => {
       const repo = assertRegisteredRepo(args.repoPath, store)
-      return listWorkItems(repo.path, args.limit, args.query, args.before)
+      return listWorkItems(
+        repo.path,
+        args.limit,
+        args.query,
+        args.before,
+        repo.issueSourcePreference
+      )
     }
   )
 
   ipcMain.handle('gh:countWorkItems', (_event, args: { repoPath: string; query?: string }) => {
     const repo = assertRegisteredRepo(args.repoPath, store)
-    return countWorkItems(repo.path, args.query)
+    return countWorkItems(repo.path, args.query, repo.issueSourcePreference)
   })
 
-  ipcMain.handle('gh:workItem', (_event, args: { repoPath: string; number: number }) => {
-    const repo = assertRegisteredRepo(args.repoPath, store)
-    return getWorkItem(repo.path, args.number)
-  })
-
-  ipcMain.handle('gh:workItemDetails', (_event, args: { repoPath: string; number: number }) => {
-    const repo = assertRegisteredRepo(args.repoPath, store)
-    return getWorkItemDetails(repo.path, args.number)
-  })
+  ipcMain.handle('gh:workItem', (_event, args: WorkItemArgs) =>
+    dispatchWorkItem(args, assertRegisteredRepo(args.repoPath, store).path, getWorkItem)
+  )
+  ipcMain.handle(
+    'gh:workItemByOwnerRepo',
+    (
+      _event,
+      args: {
+        repoPath: string
+        owner: string
+        repo: string
+        number: number
+        type: 'issue' | 'pr'
+      }
+    ) =>
+      getWorkItemByOwnerRepo(
+        assertRegisteredRepo(args.repoPath, store).path,
+        { owner: args.owner, repo: args.repo },
+        args.number,
+        args.type
+      )
+  )
+  ipcMain.handle('gh:workItemDetails', (_event, args: WorkItemArgs) =>
+    dispatchWorkItem(args, assertRegisteredRepo(args.repoPath, store).path, getWorkItemDetails)
+  )
 
   ipcMain.handle(
     'gh:prFileContents',
@@ -314,16 +385,103 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
 
   ipcMain.handle('gh:listLabels', (_event, args: { repoPath: string }) => {
     const repo = assertRegisteredRepo(args.repoPath, store)
-    return listLabels(repo.path)
+    return listLabels(repo.path, repo.issueSourcePreference)
   })
 
   ipcMain.handle('gh:listAssignableUsers', (_event, args: { repoPath: string }) => {
     const repo = assertRegisteredRepo(args.repoPath, store)
-    return listAssignableUsers(repo.path)
+    return listAssignableUsers(repo.path, repo.issueSourcePreference)
   })
 
   // Star operations target the Orca repo itself — no repoPath validation needed
   ipcMain.handle('gh:viewer', () => getAuthenticatedViewer())
   ipcMain.handle('gh:checkOrcaStarred', () => checkOrcaStarred())
   ipcMain.handle('gh:starOrca', () => starOrca())
+
+  // Why: `rate_limit` is exempt from GitHub's rate-limit accounting, so
+  // polling is cheap. A 30s in-process cache still avoids the gh subprocess
+  // cost on every render — see getRateLimit for the ttl rationale. Force
+  // parameter lets the renderer bust the cache after a known-expensive op
+  // (e.g. post-ProjectPicker discovery) without waiting out the ttl.
+  ipcMain.handle('gh:rateLimit', (_event, args?: { force?: boolean }) =>
+    getRateLimit(args?.force ? { force: true } : undefined)
+  )
+
+  ipcMain.handle('gh:diagnoseAuth', () => diagnoseGhAuth())
+
+  // ── GitHub ProjectV2 view handlers ─────────────────────────────────
+  // Why: registered unconditionally so enabling the experimental flag at
+  // runtime takes effect without a restart. The renderer gates entry points.
+  // Handlers never throw across IPC — every failure mode resolves through the
+  // GitHubProjectViewError envelope.
+
+  ipcMain.handle('gh:listAccessibleProjects', () => listAccessibleProjects())
+
+  ipcMain.handle('gh:resolveProjectRef', (_event, args: ResolveProjectRefArgs) =>
+    resolveProjectRef(args)
+  )
+
+  ipcMain.handle('gh:listProjectViews', (_event, args: ListProjectViewsArgs) =>
+    listProjectViews(args)
+  )
+
+  ipcMain.handle('gh:getProjectViewTable', (_event, args: GetProjectViewTableArgs) =>
+    getProjectViewTable(args)
+  )
+
+  ipcMain.handle(
+    'gh:projectWorkItemDetailsBySlug',
+    (_event, args: ProjectWorkItemDetailsBySlugArgs) => getWorkItemDetailsBySlug(args)
+  )
+
+  ipcMain.handle('gh:updateProjectItemField', (_event, args: UpdateProjectItemFieldArgs) =>
+    updateProjectItemFieldValue(args)
+  )
+
+  ipcMain.handle('gh:clearProjectItemField', (_event, args: ClearProjectItemFieldArgs) =>
+    clearProjectItemFieldValue(args)
+  )
+
+  ipcMain.handle('gh:updateIssueBySlug', (_event, args: UpdateIssueBySlugArgs) =>
+    updateIssueBySlug(args)
+  )
+
+  ipcMain.handle('gh:updatePullRequestBySlug', (_event, args: UpdatePullRequestBySlugArgs) =>
+    updatePullRequestBySlug(args)
+  )
+
+  ipcMain.handle('gh:addIssueCommentBySlug', (_event, args: AddIssueCommentBySlugArgs) =>
+    addIssueCommentBySlug(args)
+  )
+
+  ipcMain.handle('gh:updateIssueCommentBySlug', (_event, args: UpdateIssueCommentBySlugArgs) =>
+    updateIssueCommentBySlug(args)
+  )
+
+  ipcMain.handle('gh:deleteIssueCommentBySlug', (_event, args: DeleteIssueCommentBySlugArgs) =>
+    deleteIssueCommentBySlug(args)
+  )
+
+  ipcMain.handle('gh:listLabelsBySlug', (_event, args: ListLabelsBySlugArgs) =>
+    listLabelsBySlug(args)
+  )
+
+  ipcMain.handle('gh:listAssignableUsersBySlug', (_event, args: ListAssignableUsersBySlugArgs) =>
+    listAssignableUsersBySlug(args)
+  )
+
+  ipcMain.handle('gh:listIssueTypesBySlug', (_event, args: ListIssueTypesBySlugArgs) =>
+    listIssueTypesBySlug(args)
+  )
+
+  ipcMain.handle('gh:updateIssueTypeBySlug', (_event, args: UpdateIssueTypeBySlugArgs) =>
+    updateIssueTypeBySlug(args)
+  )
+
+  // Why: issue-source preference writes go through the generic `repos:update`
+  // IPC (extended in this PR to accept `issueSourcePreference`). Routing
+  // through the same channel keeps a single write path, guarantees the
+  // `repos:changed` broadcast is emitted, and avoids two channels racing to
+  // persist the same field with different validation and eviction semantics.
+  // Reads piggyback on the `Repo` record already delivered by `repos:list`.
 }

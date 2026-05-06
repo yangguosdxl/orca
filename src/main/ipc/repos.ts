@@ -5,14 +5,14 @@ import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import type { Store } from '../persistence'
-import type { Repo, BaseRefDefaultResult } from '../../shared/types'
+import type { Repo, BaseRefDefaultResult, SparsePreset } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { REPO_COLORS } from '../../shared/constants'
 import { rebuildAuthorizedRootsCache } from './filesystem-auth'
 import type { ChildProcess } from 'child_process'
-import { rm } from 'fs/promises'
-import { gitSpawn } from '../git/runner'
-import { join, basename } from 'path'
+import { access, mkdir, readdir, rm } from 'fs/promises'
+import { gitExecFileAsync, gitSpawn } from '../git/runner'
+import { basename, isAbsolute, join } from 'path'
 import {
   isGitRepo,
   getGitUsername,
@@ -28,6 +28,26 @@ import {
 } from '../git/repo'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getActiveMultiplexer } from './ssh'
+import { normalizeSparseDirectories } from './sparse-checkout-directories'
+import { track } from '../telemetry/client'
+import type { RepoMethod } from '../../shared/telemetry-events'
+
+// Why: `method` answers "which entry point did the user take?", not "what did
+// they add?" — so the IPC the renderer invoked IS the method. We never send
+// the path, URL, or display name. `repos:create` collapses into
+// `folder_picker` because the user's entry was the folder picker, even
+// though main also `git init`s. `drag_drop` is reserved for a future call
+// site; no current renderer surface produces it.
+function emitRepoAdded(method: RepoMethod, alreadyExisted: boolean): void {
+  // Why: re-adding an existing repo (matched by path inside the handler)
+  // is not a new activation event. Suppressing the duplicate keeps the
+  // funnel honest and avoids inflating `repo_added` for users who
+  // re-pick the same folder.
+  if (alreadyExisted) {
+    return
+  }
+  track('repo_added', { method })
+}
 
 // Why: module-scoped so the abort handle survives window re-creation on macOS.
 // registerRepoHandlers is called again when a new BrowserWindow is created,
@@ -50,6 +70,10 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:getBaseRefDefault')
   ipcMain.removeHandler('repos:searchBaseRefs')
   ipcMain.removeHandler('repos:addRemote')
+  ipcMain.removeHandler('repos:create')
+  ipcMain.removeHandler('sparsePresets:list')
+  ipcMain.removeHandler('sparsePresets:save')
+  ipcMain.removeHandler('sparsePresets:remove')
 
   ipcMain.handle('repos:list', () => {
     return store.getRepos()
@@ -69,6 +93,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       // Check if already added
       const existing = store.getRepos().find((r) => r.path === args.path)
       if (existing) {
+        emitRepoAdded('folder_picker', true)
         return { repo: existing }
       }
 
@@ -84,6 +109,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       store.addRepo(repo)
       await rebuildAuthorizedRootsCache(store)
       notifyReposChanged(mainWindow)
+      emitRepoAdded('folder_picker', false)
       return { repo }
     }
   )
@@ -130,6 +156,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         .getRepos()
         .find((r) => r.connectionId === args.connectionId && r.path === resolvedPath)
       if (existing) {
+        emitRepoAdded('folder_picker', true)
         return { repo: existing }
       }
 
@@ -190,6 +217,196 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         mux.notify('session.registerRoot', { rootPath: resolvedPath })
       }
 
+      emitRepoAdded('folder_picker', false)
+      return { repo }
+    }
+  )
+
+  // Creates a new repo or folder from scratch (orca#763). An empty initial
+  // commit is required for git repos so HEAD has a branch ref — Orca's
+  // worktree features all need one.
+  ipcMain.handle(
+    'repos:create',
+    async (
+      _event,
+      args: { parentPath: string; name: string; kind: 'git' | 'folder' }
+    ): Promise<{ repo: Repo } | { error: string }> => {
+      const name = args.name?.trim() ?? ''
+      const parentPath = args.parentPath?.trim() ?? ''
+      // Why: IPC input is untrusted — coerce to the narrow union so a bogus
+      // string (e.g. "x") can't skip git init yet persist as kind: "x" in the
+      // store. Mirrors the coercion in repos:add above.
+      const repoKind: 'git' | 'folder' = args.kind === 'folder' ? 'folder' : 'git'
+
+      if (!name) {
+        return { error: 'Name cannot be empty' }
+      }
+      // Block slashes and ./.. so the name can't escape the chosen parent.
+      // The UI already disables submit in these cases; this guards direct IPC use.
+      if (/[\\/]/.test(name) || name === '.' || name === '..') {
+        return { error: 'Name cannot contain slashes or be "." / ".."' }
+      }
+      if (!parentPath) {
+        return { error: 'Parent directory is required' }
+      }
+      // Why: blocks CWD-relative paths from slipping through the IPC boundary;
+      // the UI uses pickDirectory which returns absolute paths, this guards
+      // direct IPC use (and keeps targetPath stable across process cwd changes).
+      if (!isAbsolute(parentPath)) {
+        return { error: 'Parent directory must be an absolute path' }
+      }
+
+      const targetPath = join(parentPath, name)
+
+      // Dedup by path (same as repos:add) so a double-click on Create doesn't
+      // produce two sidebar entries pointing at the same folder. This is the
+      // first of three dedup checks; see the pre-addRepo check below for why
+      // the race matters even after this one passes.
+      const existing = store.getRepos().find((r) => r.path === targetPath)
+      if (existing) {
+        emitRepoAdded('folder_picker', true)
+        return { repo: existing }
+      }
+
+      // Empty pre-existing directories are allowed (e.g. one the user made in
+      // Finder first). Non-empty ones are rejected so we don't overwrite files.
+      let createdDir = false
+      let targetExists = false
+      try {
+        await access(targetPath)
+        targetExists = true
+      } catch (err) {
+        // Why: only ENOENT means "the path is free to use". Other codes
+        // (EACCES, ENOTDIR, EPERM, ELOOP, ...) mean something is in the way
+        // that mkdir can't fix — surface a precise error instead of falling
+        // through to mkdir and returning a misleading "Failed to create
+        // directory" message.
+        //
+        // Why the message fallback: fs.promises.access always attaches a
+        // NodeJS.ErrnoException code in production, but plain Error objects
+        // thrown in tests / non-Node contexts won't — treat a message that
+        // reads like ENOENT as one so we don't over-reject.
+        const code =
+          err && typeof err === 'object' && 'code' in err
+            ? (err as NodeJS.ErrnoException).code
+            : undefined
+        const looksLikeEnoent =
+          code === 'ENOENT' ||
+          (code === undefined && err instanceof Error && /ENOENT/.test(err.message))
+        if (!looksLikeEnoent) {
+          const message = err instanceof Error ? err.message : String(err)
+          return { error: `Cannot access target path: ${message}` }
+        }
+      }
+
+      if (targetExists) {
+        try {
+          const entries = await readdir(targetPath)
+          if (entries.length > 0) {
+            return {
+              error: `"${name}" already exists at this location and is not empty.`
+            }
+          }
+        } catch (err) {
+          // Why: access succeeded but readdir failed — the path exists but we
+          // can't inspect it (e.g. it's a file, not a directory; or perms).
+          // mkdir would definitely fail here too, so return a distinct error.
+          const message = err instanceof Error ? err.message : String(err)
+          return { error: `Failed to read directory: ${message}` }
+        }
+      } else {
+        try {
+          await mkdir(targetPath, { recursive: false })
+          createdDir = true
+        } catch (err) {
+          // Why: EEXIST here means another concurrent repos:create for the
+          // same path won the mkdir race. If they already added the repo to
+          // the store, return that entry instead of a confusing error. This
+          // is the second dedup check; see the pre-addRepo check below for
+          // the full race explanation.
+          const code =
+            err && typeof err === 'object' && 'code' in err
+              ? (err as NodeJS.ErrnoException).code
+              : undefined
+          const isEexist = code === 'EEXIST' || (err instanceof Error && /EEXIST/.test(err.message))
+          if (isEexist) {
+            const raceWinner = store.getRepos().find((r) => r.path === targetPath)
+            if (raceWinner) {
+              return { repo: raceWinner }
+            }
+          }
+          const message = err instanceof Error ? err.message : String(err)
+          return { error: `Failed to create directory: ${message}` }
+        }
+      }
+
+      if (repoKind === 'git') {
+        // Why: track which git step is running so the catch can attribute the
+        // failure correctly. The identity-hint regex is only meaningful during
+        // commit — git init itself never produces "Please tell me who you are".
+        let step: 'init' | 'commit' = 'init'
+        try {
+          await gitExecFileAsync(['init'], { cwd: targetPath })
+          step = 'commit'
+          await gitExecFileAsync(['commit', '--allow-empty', '-m', 'Initial commit'], {
+            cwd: targetPath
+          })
+        } catch (err) {
+          // Only remove the directory if we made it. A pre-existing folder the
+          // user picked must survive so they can retry after fixing git config.
+          // Why: if we didn't make the directory but `git init` created `.git/`
+          // inside it, strip just `.git/` so the user's folder looks the way
+          // they left it. Retrying works either way, but leaving a half-init'd
+          // repo behind is confusing if they choose to skip the retry.
+          if (createdDir) {
+            await rm(targetPath, { recursive: true, force: true }).catch(() => {})
+          } else if (step === 'commit') {
+            await rm(join(targetPath, '.git'), { recursive: true, force: true }).catch(() => {})
+          }
+          const message = err instanceof Error ? err.message : String(err)
+          if (
+            step === 'commit' &&
+            /Please tell me who you are|user\.name|user\.email/i.test(message)
+          ) {
+            return {
+              error:
+                'Git author identity is not configured. Run `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`, then try again.'
+            }
+          }
+          const stepLabel =
+            step === 'init'
+              ? 'Failed to initialize git repository'
+              : 'Failed to create initial commit'
+          return { error: `${stepLabel}: ${message}` }
+        }
+      }
+
+      // Why: ipcMain.handle doesn't serialize concurrent calls; re-running the
+      // dedup lookup here closes the window between the first check and
+      // addRepo. A second repos:create for the same path that raced past the
+      // initial dedup now returns the entry the first call persisted.
+      const raceWinner = store.getRepos().find((r) => r.path === targetPath)
+      if (raceWinner) {
+        // Why: do NOT rm even if this invocation created the directory — the
+        // other invocation is using it. Leaking a freshly-made empty folder on
+        // a rare race is strictly safer than deleting a directory the winning
+        // call (and the user) now owns.
+        return { repo: raceWinner }
+      }
+
+      const repo: Repo = {
+        id: randomUUID(),
+        path: targetPath,
+        displayName: name,
+        badgeColor: REPO_COLORS[store.getRepos().length % REPO_COLORS.length],
+        addedAt: Date.now(),
+        kind: repoKind
+      }
+
+      store.addRepo(repo)
+      await rebuildAuthorizedRootsCache(store)
+      notifyReposChanged(mainWindow)
+      emitRepoAdded('folder_picker', false)
       return { repo }
     }
   )
@@ -207,17 +424,103 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       args: {
         repoId: string
         updates: Partial<
-          Pick<Repo, 'displayName' | 'badgeColor' | 'hookSettings' | 'worktreeBaseRef' | 'kind'>
+          Pick<
+            Repo,
+            | 'displayName'
+            | 'badgeColor'
+            | 'hookSettings'
+            | 'worktreeBaseRef'
+            | 'kind'
+            | 'symlinkPaths'
+            | 'issueSourcePreference'
+          >
         >
       }
     ) => {
-      const updated = store.updateRepo(args.repoId, args.updates)
+      // Why: validate the persisted preference string at the IPC boundary
+      // — the TypeScript signature is erased at runtime, and a preload
+      // version skew or renderer bug could otherwise persist a garbage
+      // string that silently collapses to 'auto' in `resolveIssueSource`
+      // (see gh-utils.ts#resolveIssueSource). Strip rather than throw so
+      // other valid fields in the same call still persist.
+      const updates = { ...args.updates }
+      if (
+        'issueSourcePreference' in updates &&
+        updates.issueSourcePreference !== undefined &&
+        updates.issueSourcePreference !== 'upstream' &&
+        updates.issueSourcePreference !== 'origin' &&
+        updates.issueSourcePreference !== 'auto'
+      ) {
+        delete updates.issueSourcePreference
+      }
+      // Why: `symlinkPaths` is consumed by `createWorktreeSymlinks` which
+      // calls `.trim()` on each entry. A renderer bug or preload-version skew
+      // that persists a non-`string[]` value (e.g. `[42, null]`, a bare
+      // string) would throw inside the worktree-create path with no UI
+      // signal. Strip invalid shapes at the boundary the same way
+      // `issueSourcePreference` is validated above.
+      if ('symlinkPaths' in updates && updates.symlinkPaths !== undefined) {
+        const v = updates.symlinkPaths as unknown
+        if (!Array.isArray(v) || !v.every((e) => typeof e === 'string')) {
+          delete updates.symlinkPaths
+        }
+      }
+      const updated = store.updateRepo(args.repoId, updates)
       if (updated) {
         notifyReposChanged(mainWindow)
       }
       return updated
     }
   )
+
+  // ── Sparse presets ─────────────────────────────────────────────
+  // Why: presets are repo-scoped reusable directory lists used by the
+  // new-workspace composer. Persisted via Store and broadcast back to the
+  // renderer so any open composer reflects new/edited/deleted presets
+  // immediately.
+
+  ipcMain.handle('sparsePresets:list', (_event, args: { repoId: string }) => {
+    return store.getSparsePresets(args.repoId)
+  })
+
+  ipcMain.handle(
+    'sparsePresets:save',
+    (
+      _event,
+      args: { repoId: string; id?: string; name: string; directories: string[] }
+    ): SparsePreset => {
+      const repo = store.getRepo(args.repoId)
+      if (!repo) {
+        throw new Error(`Repo "${args.repoId}" not found`)
+      }
+      const name = normalizeSparsePresetName(args.name)
+      const directories = normalizeSparsePresetDirectories(args.directories)
+      const now = Date.now()
+      const existing = args.id
+        ? store.getSparsePresets(args.repoId).find((preset) => preset.id === args.id)
+        : undefined
+      const preset: SparsePreset = {
+        id: existing?.id ?? randomUUID(),
+        repoId: args.repoId,
+        name,
+        directories,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      }
+      const saved = store.saveSparsePreset(preset)
+      notifySparsePresetsChanged(mainWindow, args.repoId)
+      return saved
+    }
+  )
+
+  ipcMain.handle('sparsePresets:remove', (_event, args: { repoId: string; presetId: string }) => {
+    const repo = store.getRepo(args.repoId)
+    if (!repo) {
+      throw new Error(`Repo "${args.repoId}" not found`)
+    }
+    store.removeSparsePreset(args.repoId, args.presetId)
+    notifySparsePresetsChanged(mainWindow, args.repoId)
+  })
 
   ipcMain.handle('repos:pickFolder', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -282,7 +585,9 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         // Why: clone destination may be a WSL path (e.g. user picks a WSL
         // directory). Use the parent destination as the cwd so the runner
         // detects WSL and routes through wsl.exe.
-        const proc = gitSpawn(['clone', '--progress', args.url, clonePath], {
+        // Why: use the '--' separator to isolate the URL argument and prevent
+        // malicious URLs from being interpreted as git flags (command injection).
+        const proc = gitSpawn(['clone', '--progress', '--', args.url, clonePath], {
           cwd: args.destination,
           stdio: ['ignore', 'ignore', 'pipe']
         })
@@ -341,9 +646,12 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           const updated = store.updateRepo(existing.id, { kind: 'git' })
           if (updated) {
             notifyReposChanged(mainWindow)
+            // Why: folder→git upgrade is a real new git repo provisioning event.
+            emitRepoAdded('clone_url', false)
             return updated
           }
         }
+        emitRepoAdded('clone_url', true)
         return existing
       }
 
@@ -359,6 +667,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       store.addRepo(repo)
       await rebuildAuthorizedRootsCache(store)
       notifyReposChanged(mainWindow)
+      emitRepoAdded('clone_url', false)
       return repo
     }
   )
@@ -511,4 +820,40 @@ function notifyReposChanged(mainWindow: BrowserWindow): void {
   if (!mainWindow.isDestroyed()) {
     mainWindow.webContents.send('repos:changed')
   }
+}
+
+function notifySparsePresetsChanged(mainWindow: BrowserWindow, repoId: string): void {
+  if (!mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sparsePresets:changed', { repoId })
+  }
+}
+
+function normalizeSparsePresetName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error('Preset name is required.')
+  }
+  if (trimmed.length > 80) {
+    throw new Error('Preset name is too long.')
+  }
+  return trimmed
+}
+
+function normalizeSparsePresetDirectories(directories: string[]): string[] {
+  let normalized: string[]
+  try {
+    normalized = normalizeSparseDirectories(directories)
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message === 'Sparse checkout directories must be repo-relative paths.'
+    ) {
+      throw new Error('Preset directories must be repo-relative paths.')
+    }
+    throw err
+  }
+  if (normalized.length === 0) {
+    throw new Error('Preset must have at least one directory.')
+  }
+  return normalized
 }

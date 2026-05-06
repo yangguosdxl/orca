@@ -163,20 +163,27 @@ describe('useIpcEvents updater integration', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
           onRequestTabClose: () => () => {},
           replyTabClose: () => {},
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -196,6 +203,11 @@ describe('useIpcEvents updater integration', () => {
           get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
           onUpdate: () => () => {}
         },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
         ssh: {
           listTargets: () => Promise.resolve([]),
           listPortForwards: () => Promise.resolve([]),
@@ -209,7 +221,8 @@ describe('useIpcEvents updater integration', () => {
             credentialResolvedListenerRef.current = listener
             return () => {}
           }
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -349,20 +362,27 @@ describe('useIpcEvents updater integration', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
           onRequestTabClose: () => () => {},
           replyTabClose: () => {},
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -379,6 +399,11 @@ describe('useIpcEvents updater integration', () => {
           get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
           onUpdate: () => () => {}
         },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
         ssh: {
           listTargets: () => Promise.resolve([]),
           listPortForwards: () => Promise.resolve([]),
@@ -392,7 +417,8 @@ describe('useIpcEvents updater integration', () => {
           onCredentialResolved: () => () => {},
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -452,6 +478,7 @@ describe('useIpcEvents updater integration', () => {
           createTab,
           setActiveView,
           setActiveWorktree,
+          markWorktreeVisited: vi.fn(),
           setActiveTabType,
           setActiveTab,
           revealWorktreeInSidebar,
@@ -533,20 +560,27 @@ describe('useIpcEvents updater integration', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
           onRequestTabClose: () => () => {},
           replyTabClose: vi.fn(),
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -563,6 +597,11 @@ describe('useIpcEvents updater integration', () => {
           get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
           onUpdate: () => () => {}
         },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
         ssh: {
           listTargets: () => Promise.resolve([]),
           listPortForwards: () => Promise.resolve([]),
@@ -573,7 +612,8 @@ describe('useIpcEvents updater integration', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -720,6 +760,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
@@ -734,15 +775,21 @@ describe('useIpcEvents browser tab close routing', () => {
             return () => {}
           },
           replyTabClose,
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -769,7 +816,13 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -901,6 +954,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
@@ -915,15 +969,21 @@ describe('useIpcEvents browser tab close routing', () => {
             return () => {}
           },
           replyTabClose,
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -950,7 +1010,13 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1077,6 +1143,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
@@ -1091,15 +1158,21 @@ describe('useIpcEvents browser tab close routing', () => {
             return () => {}
           },
           replyTabClose,
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -1126,7 +1199,13 @@ describe('useIpcEvents browser tab close routing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1271,20 +1350,27 @@ describe('useIpcEvents shortcut hint clearing', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
           onRequestTabClose: () => () => {},
           replyTabClose: () => {},
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -1301,6 +1387,11 @@ describe('useIpcEvents shortcut hint clearing', () => {
           get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
           onUpdate: () => () => {}
         },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
         ssh: {
           listTargets: () => Promise.resolve([]),
           listPortForwards: () => Promise.resolve([]),
@@ -1311,7 +1402,8 @@ describe('useIpcEvents shortcut hint clearing', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 
@@ -1463,20 +1555,27 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onRenameTerminal: () => () => {},
           onFocusTerminal: () => () => {},
           onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
           onNewBrowserTab: () => () => {},
           onRequestTabCreate: () => () => {},
           replyTabCreate: () => {},
           onRequestTabClose: () => () => {},
           replyTabClose: () => {},
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
           onNewTerminalTab: () => () => {},
           onCloseActiveTab: () => () => {},
           onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
           onSwitchTerminalTab: () => () => {},
           onToggleStatusBar: () => () => {},
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
           set: vi.fn()
+        },
+        settings: {
+          onChanged: () => () => {}
         },
         updater: {
           getStatus: () => Promise.resolve({ state: 'idle' }),
@@ -1503,7 +1602,13 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onPortForwardsChanged: () => () => {},
           onDetectedPortsChanged: () => () => {},
           onCredentialResolved: () => () => {}
-        }
+        },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
+        agentStatus: { onSet: () => () => {} }
       }
     })
 

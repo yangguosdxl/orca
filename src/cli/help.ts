@@ -39,9 +39,35 @@ Terminals:
   terminal focus            Alias for terminal switch
   terminal close            Close a terminal pane (or tab if last pane)
 
+Orchestration:
+  orchestration send        Send an inter-agent message
+  orchestration check       Check messages for a terminal
+  orchestration reply       Reply to a message
+  orchestration inbox       Show all messages across recipients
+  orchestration task-create Create an orchestration task
+  orchestration task-list   List orchestration tasks
+  orchestration task-update Update a task status
+  orchestration dispatch    Dispatch a task to a terminal
+  orchestration dispatch-show Show dispatch context for a task
+  orchestration run         Start the coordinator loop
+  orchestration run-stop    Stop the active coordinator run
+  orchestration gate-create Create a decision gate blocking a task
+  orchestration gate-resolve Resolve a pending decision gate
+  orchestration gate-list   List decision gates
+  orchestration reset       Reset orchestration state
+
 Browser Automation:
   tab create                Create a new browser tab (navigates to --url)
   tab list                  List open browser tabs
+  tab show                  Show one browser tab by page id
+  tab current               Show the current browser tab
+  tab profile list          List browser session profiles
+  tab profile create        Create a browser session profile
+  tab profile delete        Delete a browser session profile
+  tab profile set           Switch a browser tab to a different profile
+  tab profile show          Show the profile bound to a browser tab
+  tab profile use-default   Switch a browser tab back to the default profile
+  tab profile clone         Clone a browser tab into another profile
   tab switch                Switch the active browser tab by --index or --page
   tab close                 Close a browser tab by --index/--page or the current tab
   snapshot                  Accessibility snapshot with element refs (e.g. @e1, @e2)
@@ -98,11 +124,11 @@ Common Commands:
   orca open [--json]
   orca status [--json]
   orca worktree list [--repo <selector>] [--limit <n>] [--json]
-  orca worktree create --repo <selector> --name <name> [--base-branch <ref>] [--issue <number>] [--comment <text>] [--json]
+  orca worktree create --repo <selector> --name <name> [--base-branch <ref>] [--issue <number>] [--comment <text>] [--run-hooks] [--json]
   orca worktree show --worktree <selector> [--json]
   orca worktree current [--json]
   orca worktree set --worktree <selector> [--display-name <name>] [--issue <number|null>] [--comment <text>] [--json]
-  orca worktree rm --worktree <selector> [--force] [--json]
+  orca worktree rm --worktree <selector> [--force] [--run-hooks] [--json]
   orca worktree ps [--limit <n>] [--json]
   orca terminal list [--worktree <selector>] [--limit <n>] [--json]
   orca terminal show [--terminal <handle>] [--json]
@@ -166,6 +192,8 @@ Browser Options:
   --amount <pixels>         Scroll distance in pixels (default: viewport height)
   --index <n>               Tab index (from \`tab list\`)
   --page <id>               Stable browser page id (preferred for concurrent workflows)
+  --profile <id>            Browser profile id
+  --show-profile            Include the tab's browser profile in text output
   --format <png|jpeg>       Screenshot image format
   --from <ref>              Drag source element ref
   --to <ref>                Drag target element ref
@@ -185,7 +213,10 @@ Examples:
   $ orca terminal list --worktree path:/Users/me/orca/workspaces/orca/cli-test-1 --json
   $ orca terminal send --terminal term_123 --text "hi" --enter
   $ orca terminal wait --terminal term_123 --for exit --timeout-ms 60000 --json
-  $ orca tab create --url https://example.com
+  $ orca tab current --json
+  $ orca tab show --page page_123 --json
+  $ orca tab create --url https://example.com --profile work
+  $ orca tab profile clone --page page_123 --profile work --json
   $ orca snapshot
   $ orca click --element e3
   $ orca fill --element e5 --value "hello"
@@ -289,6 +320,8 @@ export function formatFlagHelp(flag: string): string {
     amount: '--amount <pixels>      Scroll distance in pixels',
     index: '--index <n>            Tab index to switch to',
     page: '--page <id>            Stable browser page id from `orca tab list --json`',
+    profile: '--profile <id>        Browser profile id',
+    'show-profile': '--show-profile        Include tab profile in text output',
     format: '--format <png|jpeg>    Screenshot image format'
   }
 
