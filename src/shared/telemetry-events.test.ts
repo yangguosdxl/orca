@@ -7,9 +7,12 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_KIND_VALUES,
   agentKindSchema,
+  CLI_EVENT_NAMES,
+  CLI_FEATURE_GROUP_VALUES,
   commonPropsSchema,
   errorClassSchema,
   eventSchemas,
+  isCliEventName,
   SETTINGS_CHANGED_WHITELIST,
   settingsChangedKeySchema
 } from './telemetry-events'
@@ -185,6 +188,85 @@ describe('commonPropsSchema', () => {
       orca_channel: 'stable'
     })
     expect(parsed.success).toBe(false)
+  })
+})
+
+describe('cli_feature_used schema', () => {
+  it('round-trips a minimal valid payload', () => {
+    const parsed = eventSchemas.cli_feature_used.safeParse({
+      feature_group: 'browser_observation',
+      exit_status: 'success'
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts every declared feature_group value', () => {
+    for (const group of CLI_FEATURE_GROUP_VALUES) {
+      const parsed = eventSchemas.cli_feature_used.safeParse({
+        feature_group: group,
+        exit_status: 'success'
+      })
+      expect(parsed.success).toBe(true)
+    }
+  })
+
+  it('rejects unknown feature_group values', () => {
+    const parsed = eventSchemas.cli_feature_used.safeParse({
+      feature_group: 'made_up_group',
+      exit_status: 'success'
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects unknown exit_status values', () => {
+    const parsed = eventSchemas.cli_feature_used.safeParse({
+      feature_group: 'discovery',
+      exit_status: 'partial'
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  // The whole point of the wire-shape constraint: the CLI never transmits a
+  // raw command name, URL, error message, or path. `.strict()` enforces this
+  // at the schema level — any extra key drops the event.
+  it('rejects extra keys via .strict() (no command name leak, no error_message)', () => {
+    const withCommand = eventSchemas.cli_feature_used.safeParse({
+      feature_group: 'browser_navigation',
+      exit_status: 'success',
+      command: 'goto'
+    })
+    expect(withCommand.success).toBe(false)
+
+    const withErrorMessage = eventSchemas.cli_feature_used.safeParse({
+      feature_group: 'browser_navigation',
+      exit_status: 'failure',
+      error_message: 'ENOENT: no such file'
+    })
+    expect(withErrorMessage.success).toBe(false)
+  })
+})
+
+describe('isCliEventName', () => {
+  it('accepts every CLI_EVENT_NAMES entry', () => {
+    for (const name of CLI_EVENT_NAMES) {
+      expect(isCliEventName(name)).toBe(true)
+    }
+  })
+
+  // The narrow exists so a CLI process cannot spoof main-owned events
+  // (`agent_started`, `telemetry_opted_in`, etc.) via the runtime RPC
+  // method. If these ever pass, `methods/telemetry.ts` would be a
+  // privilege-escalation surface.
+  it('rejects main-owned event names', () => {
+    expect(isCliEventName('app_opened')).toBe(false)
+    expect(isCliEventName('agent_started')).toBe(false)
+    expect(isCliEventName('telemetry_opted_in')).toBe(false)
+    expect(isCliEventName('settings_changed')).toBe(false)
+  })
+
+  it('rejects unknown event names', () => {
+    expect(isCliEventName('made_up_event')).toBe(false)
+    expect(isCliEventName('')).toBe(false)
   })
 })
 

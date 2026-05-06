@@ -1,5 +1,6 @@
 import type { RuntimeClient } from './runtime-client'
 import { RuntimeClientError } from './runtime-client'
+import { recordCliFeatureUsed } from './telemetry'
 import { CORE_HANDLERS } from './handlers/core'
 import { REPO_HANDLERS } from './handlers/repo'
 import { WORKTREE_HANDLERS } from './handlers/worktree'
@@ -58,5 +59,17 @@ export async function dispatch(commandPath: string[], ctx: HandlerContext): Prom
   if (!handler) {
     throw new RuntimeClientError('invalid_argument', `Unknown command: ${commandPath.join(' ')}`)
   }
-  await handler(ctx)
+  // Why: telemetry is fire-at-action — emit on the first call in a feature
+  // group with that call's exit_status, then never again for this process.
+  // The recording call is non-blocking and silent on failure, so it cannot
+  // observably affect the command. We record `failure` if the handler
+  // throws and `success` otherwise, then re-throw to preserve the original
+  // error path. No buffering, no process-exit flush.
+  try {
+    await handler(ctx)
+  } catch (error) {
+    recordCliFeatureUsed(commandPath, 'failure')
+    throw error
+  }
+  recordCliFeatureUsed(commandPath, 'success')
 }

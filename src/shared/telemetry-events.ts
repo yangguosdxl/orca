@@ -110,6 +110,27 @@ export type RequestKind = z.infer<typeof requestKindSchema>
 export const optInViaSchema = z.enum(['first_launch_banner', 'settings'])
 export type OptInVia = z.infer<typeof optInViaSchema>
 
+// CLI feature groups for `cli_feature_used`. Coarse buckets — finer
+// per-command granularity is intentionally deferred (see
+// docs/cli-telemetry-design.md §"What we explicitly do not ship"). The CLI
+// process dedupes per `(feature_group, process)`, so a single agent loop
+// that snapshots the page hundreds of times produces exactly one
+// `browser_observation` event for that whole process.
+export const CLI_FEATURE_GROUP_VALUES = [
+  'worktree_orchestration',
+  'terminal_orchestration',
+  'terminal_io',
+  'browser_navigation',
+  'browser_observation',
+  'browser_interaction',
+  'browser_config',
+  'orchestration_coordinator',
+  'orchestration_messaging',
+  'discovery'
+] as const
+export const cliFeatureGroupSchema = z.enum(CLI_FEATURE_GROUP_VALUES)
+export type CliFeatureGroup = z.infer<typeof cliFeatureGroupSchema>
+
 // Whitelist of settings whose `setting_key` may be emitted on
 // `settings_changed`. If a setting isn't in this list, we do not emit.
 //
@@ -187,6 +208,16 @@ const settingsChangedSchema = z
 const telemetryOptedInSchema = z.object({ via: optInViaSchema }).strict()
 const telemetryOptedOutSchema = z.object({ via: optInViaSchema }).strict()
 
+// First-write-wins per `(feature_group, CLI process)`: emitted on the first
+// call to a group, carrying that call's `exit_status`; subsequent calls in
+// the same process never re-emit. See docs/cli-telemetry-design.md §Events.
+const cliFeatureUsedSchema = z
+  .object({
+    feature_group: cliFeatureGroupSchema,
+    exit_status: z.enum(['success', 'failure'])
+  })
+  .strict()
+
 // ── Event registry: the one record the validator consumes ───────────────
 //
 // The validator does `eventSchemas[name].safeParse(props)`. `EventMap` is
@@ -212,8 +243,20 @@ export const eventSchemas = {
   settings_changed: settingsChangedSchema,
 
   telemetry_opted_in: telemetryOptedInSchema,
-  telemetry_opted_out: telemetryOptedOutSchema
+  telemetry_opted_out: telemetryOptedOutSchema,
+
+  cli_feature_used: cliFeatureUsedSchema
 } as const
+
+// CLI-eligible event subset: the runtime RPC method narrows the incoming
+// `name` to this set so the CLI process can never emit non-CLI events
+// (e.g. `agent_started`) by spoofing the wire. Keep aligned with the
+// `cli_*` prefix convention.
+export const CLI_EVENT_NAMES = ['cli_feature_used'] as const
+export type CliEventName = (typeof CLI_EVENT_NAMES)[number]
+export function isCliEventName(name: string): name is CliEventName {
+  return (CLI_EVENT_NAMES as readonly string[]).includes(name)
+}
 
 export type EventMap = { [N in keyof typeof eventSchemas]: z.infer<(typeof eventSchemas)[N]> }
 export type EventName = keyof EventMap

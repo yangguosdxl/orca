@@ -1,6 +1,11 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["../src/cli/**/*", "../src/shared/**/*", "../src/main/runtime/runtime-metadata.ts"],
+  "include": [
+    "../src/cli/**/*",
+    "../src/shared/**/*",
+    "../src/main/runtime/runtime-metadata.ts",
+    "../src/types/**/*"
+  ],
   "compilerOptions": {
     "composite": true,
     "module": "CommonJS",
