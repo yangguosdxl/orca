@@ -6,13 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // renderer cannot churn the persistence path.
 
 const clearPaneState = vi.fn()
+const getStatusSnapshot = vi.fn()
 const onHandlers = new Map<string, (event: unknown, ...args: unknown[]) => void>()
+const handleHandlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
 const removeHandler = vi.fn()
 const removeAllListeners = vi.fn()
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: vi.fn(),
+    handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
+      handleHandlers.set(channel, handler)
+    },
     on: (channel: string, handler: (event: unknown, ...args: unknown[]) => void) => {
       onHandlers.set(channel, handler)
     },
@@ -23,7 +27,8 @@ vi.mock('electron', () => ({
 
 vi.mock('../agent-hooks/server', () => ({
   agentHookServer: {
-    clearPaneState
+    clearPaneState,
+    getStatusSnapshot
   }
 }))
 
@@ -42,13 +47,53 @@ vi.mock('../cursor/hook-service', () => ({
 
 beforeEach(() => {
   clearPaneState.mockReset()
+  getStatusSnapshot.mockReset()
   onHandlers.clear()
+  handleHandlers.clear()
   removeHandler.mockReset()
   removeAllListeners.mockReset()
 })
 
 afterEach(() => {
   vi.resetModules()
+})
+
+describe('agentStatus:getSnapshot IPC', () => {
+  it('returns the hook cache snapshot when the experimental dashboard is on', async () => {
+    const snapshot = [
+      {
+        paneKey: 'tab-1:0',
+        state: 'done',
+        prompt: 'p',
+        agentType: 'claude',
+        receivedAt: 1_700_000_000_000,
+        stateStartedAt: 1_699_999_999_000
+      }
+    ]
+    getStatusSnapshot.mockReturnValue(snapshot)
+    const { registerAgentHookHandlers } = await import('./agent-hooks')
+    const store = {
+      getSettings: () => ({ experimentalAgentDashboard: true })
+    } as { getSettings: () => { experimentalAgentDashboard: boolean } }
+    registerAgentHookHandlers(store as unknown as Parameters<typeof registerAgentHookHandlers>[0])
+
+    const handler = handleHandlers.get('agentStatus:getSnapshot')
+    expect(handler).toBeDefined()
+    expect(handler!({})).toEqual(snapshot)
+  })
+
+  it('returns an empty snapshot when the experimental dashboard is off', async () => {
+    getStatusSnapshot.mockReturnValue([{ paneKey: 'tab-1:0' }])
+    const { registerAgentHookHandlers } = await import('./agent-hooks')
+    const store = {
+      getSettings: () => ({ experimentalAgentDashboard: false })
+    } as { getSettings: () => { experimentalAgentDashboard: boolean } }
+    registerAgentHookHandlers(store as unknown as Parameters<typeof registerAgentHookHandlers>[0])
+
+    const handler = handleHandlers.get('agentStatus:getSnapshot')!
+    expect(handler({})).toEqual([])
+    expect(getStatusSnapshot).not.toHaveBeenCalled()
+  })
 })
 
 describe('agentStatus:drop IPC', () => {
@@ -84,9 +129,10 @@ describe('agentStatus:drop IPC', () => {
     registerAgentHookHandlers(store as unknown as Parameters<typeof registerAgentHookHandlers>[0])
 
     const handler = onHandlers.get('agentStatus:drop')!
-    handler({}, 123)
-    handler({}, undefined)
-    handler({}, '')
+    const bad: unknown[] = [123, undefined, '', null, {}, []]
+    for (const value of bad) {
+      expect(() => handler({}, value)).not.toThrow()
+    }
     expect(clearPaneState).not.toHaveBeenCalled()
   })
 })

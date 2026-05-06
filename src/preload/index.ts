@@ -61,7 +61,7 @@ import type {
   PortForwardEntry,
   DetectedPort
 } from '../shared/ssh-types'
-import type { AgentStatusState } from '../shared/agent-status-types'
+import type { AgentStatusIpcPayload } from '../shared/agent-status-types'
 import type { TelemetryConsentState } from '../shared/telemetry-consent-types'
 import type { AgentKind, LaunchSource, RequestKind } from '../shared/telemetry-events'
 import {
@@ -2149,38 +2149,17 @@ const api = {
 
   agentStatus: {
     /** Listen for agent status updates forwarded from native hook receivers. */
-    onSet: (
-      callback: (data: {
-        paneKey: string
-        tabId?: string
-        worktreeId?: string
-        state: AgentStatusState
-        prompt?: string
-        agentType?: string
-        toolName?: string
-        toolInput?: string
-        lastAssistantMessage?: string
-        interrupted?: boolean
-      }) => void
-    ): (() => void) => {
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        data: {
-          paneKey: string
-          tabId?: string
-          worktreeId?: string
-          state: AgentStatusState
-          prompt?: string
-          agentType?: string
-          toolName?: string
-          toolInput?: string
-          lastAssistantMessage?: string
-          interrupted?: boolean
-        }
-      ) => callback(data)
+    onSet: (callback: (data: AgentStatusIpcPayload) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: AgentStatusIpcPayload) =>
+        callback(data)
       ipcRenderer.on('agentStatus:set', listener)
       return () => ipcRenderer.removeListener('agentStatus:set', listener)
     },
+    /** Pull the current cached hook statuses after renderer settings/session
+     *  hydration. This avoids losing startup replays before the renderer
+     *  knows whether the dashboard is enabled or which tabs exist. */
+    getSnapshot: (): Promise<AgentStatusIpcPayload[]> =>
+      ipcRenderer.invoke('agentStatus:getSnapshot'),
     /** Drop the cached hook status for a paneKey on both sides — main-process
      *  cache (lastStatusByPaneKey) and on-disk last-status file. Fired from
      *  the renderer when the user dismisses a retained row so a relaunch

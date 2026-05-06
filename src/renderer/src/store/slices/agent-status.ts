@@ -51,7 +51,8 @@ export type AgentStatusSlice = {
   setAgentStatus: (
     paneKey: string,
     payload: ParsedAgentStatusPayload,
-    terminalTitle?: string
+    terminalTitle?: string,
+    timing?: { updatedAt?: number; stateStartedAt?: number }
   ) => void
 
   /** Remove a single entry (e.g., when a pane's terminal exits). */
@@ -121,9 +122,16 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     retainedAgentsByPaneKey: {},
     retentionSuppressedPaneKeys: {},
 
-    setAgentStatus: (paneKey, payload, terminalTitle) => {
+    setAgentStatus: (paneKey, payload, terminalTitle, timing) => {
+      const updatedAt = timing?.updatedAt ?? Date.now()
       set((s) => {
         const existing = s.agentStatusByPaneKey[paneKey]
+        // Why: startup snapshots are pulled asynchronously. If a newer live
+        // push already landed for this pane, ignore the older snapshot entry
+        // instead of rolling the visible status backward.
+        if (existing && updatedAt < existing.updatedAt) {
+          return s
+        }
         // Why: terminalTitle is identity-like — it labels the pane itself, not
         // the current turn's activity. Preserve the prior value when a ping
         // omits it so the pane label does not flicker out between hook events.
@@ -158,13 +166,14 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           }
         }
 
-        const now = Date.now()
         // Why: stateStartedAt anchors to the first time this state was
         // reported. Carry forward the prior value on tool/prompt pings within
         // the same state so stateHistory[].startedAt reflects true state-onset
         // (see AgentStatusEntry.stateStartedAt docs).
         const stateStartedAt =
-          existing && existing.state === payload.state ? existing.stateStartedAt : now
+          existing && existing.state === payload.state
+            ? existing.stateStartedAt
+            : (timing?.stateStartedAt ?? updatedAt)
 
         // Why: tool/assistant fields come pre-merged from the main-process
         // cache (see `resolveToolState` in server.ts), so the payload always
@@ -174,7 +183,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         const entry: AgentStatusEntry = {
           state: payload.state,
           prompt: payload.prompt,
-          updatedAt: now,
+          updatedAt,
           stateStartedAt,
           // Why: unlike tool/prompt/assistant fields (which legitimately clear on a
           // fresh turn), agentType is the agent's identity for the pane — it does
@@ -210,14 +219,15 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         //   1. `state` transitions — sort score is a function of state.
         //   2. Freshness transitions (stale → fresh) — `computeSmartScoreFromSignals`
         //      in smart-sort.ts filters entries through
-        //      `isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS)`
+        //      `isExplicitAgentStatusFresh(entry, updatedAt, AGENT_STATUS_STALE_AFTER_MS)`
         //      (30-min TTL). A stale entry that refreshes with the SAME state
         //      goes from "not contributing" to contributing +60 (working) or
-        //      +35 (blocked/waiting) to the score — order must update. The new
-        //      entry below always has `updatedAt = now`, so it is fresh; we
-        //      only need to detect the stale→fresh flip on `existing`.
+        //      +35 (blocked/waiting) to the score — order must update. Snapshot
+        //      hydration can pass an older updatedAt; in that case the entry is
+        //      still stored with its true age, and selectors will immediately
+        //      decay it if it is already stale.
         const wasFresh =
-          !!existing && isExplicitAgentStatusFresh(existing, now, AGENT_STATUS_STALE_AFTER_MS)
+          !!existing && isExplicitAgentStatusFresh(existing, updatedAt, AGENT_STATUS_STALE_AFTER_MS)
         const sortRelevantChange = !existing || existing.state !== payload.state || !wasFresh
         // Why: a new status event means the agent is live again — lift any
         // one-shot retention suppressor so the row can be retained normally

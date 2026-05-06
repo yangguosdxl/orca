@@ -102,6 +102,16 @@ export type AgentStatusPayload = {
  */
 export type ParsedAgentStatusPayload = Omit<AgentStatusPayload, 'prompt'> & { prompt: string }
 
+export type AgentStatusIpcPayload = ParsedAgentStatusPayload & {
+  paneKey: string
+  tabId?: string
+  worktreeId?: string
+  /** Timestamp (ms) when the hook server received this latest status event. */
+  receivedAt: number
+  /** Timestamp (ms) when the current state first appeared for this pane. */
+  stateStartedAt: number
+}
+
 /** Maximum character length for the prompt field. Truncated on parse. */
 export const AGENT_STATUS_MAX_FIELD_LENGTH = 200
 /** Maximum character length for the toolName field. */

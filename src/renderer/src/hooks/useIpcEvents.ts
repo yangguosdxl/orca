@@ -20,21 +20,17 @@ import {
   handleSwitchTerminalTab
 } from './ipc-tab-switch'
 import { dispatchClearModifierHints } from './useModifierHint'
-import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
+import {
+  normalizeAgentStatusPayload,
+  type AgentStatusIpcPayload
+} from '../../../shared/agent-status-types'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
 import { setDriverForPty } from '@/lib/pane-manager/mobile-driver-state'
 import { destroyPersistentWebview } from '@/components/browser-pane/webview-registry'
 
-export { resetAgentStatusBootstrapQueue as __resetAgentStatusBootstrapQueueForTests } from './agent-status-bootstrap-queue'
 export { resolveZoomTarget } from './resolve-zoom-target'
-
-import {
-  drainAgentStatusBootstrapQueue,
-  enqueueAgentStatusBootstrap,
-  resetAgentStatusBootstrapQueue
-} from './agent-status-bootstrap-queue'
 
 const ZOOM_STEP = 0.5
 
@@ -819,83 +815,84 @@ export function useIpcEvents(): void {
     // unconditional so flipping the experimental dashboard setting takes
     // effect without re-running this App-mount effect; the per-event guard
     // inside the handler drops payloads when the setting is off.
-    // Why: reset the queue every effect mount so HMR / Strict Mode double-mount
-    // cannot accumulate stale entries across remounts.
-    resetAgentStatusBootstrapQueue()
+    const applyAgentStatus = (data: AgentStatusIpcPayload): void => {
+      const store = useAppStore.getState()
+      if (store.settings?.experimentalAgentDashboard !== true || !store.workspaceSessionReady) {
+        return
+      }
+      const payload = normalizeAgentStatusPayload({
+        state: data.state,
+        prompt: data.prompt,
+        agentType: data.agentType,
+        toolName: data.toolName,
+        toolInput: data.toolInput,
+        lastAssistantMessage: data.lastAssistantMessage,
+        interrupted: data.interrupted
+      })
+      if (!payload) {
+        return
+      }
+      const { exists, title } = resolvePaneKey(store, data.paneKey)
+      if (!exists) {
+        return
+      }
+      store.setAgentStatus(data.paneKey, payload, title, {
+        updatedAt: data.receivedAt,
+        stateStartedAt: data.stateStartedAt
+      })
+    }
+
+    let snapshotRequestedForReadyWindow = false
+    let snapshotRequestId = 0
+    const requestAgentStatusSnapshotIfReady = (): void => {
+      const store = useAppStore.getState()
+      if (store.settings?.experimentalAgentDashboard !== true || !store.workspaceSessionReady) {
+        snapshotRequestedForReadyWindow = false
+        return
+      }
+      if (snapshotRequestedForReadyWindow) {
+        return
+      }
+      const getSnapshot = window.api.agentStatus.getSnapshot
+      if (typeof getSnapshot !== 'function') {
+        return
+      }
+      snapshotRequestedForReadyWindow = true
+      const requestId = ++snapshotRequestId
+      void getSnapshot()
+        .then((entries) => {
+          if (requestId !== snapshotRequestId) {
+            return
+          }
+          const current = useAppStore.getState()
+          if (
+            current.settings?.experimentalAgentDashboard !== true ||
+            !current.workspaceSessionReady
+          ) {
+            return
+          }
+          for (const entry of entries) {
+            applyAgentStatus(entry)
+          }
+        })
+        .catch((err) => {
+          snapshotRequestedForReadyWindow = false
+          console.warn('[agent-status] failed to load startup snapshot:', err)
+        })
+    }
+
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
-        const store = useAppStore.getState()
-        if (store.settings?.experimentalAgentDashboard !== true) {
-          return
-        }
-        // Why: the IPC payload is already a structured object — pass it
-        // straight to the object-input normalizer instead of round-tripping
-        // through JSON.stringify/JSON.parse. Hook events can fire many times
-        // per second during a tool-use run, so this avoids the per-event
-        // serialization cost.
-        const payload = normalizeAgentStatusPayload({
-          state: data.state,
-          prompt: data.prompt,
-          agentType: data.agentType,
-          toolName: data.toolName,
-          toolInput: data.toolInput,
-          lastAssistantMessage: data.lastAssistantMessage,
-          interrupted: data.interrupted
-        })
-        if (!payload) {
-          return
-        }
-        // Why: resolve tab existence and terminal title in a single pass.
-        // Previously the code walked store.tabsByWorktree twice — once to
-        // look up the tab-level title (when the pane-level title was
-        // missing) and again for the explicit tabExists check. A paneKey
-        // that no longer resolves to a live tab belongs to a pane that has
-        // already been torn down; dropping here prevents orphan entries
-        // from accumulating in agentStatusByPaneKey.
-        const { exists, title } = resolvePaneKey(store, data.paneKey)
-        if (!exists) {
-          // Why: events for unknown tabs that arrive before workspaceSessionReady
-          // are most likely hydrated entries from the on-disk last-status cache
-          // replayed by the main-process setListener() during window creation
-          // (which runs synchronously before App.tsx's async hydration completes).
-          // Buffer them and drain on the false→true transition so the dashboard
-          // sees them once tabsByWorktree is populated. Post-drain, fall back to
-          // the original drop-on-unknown-tab behavior — those are real orphans
-          // (closed tabs) that must not pin entries in the store.
-          if (!store.workspaceSessionReady) {
-            enqueueAgentStatusBootstrap({ paneKey: data.paneKey, payload, title })
-          }
-          return
-        }
-        store.setAgentStatus(data.paneKey, payload, title)
+        applyAgentStatus(data)
       })
     )
 
-    // Why: drain the bootstrap queue on the workspaceSessionReady false→true
-    // transition. Re-resolve each paneKey at drain time — a tab that was closed
-    // in the prior session won't be in the new tabsByWorktree, and dropping
-    // those silently is the right behavior (matches the "Tab closed between
-    // sessions" edge case in the design doc).
-    const drainNow = (): void => {
-      const store = useAppStore.getState()
-      drainAgentStatusBootstrapQueue((entry) => {
-        const { exists, title } = resolvePaneKey(store, entry.paneKey)
-        if (!exists) {
-          return
-        }
-        store.setAgentStatus(entry.paneKey, entry.payload, title ?? entry.title)
-      })
-    }
-    if (useAppStore.getState().workspaceSessionReady) {
-      drainNow()
-    } else {
-      const unsubscribe = useAppStore.subscribe((state) => {
-        if (state.workspaceSessionReady) {
-          drainNow()
-        }
-      })
-      unsubs.push(unsubscribe)
-    }
+    // Why: the main hook server is the durable source of truth. Pull a
+    // snapshot only after renderer settings and workspace tabs are ready, so
+    // early startup pushes can be safely ignored instead of buffered against
+    // partially hydrated renderer state.
+    requestAgentStatusSnapshotIfReady()
+    unsubs.push(useAppStore.subscribe(() => requestAgentStatusSnapshotIfReady()))
 
     // Why: hydrate mobile-fit overrides before terminal panes run their first
     // attach/fit logic, so a renderer reload doesn't undo active mobile fits.

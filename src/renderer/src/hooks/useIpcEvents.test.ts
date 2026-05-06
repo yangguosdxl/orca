@@ -1653,3 +1653,372 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     expect(activateAndRevealWorktree).toHaveBeenCalledWith('wt-new', { setup })
   })
 })
+
+// Why: end-to-end exercise of startup agent-status restoration through
+// useIpcEvents itself. The main process owns the durable cache; the renderer
+// pulls a snapshot only after settings + workspace tabs are ready so startup
+// pushes cannot be lost while local state is still empty.
+describe('useIpcEvents agent status snapshot integration', () => {
+  type AgentStatusSetData = {
+    paneKey: string
+    tabId?: string
+    worktreeId?: string
+    state: 'working' | 'blocked' | 'waiting' | 'done'
+    prompt?: string
+    agentType?: string
+    toolName?: string
+    toolInput?: string
+    lastAssistantMessage?: string
+    interrupted?: boolean
+    receivedAt: number
+    stateStartedAt: number
+  }
+  type StoreLike = Record<string, unknown>
+  type StoreSubscribeListener = (state: StoreLike) => void
+
+  function buildStoreState(overrides: StoreLike): StoreLike {
+    // Why: copy the defensive set of getState() fields the hook touches during
+    // mount so individual tests only need to override workspaceSessionReady,
+    // tabsByWorktree, and setAgentStatus.
+    return {
+      setUpdateStatus: vi.fn(),
+      fetchRepos: vi.fn(),
+      fetchWorktrees: vi.fn(),
+      setActiveView: vi.fn(),
+      activeModal: null,
+      closeModal: vi.fn(),
+      openModal: vi.fn(),
+      activeWorktreeId: 'wt-1',
+      activeView: 'terminal',
+      setActiveRepo: vi.fn(),
+      setActiveWorktree: vi.fn(),
+      revealWorktreeInSidebar: vi.fn(),
+      setIsFullScreen: vi.fn(),
+      updateBrowserTabPageState: vi.fn(),
+      activeTabType: 'terminal',
+      editorFontZoomLevel: 0,
+      setEditorFontZoomLevel: vi.fn(),
+      setRateLimitsFromPush: vi.fn(),
+      setSshConnectionState: vi.fn(),
+      setSshTargetLabels: vi.fn(),
+      setPortForwards: vi.fn(),
+      clearPortForwards: vi.fn(),
+      setDetectedPorts: vi.fn(),
+      enqueueSshCredentialRequest: vi.fn(),
+      removeSshCredentialRequest: vi.fn(),
+      clearTabPtyId: vi.fn(),
+      runtimePaneTitlesByTabId: {},
+      tabsByWorktree: {},
+      workspaceSessionReady: false,
+      settings: { terminalFontSize: 13, experimentalAgentDashboard: true },
+      ...overrides
+    }
+  }
+
+  function buildWindowApi(args: {
+    onSet: (cb: (data: AgentStatusSetData) => void) => () => void
+    getSnapshot?: () => Promise<AgentStatusSetData[]>
+    drop?: (paneKey: string) => void
+  }): Record<string, unknown> {
+    return {
+      api: {
+        repos: { onChanged: () => () => {} },
+        worktrees: { onChanged: () => () => {} },
+        ui: {
+          onOpenSettings: () => () => {},
+          onToggleLeftSidebar: () => () => {},
+          onToggleRightSidebar: () => () => {},
+          onToggleWorktreePalette: () => () => {},
+          onOpenQuickOpen: () => () => {},
+          onOpenNewWorkspace: () => () => {},
+          onJumpToWorktreeIndex: () => () => {},
+          onWorktreeHistoryNavigate: () => () => {},
+          onActivateWorktree: () => () => {},
+          onCreateTerminal: () => () => {},
+          onRequestTerminalCreate: () => () => {},
+          replyTerminalCreate: () => {},
+          onSplitTerminal: () => () => {},
+          onRenameTerminal: () => () => {},
+          onFocusTerminal: () => () => {},
+          onCloseTerminal: () => () => {},
+          onSleepWorktree: () => () => {},
+          onNewBrowserTab: () => () => {},
+          onRequestTabCreate: () => () => {},
+          replyTabCreate: () => {},
+          onRequestTabClose: () => () => {},
+          replyTabClose: () => {},
+          onRequestTabSetProfile: () => () => {},
+          replyTabSetProfile: () => {},
+          onNewTerminalTab: () => () => {},
+          onCloseActiveTab: () => () => {},
+          onSwitchTab: () => () => {},
+          onSwitchTabAcrossAllTypes: () => () => {},
+          onSwitchTerminalTab: () => () => {},
+          onToggleStatusBar: () => () => {},
+          onFullscreenChanged: () => () => {},
+          onTerminalZoom: () => () => {},
+          getZoomLevel: () => 0,
+          set: vi.fn()
+        },
+        settings: { onChanged: () => () => {} },
+        updater: {
+          getStatus: () => Promise.resolve({ state: 'idle' }),
+          onStatus: () => () => {},
+          onClearDismissal: () => () => {}
+        },
+        browser: {
+          onGuestLoadFailed: () => () => {},
+          onOpenLinkInOrcaTab: () => () => {},
+          onNavigationUpdate: () => () => {},
+          onActivateView: () => () => {}
+        },
+        rateLimits: {
+          get: () => Promise.resolve({ limits: {}, lastUpdatedAt: Date.now() }),
+          onUpdate: () => () => {}
+        },
+        runtime: {
+          getTerminalFitOverrides: () => Promise.resolve([]),
+          onTerminalFitOverrideChanged: () => () => {},
+          onTerminalDriverChanged: () => () => {}
+        },
+        ssh: {
+          listTargets: () => Promise.resolve([]),
+          listPortForwards: () => Promise.resolve([]),
+          listDetectedPorts: () => Promise.resolve([]),
+          getState: () => Promise.resolve(null),
+          onStateChanged: () => () => {},
+          onCredentialRequest: () => () => {},
+          onCredentialResolved: () => () => {},
+          onPortForwardsChanged: () => () => {},
+          onDetectedPortsChanged: () => () => {}
+        },
+        agentStatus: {
+          onSet: args.onSet,
+          getSnapshot: args.getSnapshot ?? vi.fn(() => Promise.resolve([])),
+          drop: args.drop ?? vi.fn()
+        }
+      }
+    }
+  }
+
+  function stubReactSyncEffect(): void {
+    vi.doMock('react', async () => {
+      const actual = await vi.importActual<typeof ReactModule>('react')
+      return {
+        ...actual,
+        useEffect: (effect: () => void | (() => void)) => {
+          effect()
+        }
+      }
+    })
+  }
+
+  function stubAuxiliaryModules(): void {
+    vi.doMock('@/lib/ui-zoom', () => ({ applyUIZoom: vi.fn() }))
+    vi.doMock('@/lib/worktree-activation', () => ({
+      activateAndRevealWorktree: vi.fn(),
+      ensureWorktreeHasInitialTerminal: vi.fn()
+    }))
+    vi.doMock('@/components/sidebar/visible-worktrees', () => ({
+      getVisibleWorktreeIds: () => []
+    }))
+    vi.doMock('@/lib/editor-font-zoom', () => ({
+      nextEditorFontZoomLevel: vi.fn(() => 0),
+      computeEditorFontSize: vi.fn(() => 13)
+    }))
+    vi.doMock('@/components/settings/SettingsConstants', () => ({
+      zoomLevelToPercent: vi.fn(() => 100),
+      ZOOM_MIN: -3,
+      ZOOM_MAX: 3
+    }))
+    vi.doMock('@/lib/zoom-events', () => ({ dispatchZoomLevelChanged: vi.fn() }))
+  }
+
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllGlobals()
+  })
+
+  it('ignores early push events but applies the main-process snapshot after readiness', async () => {
+    const setAgentStatus = vi.fn()
+    const getSnapshot = vi.fn(() =>
+      Promise.resolve([
+        {
+          paneKey: 'tab-future:0',
+          state: 'working' as const,
+          prompt: 'p',
+          agentType: 'claude',
+          receivedAt: 1_700_000_000_000,
+          stateStartedAt: 1_699_999_999_000
+        }
+      ])
+    )
+    const onSetListenerRef: { current: ((data: AgentStatusSetData) => void) | null } = {
+      current: null
+    }
+    const subscribeListenerRef: { current: StoreSubscribeListener | null } = { current: null }
+
+    const storeState: StoreLike = buildStoreState({
+      setAgentStatus,
+      tabsByWorktree: {},
+      workspaceSessionReady: false
+    })
+
+    stubReactSyncEffect()
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        subscribe: vi.fn((listener: StoreSubscribeListener) => {
+          subscribeListenerRef.current = listener
+          return () => {
+            subscribeListenerRef.current = null
+          }
+        }),
+        getState: () => storeState
+      }
+    }))
+    stubAuxiliaryModules()
+    vi.stubGlobal(
+      'window',
+      buildWindowApi({
+        getSnapshot,
+        onSet: (cb) => {
+          onSetListenerRef.current = cb
+          return () => {}
+        }
+      })
+    )
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+
+    useIpcEvents()
+    await Promise.resolve()
+
+    if (typeof onSetListenerRef.current !== 'function') {
+      throw new Error('Expected agentStatus.onSet listener to be registered')
+    }
+
+    // Fire an event for an unknown paneKey while not ready — must NOT call setAgentStatus.
+    onSetListenerRef.current({
+      paneKey: 'tab-future:0',
+      state: 'working',
+      prompt: 'p',
+      agentType: 'claude',
+      receivedAt: 1_700_000_000_100,
+      stateStartedAt: 1_699_999_999_100
+    })
+    expect(setAgentStatus).not.toHaveBeenCalled()
+    expect(getSnapshot).not.toHaveBeenCalled()
+
+    storeState.workspaceSessionReady = true
+    storeState.tabsByWorktree = {
+      'wt-1': [{ id: 'tab-future', ptyId: 'pty-1', worktreeId: 'wt-1', title: 'Future Tab' }]
+    }
+    if (typeof subscribeListenerRef.current !== 'function') {
+      throw new Error('Expected useAppStore.subscribe listener to be registered')
+    }
+    subscribeListenerRef.current(storeState)
+    await Promise.resolve()
+
+    expect(setAgentStatus).toHaveBeenCalledTimes(1)
+    expect(setAgentStatus).toHaveBeenCalledWith(
+      'tab-future:0',
+      expect.objectContaining({ state: 'working', prompt: 'p', agentType: 'claude' }),
+      'Future Tab',
+      { updatedAt: 1_700_000_000_000, stateStartedAt: 1_699_999_999_000 }
+    )
+  })
+
+  it('waits for settings before pulling the snapshot', async () => {
+    const setAgentStatus = vi.fn()
+    const getSnapshot = vi.fn(() => Promise.resolve([]))
+    const subscribeListenerRef: { current: StoreSubscribeListener | null } = { current: null }
+
+    const storeState: StoreLike = buildStoreState({
+      setAgentStatus,
+      tabsByWorktree: {},
+      workspaceSessionReady: true,
+      settings: null
+    })
+
+    stubReactSyncEffect()
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        subscribe: vi.fn((listener: StoreSubscribeListener) => {
+          subscribeListenerRef.current = listener
+          return () => {
+            subscribeListenerRef.current = null
+          }
+        }),
+        getState: () => storeState
+      }
+    }))
+    stubAuxiliaryModules()
+    vi.stubGlobal(
+      'window',
+      buildWindowApi({
+        getSnapshot,
+        onSet: () => () => {}
+      })
+    )
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+
+    useIpcEvents()
+    await Promise.resolve()
+    expect(getSnapshot).not.toHaveBeenCalled()
+
+    storeState.settings = { terminalFontSize: 13, experimentalAgentDashboard: true }
+    subscribeListenerRef.current?.(storeState)
+
+    expect(getSnapshot).toHaveBeenCalledTimes(1)
+    expect(setAgentStatus).not.toHaveBeenCalled()
+  })
+
+  it('silently discards snapshot entries whose tabs are still unknown', async () => {
+    const setAgentStatus = vi.fn()
+    const getSnapshot = vi.fn(() =>
+      Promise.resolve([
+        {
+          paneKey: 'tab-orphan:0',
+          state: 'done' as const,
+          prompt: 'p',
+          agentType: 'claude',
+          receivedAt: 1_700_000_000_000,
+          stateStartedAt: 1_699_999_999_000
+        }
+      ])
+    )
+
+    const storeState: StoreLike = buildStoreState({
+      setAgentStatus,
+      tabsByWorktree: {
+        'wt-1': [{ id: 'tab-other', ptyId: 'pty-1', worktreeId: 'wt-1', title: 'Other' }]
+      },
+      workspaceSessionReady: true
+    })
+
+    stubReactSyncEffect()
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        subscribe: vi.fn(() => () => {}),
+        getState: () => storeState
+      }
+    }))
+    stubAuxiliaryModules()
+    vi.stubGlobal(
+      'window',
+      buildWindowApi({
+        getSnapshot,
+        onSet: () => () => {}
+      })
+    )
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+
+    useIpcEvents()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(setAgentStatus).not.toHaveBeenCalled()
+  })
+})

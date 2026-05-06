@@ -16,6 +16,7 @@ import {
 } from 'fs'
 import { join } from 'path'
 import {
+  type AgentStatusIpcPayload,
   normalizeAgentStatusPayload,
   parseAgentStatusPayload,
   type ParsedAgentStatusPayload
@@ -43,11 +44,16 @@ import { ORCA_HOOK_PROTOCOL_VERSION } from '../../shared/agent-hook-types'
 // https://cursor.com/docs/hooks. See normalizeCursorEvent below.
 type AgentHookSource = 'claude' | 'codex' | 'gemini' | 'opencode' | 'cursor'
 
-type AgentHookEventPayload = {
+type AgentHookEventBasePayload = {
   paneKey: string
   tabId?: string
   worktreeId?: string
   payload: ParsedAgentStatusPayload
+}
+
+type AgentHookEventPayload = AgentHookEventBasePayload & {
+  receivedAt: number
+  stateStartedAt: number
 }
 
 // Why: only log a given version/env mismatch once per process so a stale hook
@@ -968,7 +974,7 @@ function normalizeHookPayload(
   source: AgentHookSource,
   body: unknown,
   expectedEnv: string
-): AgentHookEventPayload | null {
+): AgentHookEventBasePayload | null {
   if (typeof body !== 'object' || body === null) {
     return null
   }
@@ -1072,7 +1078,7 @@ const LAST_STATUS_FILE_NAME = 'last-status.json'
 // Why: bumping this rejects on-disk files written by older shapes — see the
 // "Stale file from a prior Orca version" edge case in the design doc. A
 // mismatched version is treated as a corrupt file (silent empty hydration).
-const LAST_STATUS_FILE_VERSION = 1
+const LAST_STATUS_FILE_VERSION = 2
 
 // Why: trailing-edge debounce so a burst of hook events from a multi-agent
 // run produces one disk write instead of N. The latency budget matches other
@@ -1121,6 +1127,18 @@ function sanitizeHydratedEntry(paneKey: string, rawEntry: unknown): AgentHookEve
   if (worktreeId !== undefined && (typeof worktreeId !== 'string' || worktreeId.length === 0)) {
     return null
   }
+  const receivedAt = record.receivedAt
+  if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt <= 0) {
+    return null
+  }
+  const stateStartedAt = record.stateStartedAt
+  if (
+    typeof stateStartedAt !== 'number' ||
+    !Number.isFinite(stateStartedAt) ||
+    stateStartedAt <= 0
+  ) {
+    return null
+  }
   const payload = normalizeAgentStatusPayload(record.payload)
   if (!payload) {
     return null
@@ -1129,7 +1147,20 @@ function sanitizeHydratedEntry(paneKey: string, rawEntry: unknown): AgentHookEve
     paneKey,
     tabId: typeof tabId === 'string' ? tabId : undefined,
     worktreeId: typeof worktreeId === 'string' ? worktreeId : undefined,
-    payload
+    payload,
+    receivedAt,
+    stateStartedAt
+  }
+}
+
+function toAgentStatusIpcPayload(entry: AgentHookEventPayload): AgentStatusIpcPayload {
+  return {
+    paneKey: entry.paneKey,
+    tabId: entry.tabId,
+    worktreeId: entry.worktreeId,
+    receivedAt: entry.receivedAt,
+    stateStartedAt: entry.stateStartedAt,
+    ...entry.payload
   }
 }
 
@@ -1177,9 +1208,8 @@ export class AgentHookServer {
   private lastStatusFilePath: string | null = null
   // Why: closure that reads the experimentalAgentDashboard setting at write
   // time. Passed in from index.ts so the hook server stays decoupled from
-  // the Store class. Null when unset → persistence runs (back-compat for
-  // callers that haven't wired the gate yet); the design doc gates on the
-  // flag, so production callers always pass a closure.
+  // the Store class. Null fails closed: future callers must opt into disk
+  // persistence explicitly.
   private getDashboardEnabled: (() => boolean) | null = null
   // Why: trailing-edge debounce timer. captured per-instance so multiple
   // server instances in the same process (tests) don't share state.
@@ -1209,6 +1239,22 @@ export class AgentHookServer {
     }
   }
 
+  getStatusSnapshot(): AgentStatusIpcPayload[] {
+    return Array.from(lastStatusByPaneKey.values(), toAgentStatusIpcPayload)
+  }
+
+  private attachStatusTiming(payload: AgentHookEventBasePayload): AgentHookEventPayload {
+    const now = Date.now()
+    const previous = lastStatusByPaneKey.get(payload.paneKey)
+    const stateStartedAt =
+      previous && previous.payload.state === payload.payload.state ? previous.stateStartedAt : now
+    return {
+      ...payload,
+      receivedAt: now,
+      stateStartedAt
+    }
+  }
+
   async start(options?: {
     env?: string
     userDataPath?: string
@@ -1235,9 +1281,8 @@ export class AgentHookServer {
     this.deletedOnDisable = false
     // Why: hydrate before binding the HTTP listener so any new hook POST
     // (which goes through lastStatusByPaneKey.set) runs against an already-
-    // populated map. The setListener() replay loop on the next window
-    // creation then fans hydrated entries into the renderer through the
-    // existing IPC path.
+    // populated map. The renderer later pulls this map as a snapshot after
+    // its settings and workspace tabs are hydrated.
     if (this.lastStatusFilePath && this.isDashboardEnabled()) {
       this.hydrateLastStatusFromDisk()
     }
@@ -1285,8 +1330,9 @@ export class AgentHookServer {
           return
         }
 
-        const payload = normalizeHookPayload(source, body, this.env)
-        if (payload) {
+        const normalized = normalizeHookPayload(source, body, this.env)
+        if (normalized) {
+          const payload = this.attachStatusTiming(normalized)
           lastStatusByPaneKey.set(payload.paneKey, payload)
           this.scheduleStatusPersist()
           this.onAgentStatus?.(payload)
@@ -1552,12 +1598,12 @@ export class AgentHookServer {
     }
   }
 
-  // Why: callers that haven't wired the gate get persistence enabled by
-  // default — matches the back-compat posture for fields like getDashboardEnabled
-  // being optional. Production main always passes the closure; tests opt
-  // out by passing a closure that returns false.
+  // Why: fail closed when the gate isn't wired so a future caller of start()
+  // that forgets the closure cannot silently leak hook payloads to disk.
+  // Production main always passes the closure; tests that need persistence
+  // pass `getDashboardEnabled: () => true` explicitly.
   private isDashboardEnabled(): boolean {
-    return this.getDashboardEnabled ? this.getDashboardEnabled() === true : true
+    return this.getDashboardEnabled?.() === true
   }
 
   private hydrateLastStatusFromDisk(): void {
@@ -1602,17 +1648,23 @@ export class AgentHookServer {
       return
     }
     let hydrated = 0
+    let dropped = 0
     for (const [paneKey, rawEntry] of Object.entries(entries)) {
       const entry = sanitizeHydratedEntry(paneKey, rawEntry)
       if (entry) {
         lastStatusByPaneKey.set(paneKey, entry)
         hydrated += 1
+      } else {
+        dropped += 1
       }
     }
-    if (hydrated > 0) {
+    if (hydrated > 0 && dropped === 0) {
       // Why: prime lastWrittenJson so an immediate scheduleStatusPersist()
       // (e.g. from a hook event that arrives before any change) does not
-      // re-write the file with byte-identical contents.
+      // re-write the file with byte-identical contents. Only prime when
+      // hydration was lossless — if entries were dropped during sanitize,
+      // the in-memory map diverges from the on-disk bytes; leaving the
+      // prime null forces the next write to clean up the corrupt entries.
       this.lastWrittenJson = this.serializeStatusFile()
     }
   }
@@ -1674,15 +1726,23 @@ export class AgentHookServer {
       if (this.deletedOnDisable) {
         return
       }
+      // Why: a transient unlink failure must not permanently suppress retries —
+      // the gate is OFF and the file must come off disk on a future tick.
+      let removed = false
       try {
         unlinkSync(this.lastStatusFilePath)
+        removed = true
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          removed = true
+        } else {
           console.warn('[agent-hooks] failed to delete last-status file:', err)
         }
       }
-      this.deletedOnDisable = true
-      this.lastWrittenJson = null
+      if (removed) {
+        this.deletedOnDisable = true
+        this.lastWrittenJson = null
+      }
       return
     }
     // Why: the gate is back on after being off — clear the suppression

@@ -274,35 +274,39 @@ function openMainWindow(): BrowserWindow {
     }
   })
   mainWindow = window
-  agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
-    if (mainWindow?.isDestroyed()) {
-      return
+  agentHookServer.setListener(
+    ({ paneKey, tabId, worktreeId, payload, receivedAt, stateStartedAt }) => {
+      if (mainWindow?.isDestroyed()) {
+        return
+      }
+      // Why: only forward status events to the renderer when the user has
+      // opted into the experimental dashboard. Reading the current setting
+      // here (rather than a module-level snapshot) lets the gate flip live
+      // for the renderer-side surfaces — the hook server itself always runs.
+      if (store?.getSettings().experimentalAgentDashboard === true) {
+        mainWindow?.webContents.send('agentStatus:set', {
+          paneKey,
+          tabId,
+          worktreeId,
+          receivedAt,
+          stateStartedAt,
+          ...payload
+        })
+      }
+      // Why: cursor-agent emits no title-based working/idle signal — its OSC
+      // title stays "Cursor Agent" for the whole turn. Synthesize an OSC title
+      // update from the hook state and inject it into the pane's data stream so
+      // the existing renderer-side title tracker (the one that drives the
+      // sidebar spinner, unread badge, and Claude prompt-cache timer for every
+      // other agent) lights up for cursor panes too. Braille prefix ⠋ → working
+      // keyword path; "action required" keyword → permission; bare label → idle.
+      // This runs regardless of the dashboard setting because cursor has no
+      // pre-dashboard title heuristic to fall back to.
+      if (payload.agentType === 'cursor') {
+        driveCursorPaneFromHook(paneKey, payload.state)
+      }
     }
-    // Why: only forward status events to the renderer when the user has
-    // opted into the experimental dashboard. Reading the current setting
-    // here (rather than a module-level snapshot) lets the gate flip live
-    // for the renderer-side surfaces — the hook server itself always runs.
-    if (store?.getSettings().experimentalAgentDashboard === true) {
-      mainWindow?.webContents.send('agentStatus:set', {
-        paneKey,
-        tabId,
-        worktreeId,
-        ...payload
-      })
-    }
-    // Why: cursor-agent emits no title-based working/idle signal — its OSC
-    // title stays "Cursor Agent" for the whole turn. Synthesize an OSC title
-    // update from the hook state and inject it into the pane's data stream so
-    // the existing renderer-side title tracker (the one that drives the
-    // sidebar spinner, unread badge, and Claude prompt-cache timer for every
-    // other agent) lights up for cursor panes too. Braille prefix ⠋ → working
-    // keyword path; "action required" keyword → permission; bare label → idle.
-    // This runs regardless of the dashboard setting because cursor has no
-    // pre-dashboard title heuristic to fall back to.
-    if (payload.agentType === 'cursor') {
-      driveCursorPaneFromHook(paneKey, payload.state)
-    }
-  })
+  )
   return window
 }
 

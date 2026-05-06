@@ -73,16 +73,20 @@ describe('AgentHookServer listener replay', () => {
       server.setListener(listener)
 
       expect(listener).toHaveBeenCalledTimes(1)
-      expect(listener).toHaveBeenCalledWith({
-        paneKey: PANE,
-        tabId: 'tab-1',
-        worktreeId: 'wt-1',
-        payload: expect.objectContaining({
-          state: 'working',
-          prompt: 'replay me',
-          agentType: 'claude'
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          receivedAt: expect.any(Number),
+          stateStartedAt: expect.any(Number),
+          payload: expect.objectContaining({
+            state: 'working',
+            prompt: 'replay me',
+            agentType: 'claude'
+          })
         })
-      })
+      )
     } finally {
       server.stop()
     }
@@ -147,16 +151,20 @@ describe('AgentHookServer listener replay', () => {
       const listener = vi.fn()
       server.setListener(listener)
 
-      expect(listener).toHaveBeenCalledWith({
-        paneKey: PANE,
-        tabId: 'tab-1',
-        worktreeId: 'repo::/tmp/worktree with "quotes"',
-        payload: expect.objectContaining({
-          state: 'working',
-          prompt: 'form encoded',
-          agentType: 'claude'
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'repo::/tmp/worktree with "quotes"',
+          receivedAt: expect.any(Number),
+          stateStartedAt: expect.any(Number),
+          payload: expect.objectContaining({
+            state: 'working',
+            prompt: 'form encoded',
+            agentType: 'claude'
+          })
         })
-      })
+      )
     } finally {
       server.stop()
     }
@@ -1102,11 +1110,13 @@ describe('Last-status persistence', () => {
       server.flushStatusPersistSync()
       expect(existsSync(lastStatusPath())).toBe(true)
       const file = JSON.parse(readFileSync(lastStatusPath(), 'utf8'))
-      expect(file.version).toBe(1)
+      expect(file.version).toBe(2)
       expect(file.entries[PANE]).toMatchObject({
         paneKey: PANE,
         tabId: 'tab-1',
         worktreeId: 'wt-1',
+        receivedAt: expect.any(Number),
+        stateStartedAt: expect.any(Number),
         payload: expect.objectContaining({ state: 'working', prompt: 'persist me' })
       })
     } finally {
@@ -1170,12 +1180,14 @@ describe('Last-status persistence', () => {
     // Pre-populate the file directly to simulate a prior session.
     mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
     const fileContents = {
-      version: 1,
+      version: 2,
       entries: {
         [PANE]: {
           paneKey: PANE,
           tabId: 'tab-1',
           worktreeId: 'wt-1',
+          receivedAt: 1_700_000_000_000,
+          stateStartedAt: 1_699_999_999_000,
           payload: {
             state: 'done',
             prompt: 'survived restart',
@@ -1196,16 +1208,32 @@ describe('Last-status persistence', () => {
       const listener = vi.fn()
       server.setListener(listener)
       expect(listener).toHaveBeenCalledTimes(1)
-      expect(listener).toHaveBeenCalledWith({
-        paneKey: PANE,
-        tabId: 'tab-1',
-        worktreeId: 'wt-1',
-        payload: expect.objectContaining({
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          receivedAt: 1_700_000_000_000,
+          stateStartedAt: 1_699_999_999_000,
+          payload: expect.objectContaining({
+            state: 'done',
+            prompt: 'survived restart',
+            agentType: 'claude'
+          })
+        })
+      )
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          receivedAt: 1_700_000_000_000,
+          stateStartedAt: 1_699_999_999_000,
           state: 'done',
           prompt: 'survived restart',
           agentType: 'claude'
         })
-      })
+      ])
     } finally {
       server.stop()
     }
@@ -1216,10 +1244,12 @@ describe('Last-status persistence', () => {
     writeFileSync(
       lastStatusPath(),
       JSON.stringify({
-        version: 1,
+        version: 2,
         entries: {
           [PANE]: {
             paneKey: PANE,
+            receivedAt: 1_700_000_000_000,
+            stateStartedAt: 1_699_999_999_000,
             payload: { state: 'done', prompt: 'should not load', agentType: 'claude' }
           }
         }
@@ -1267,10 +1297,12 @@ describe('Last-status persistence', () => {
     writeFileSync(
       lastStatusPath(),
       JSON.stringify({
-        version: 0,
+        version: 1,
         entries: {
           [PANE]: {
             paneKey: PANE,
+            receivedAt: 1_700_000_000_000,
+            stateStartedAt: 1_699_999_999_000,
             payload: { state: 'done', prompt: 'old version', agentType: 'claude' }
           }
         }
@@ -1288,6 +1320,7 @@ describe('Last-status persistence', () => {
       const listener = vi.fn()
       server.setListener(listener)
       expect(listener).not.toHaveBeenCalled()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('version mismatch'))
     } finally {
       server.stop()
       warnSpy.mockRestore()
@@ -1299,22 +1332,28 @@ describe('Last-status persistence', () => {
     writeFileSync(
       lastStatusPath(),
       JSON.stringify({
-        version: 1,
+        version: 2,
         entries: {
           // Missing colon — drop.
           'no-colon': {
             paneKey: 'no-colon',
+            receivedAt: 1_700_000_000_000,
+            stateStartedAt: 1_699_999_999_000,
             payload: { state: 'done', prompt: 'bad', agentType: 'claude' }
           },
           // Embedded paneKey mismatch — drop.
           [PANE]: {
             paneKey: 'tab-x:99',
+            receivedAt: 1_700_000_000_000,
+            stateStartedAt: 1_699_999_999_000,
             payload: { state: 'done', prompt: 'mismatch', agentType: 'claude' }
           },
           // Valid.
           'tab-good:0': {
             paneKey: 'tab-good:0',
             tabId: 'tab-good',
+            receivedAt: 1_700_000_000_000,
+            stateStartedAt: 1_699_999_999_000,
             payload: { state: 'done', prompt: 'survived', agentType: 'claude' }
           }
         }

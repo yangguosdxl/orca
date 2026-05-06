@@ -22,6 +22,7 @@ export function registerAgentHookHandlers(store: Store): void {
   ipcMain.removeHandler('agentHooks:codexStatus')
   ipcMain.removeHandler('agentHooks:geminiStatus')
   ipcMain.removeHandler('agentHooks:cursorStatus')
+  ipcMain.removeHandler('agentStatus:getSnapshot')
   // Why: agentStatus:drop is sent fire-and-forget from the renderer via
   // ipcRenderer.send(); we listen with ipcMain.on (not handle) so we don't
   // round-trip a response. Removing first keeps re-registration safe even
@@ -37,7 +38,25 @@ export function registerAgentHookHandlers(store: Store): void {
     if (store.getSettings().experimentalAgentDashboard !== true) {
       return
     }
-    agentHookServer.clearPaneState(paneKey)
+    try {
+      agentHookServer.clearPaneState(paneKey)
+    } catch (err) {
+      console.warn('[agent-hooks] clearPaneState failed:', err)
+    }
+  })
+  ipcMain.handle('agentStatus:getSnapshot', () => {
+    // Why: the renderer pulls this after settings + workspace hydration, so
+    // startup cannot lose replayed statuses while its local store is still
+    // empty. Keep the same opt-in gate as push delivery and disk writes.
+    try {
+      if (store.getSettings().experimentalAgentDashboard !== true) {
+        return []
+      }
+      return agentHookServer.getStatusSnapshot()
+    } catch (err) {
+      console.warn('[agent-hooks] getStatusSnapshot failed:', err)
+      return []
+    }
   })
 
   // Why: errors from getStatus() (fs permission denied, homedir resolution
