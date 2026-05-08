@@ -22,6 +22,7 @@ import {
   GitMerge,
   GitPullRequestArrow,
   MessageSquare,
+  Send,
   Trash,
   TriangleAlert,
   CircleCheck,
@@ -78,6 +79,8 @@ import {
 } from '@/components/ui/dialog'
 import { BaseRefPicker } from '@/components/settings/BaseRefPicker'
 import { formatDiffComment, formatDiffComments } from '@/lib/diff-comments-format'
+import { QuickLaunchAgentMenuItems } from '@/components/tab-bar/QuickLaunchButton'
+import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import {
   notifyEditorExternalFileChange,
   requestEditorSaveQuiesce
@@ -1266,6 +1269,37 @@ function SourceControlInner(): React.JSX.Element {
                   </span>
                 )}
               </button>
+              {diffCommentCount > 0 && activeWorktreeId && (
+                <DropdownMenu>
+                  <TooltipProvider delayDuration={400}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            aria-label="Send notes to agent"
+                          >
+                            <Send className="size-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6}>
+                        Send notes to agent
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <DropdownMenuContent align="end" className="min-w-[180px]">
+                    <QuickLaunchAgentMenuItems
+                      worktreeId={activeWorktreeId}
+                      groupId={activeWorktreeId}
+                      onFocusTerminal={focusTerminalTabSurface}
+                      prompt={formatDiffComments(diffCommentsForActive)}
+                      launchSource="diff_notes_send"
+                    />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               {diffCommentCount > 0 && (
                 <TooltipProvider delayDuration={400}>
                   <Tooltip>

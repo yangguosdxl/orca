@@ -90,6 +90,7 @@ export const launchSourceSchema = z.enum([
   'new_workspace_composer',
   'workspace_jump_palette',
   'shortcut',
+  'diff_notes_send',
   'unknown'
 ])
 export type LaunchSource = z.infer<typeof launchSourceSchema>
