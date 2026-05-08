@@ -35,6 +35,7 @@ function flushAnimationFrames(timestamp = 16): void {
 function createPane(): ManagedPaneInternal {
   return {
     id: 1,
+    stablePaneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     terminal: {
       cols: 79,
       rows: 24

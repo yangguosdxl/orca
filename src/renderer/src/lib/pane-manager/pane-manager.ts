@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: PaneManager intentionally co-locates pane lifecycle, identity (stablePaneId), and the cross-boundary callbacks that wire those into the store mirror; splitting would scatter logic that has exactly one consumer. */
 import type {
   PaneManagerOptions,
   PaneStyleOptions,
@@ -40,6 +41,7 @@ import { scheduleSplitScrollRestore } from './pane-split-scroll'
 import { toPublicPane } from './pane-public-view'
 import { applyTerminalGpuAcceleration } from './pane-terminal-gpu-acceleration'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
+import { mintStablePaneId } from './mint-stable-pane-id'
 
 export type { PaneManagerOptions, PaneStyleOptions, ManagedPane, DropZone }
 
@@ -52,6 +54,12 @@ export class PaneManager {
   private styleOptions: PaneStyleOptions = {}
   private destroyed = false
   private renderingSuspended: boolean
+  // Why: stablePaneId is the cross-boundary identity for paneKey,
+  // ORCA_PANE_KEY, and persisted layout snapshots — see
+  // docs/agent-status-pane-mismapping.md. Mirror the numeric↔stable mapping
+  // here so getNumericIdForStable resolves in O(1) without iterating panes.
+  private stableIdByNumericId: Map<number, string> = new Map()
+  private numericIdByStableId: Map<string, number> = new Map()
 
   // Drag-to-reorder state
   private dragState = createDragReorderState()
@@ -150,7 +158,13 @@ export class PaneManager {
     if (!parent) {
       return
     }
+    const closedStableId = pane.stablePaneId
     disposePane(pane, this.panes)
+    this.stableIdByNumericId.delete(paneId)
+    if (closedStableId) {
+      this.numericIdByStableId.delete(closedStableId)
+    }
+    this.options.onStableIdReleased?.(paneId, closedStableId)
     if (parent.classList.contains('pane-split')) {
       const siblings = findPaneChildren(parent)
       const sibling = siblings.find((c) => c !== paneContainer) ?? null
@@ -277,17 +291,27 @@ export class PaneManager {
   destroy(): void {
     this.destroyed = true
     hideDropOverlay(this.dragState)
+    const releasedEntries = Array.from(this.stableIdByNumericId.entries())
     for (const pane of this.panes.values()) {
       disposePane(pane, this.panes)
     }
+    this.stableIdByNumericId.clear()
+    this.numericIdByStableId.clear()
     this.root.innerHTML = ''
     this.activePaneId = null
+    if (this.options.onStableIdReleased) {
+      for (const [numericId, stableId] of releasedEntries) {
+        this.options.onStableIdReleased(numericId, stableId)
+      }
+    }
   }
 
   private createPaneInternal(): ManagedPaneInternal {
     const id = this.nextPaneId++
+    const stablePaneId = mintStablePaneId()
     const pane = createPaneDOM(
       id,
+      stablePaneId,
       this.options,
       this.dragState,
       this.getDragCallbacks(),
@@ -304,7 +328,51 @@ export class PaneManager {
     )
     pane.webglAttachmentDeferred = this.renderingSuspended
     this.panes.set(id, pane)
+    this.stableIdByNumericId.set(id, stablePaneId)
+    this.numericIdByStableId.set(stablePaneId, id)
+    this.options.onStableIdRegistered?.(id, stablePaneId)
     return pane
+  }
+
+  /** Look up a pane's UUID by its renderer-local numeric id. */
+  getStablePaneId(numericId: number): string | null {
+    return this.stableIdByNumericId.get(numericId) ?? null
+  }
+
+  /** Look up a pane's renderer-local numeric id by its UUID. Returns null
+   *  when the UUID is unknown (closed pane, legacy snapshot, or a paneKey
+   *  minted before the upgrade). */
+  getNumericIdForStable(stablePaneId: string): number | null {
+    return this.numericIdByStableId.get(stablePaneId) ?? null
+  }
+
+  /** Reattach a previously-persisted UUID to a freshly created pane during
+   *  layout replay. Replaces whatever UUID createPaneInternal minted so the
+   *  cross-boundary identity (paneKey, ORCA_PANE_KEY) is preserved across
+   *  reloads. Safe no-op when the snapshot's UUID equals the just-minted one. */
+  adoptStablePaneId(numericId: number, stablePaneId: string): void {
+    const pane = this.panes.get(numericId)
+    if (!pane) {
+      return
+    }
+    const previousStable = pane.stablePaneId
+    if (previousStable === stablePaneId) {
+      return
+    }
+    if (previousStable) {
+      this.numericIdByStableId.delete(previousStable)
+    }
+    pane.stablePaneId = stablePaneId
+    this.stableIdByNumericId.set(numericId, stablePaneId)
+    this.numericIdByStableId.set(stablePaneId, numericId)
+    this.options.onStableIdAdopted?.(numericId, stablePaneId, previousStable)
+  }
+
+  /** Return a fresh Map snapshot of numericId → stablePaneId for layout
+   *  serialization. Why fresh: the caller may persist asynchronously while
+   *  panes close, and a live view would mutate under them. */
+  getStablePaneIdMap(): ReadonlyMap<number, string> {
+    return new Map(this.stableIdByNumericId)
   }
 
   private handlePaneMouseEnter(paneId: number, event: MouseEvent): void {

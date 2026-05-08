@@ -145,8 +145,20 @@ describe('getWorkingAgentsPerWorktree', () => {
     ).toEqual({
       'wt-1': {
         agents: [
-          { label: 'Claude Code', status: 'working', tabId: 'tab-1', paneId: 1 },
-          { label: 'Gemini CLI', status: 'working', tabId: 'tab-1', paneId: 2 }
+          {
+            label: 'Claude Code',
+            status: 'working',
+            tabId: 'tab-1',
+            paneId: 1,
+            stablePaneId: null
+          },
+          {
+            label: 'Gemini CLI',
+            status: 'working',
+            tabId: 'tab-1',
+            paneId: 2,
+            stablePaneId: null
+          }
         ]
       }
     })
@@ -164,7 +176,15 @@ describe('getWorkingAgentsPerWorktree', () => {
       })
     ).toEqual({
       'wt-1': {
-        agents: [{ label: 'Claude Code', status: 'working', tabId: 'tab-1', paneId: null }]
+        agents: [
+          {
+            label: 'Claude Code',
+            status: 'working',
+            tabId: 'tab-1',
+            paneId: null,
+            stablePaneId: null
+          }
+        ]
       }
     })
   })

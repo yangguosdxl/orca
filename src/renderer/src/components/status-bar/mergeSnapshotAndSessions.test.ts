@@ -51,6 +51,7 @@ const baseCtx = (overrides: Partial<MergeContext> = {}): MergeContext => ({
   tabsByWorktree: {},
   ptyIdsByTabId: {},
   runtimePaneTitlesByTabId: {},
+  numericPaneIdByPaneKey: {},
   workspaceSessionReady: true,
   repoDisplayNameById: new Map(),
   ...overrides

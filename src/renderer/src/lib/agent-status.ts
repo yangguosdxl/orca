@@ -28,6 +28,11 @@ import {
 type AgentQueryArgs = {
   tabsByWorktree: Record<string, TerminalTab[]>
   runtimePaneTitlesByTabId: Record<string, Record<number, string>>
+  /** Reverse index of `${tabId}:${stablePaneId}` → numeric paneId so this
+   *  function can attach a stablePaneId to each working agent entry without
+   *  reaching for a PaneManager ref (the lib runs above any specific
+   *  TerminalPane). */
+  numericPaneIdByPaneKey?: Record<string, number>
   worktreesByRepo: Record<string, Worktree[]>
 }
 
@@ -35,7 +40,14 @@ export type WorkingAgentEntry = {
   label: string
   status: AgentStatus
   tabId: string
+  /** Renderer-local numeric id, kept for backwards compatibility (key
+   *  generation, debug logs). Do NOT pass to activateTabAndFocusPane —
+   *  use `stablePaneId` instead, which survives renderer-reload renumbers. */
   paneId: number | null
+  /** Opaque pane UUID for cross-boundary routing (focus dispatch, paneKey
+   *  matching). null when the title fallback path runs (no per-pane title
+   *  map) or the store mirror doesn't yet have an entry for this leaf. */
+  stablePaneId: string | null
 }
 
 export type WorktreeAgents = {
@@ -45,10 +57,28 @@ export type WorktreeAgents = {
 export function getWorkingAgentsPerWorktree({
   tabsByWorktree,
   runtimePaneTitlesByTabId,
+  numericPaneIdByPaneKey,
   worktreesByRepo
 }: AgentQueryArgs): Record<string, WorktreeAgents> {
   const validIds = collectWorktreeIds(worktreesByRepo)
   const result: Record<string, WorktreeAgents> = {}
+
+  // Why: invert the paneKey → numericId mapping once per call so the inner
+  // loop can resolve `(tabId, paneId)` → stablePaneId in O(1) instead of
+  // re-scanning the mirror per pane title. The map is small (one entry per
+  // live pane) so this is cheap.
+  const stableByTabAndPaneId = new Map<string, string>()
+  if (numericPaneIdByPaneKey) {
+    for (const [paneKey, numericId] of Object.entries(numericPaneIdByPaneKey)) {
+      const colonIdx = paneKey.indexOf(':')
+      if (colonIdx <= 0) {
+        continue
+      }
+      const tabId = paneKey.slice(0, colonIdx)
+      const stableId = paneKey.slice(colonIdx + 1)
+      stableByTabAndPaneId.set(`${tabId}:${numericId}`, stableId)
+    }
+  }
 
   for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
     // Why: tabsByWorktree can retain orphaned entries for worktrees that no
@@ -67,11 +97,13 @@ export function getWorkingAgentsPerWorktree({
           if (detectAgentStatusFromTitle(title) === 'working') {
             const label = getAgentLabel(title)
             if (label) {
+              const paneId = Number(paneIdStr)
               agents.push({
                 label,
                 status: 'working',
                 tabId: tab.id,
-                paneId: Number(paneIdStr)
+                paneId,
+                stablePaneId: stableByTabAndPaneId.get(`${tab.id}:${paneId}`) ?? null
               })
             }
           }
@@ -79,7 +111,13 @@ export function getWorkingAgentsPerWorktree({
       } else if (tab.ptyId && detectAgentStatusFromTitle(tab.title) === 'working') {
         const label = getAgentLabel(tab.title)
         if (label) {
-          agents.push({ label, status: 'working', tabId: tab.id, paneId: null })
+          agents.push({
+            label,
+            status: 'working',
+            tabId: tab.id,
+            paneId: null,
+            stablePaneId: null
+          })
         }
       }
     }

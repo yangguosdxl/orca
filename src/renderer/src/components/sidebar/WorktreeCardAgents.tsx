@@ -8,6 +8,7 @@ import { useNow } from '@/components/dashboard/useNow'
 import { useWorktreeAgentRows } from './useWorktreeAgentRows'
 import { cn } from '@/lib/utils'
 import type { DashboardAgentRow as DashboardAgentRowData } from '@/components/dashboard/useDashboardData'
+import { parsePaneKey } from '../../../../shared/stable-pane-id'
 
 type Props = {
   worktreeId: string
@@ -52,7 +53,6 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
 }: BodyProps) {
   const dropAgentStatus = useAppStore((s) => s.dropAgentStatus)
   const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
-  const acknowledgeAgents = useAppStore((s) => s.acknowledgeAgents)
 
   // Why: per-worktree collapse is session-only UI state. Single-primitive
   // subscription so the card only re-renders when THIS worktree's collapsed
@@ -86,17 +86,19 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
 
   const handleActivateAgentTab = useCallback(
     (tabId: string, paneKey: string) => {
-      acknowledgeAgents([paneKey])
-      const colon = paneKey.indexOf(':')
-      const tail = colon > 0 ? paneKey.slice(colon + 1) : ''
-      const parsed = /^\d+$/.test(tail) ? Number.parseInt(tail, 10) : NaN
-      let paneId: number | null = null
-      if (Number.isFinite(parsed) && parsed > 0) {
-        paneId = parsed
-      } else {
-        // Why: paneKey for sidebar agent rows is always ${tabId}:${paneId}
-        // with a positive integer paneId; anything else (empty, zero,
-        // non-numeric) means upstream row construction drifted.
+      // Why: ack is deferred to the focus listener's confirmation callback —
+      // if the agent's pane no longer exists (closed before the user clicked,
+      // or unrestored snapshot), surfaceStaleAgentRow fires instead and we
+      // want NO ack recorded so the row drops cleanly. See
+      // docs/agent-status-pane-mismapping.md.
+      const parsed = parsePaneKey(paneKey)
+      const stablePaneId = parsed?.stablePaneId ?? null
+      if (!parsed) {
+        // Why: paneKey for sidebar agent rows is always ${tabId}:${stablePaneId}
+        // (a v4 UUID). A pre-migration legacy key with numeric suffix is
+        // intentionally rejected here — the row should be dismissed via the
+        // surfaceStaleAgentRow path on the focus dispatch, not silently
+        // refocused on a different leaf.
         console.warn('[WorktreeCardAgents] malformed paneKey, skipping pane focus', paneKey)
       }
       // Why: route through activateAndRevealWorktree so cross-repo clicks also
@@ -109,10 +111,10 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
       activateAndRevealWorktree(worktreeId)
       const tabs = useAppStore.getState().tabsByWorktree[worktreeId] ?? []
       if (tabs.some((t) => t.id === tabId)) {
-        activateTabAndFocusPane(tabId, paneId)
+        activateTabAndFocusPane(tabId, stablePaneId, { ackPaneKeyOnSuccess: paneKey })
       }
     },
-    [worktreeId, acknowledgeAgents]
+    [worktreeId]
   )
 
   const handleToggleCollapsed = useCallback(

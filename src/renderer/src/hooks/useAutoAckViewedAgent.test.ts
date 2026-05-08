@@ -17,6 +17,12 @@ import type { RetainedAgentEntry } from '../store/slices/agent-status'
 // document.hasFocus, or the focus/visibilitychange event surface. The hook's
 // gate logic is unchanged by this fix — only the scan body was extended.
 
+// Why: the new contract requires the caller to pass the active leaf's
+// stablePaneId (mirroring useAutoAckViewedAgent's resolveActiveLeafStablePaneId
+// pull from the layout snapshot). Tests construct paneKeys around a fixed
+// UUID so the equality check has something to match against.
+const STABLE_2 = '11111111-1111-4111-8111-111111111112'
+
 describe('computeAutoAckTargets — codex retain race regression', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -26,7 +32,7 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-05T12:00:00.000Z'))
     const store = createTestStore()
-    const paneKey = 'tab-codex:2'
+    const paneKey = `tab-codex:${STABLE_2}`
     const activeTabId = 'tab-codex'
 
     // 1. Codex starts working, user acks it (e.g. by clicking the row).
@@ -72,7 +78,7 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
 
     // 5. The user is back on the codex tab. computeAutoAckTargets must see
     //    the retained row and surface it for ack — pre-fix this returned [].
-    const targets = computeAutoAckTargets(store.getState(), activeTabId)
+    const targets = computeAutoAckTargets(store.getState(), activeTabId, STABLE_2)
     expect(targets).toEqual([paneKey])
   })
 
@@ -80,7 +86,7 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-05T12:00:00.000Z'))
     const store = createTestStore()
-    const paneKey = 'tab-codex:2'
+    const paneKey = `tab-codex:${STABLE_2}`
     const activeTabId = 'tab-codex'
 
     store.getState().setAgentStatus(paneKey, {
@@ -101,19 +107,19 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
     store.getState().removeAgentStatus(paneKey)
 
     // First scan: the retained row is unvisited.
-    expect(computeAutoAckTargets(store.getState(), activeTabId)).toEqual([paneKey])
+    expect(computeAutoAckTargets(store.getState(), activeTabId, STABLE_2)).toEqual([paneKey])
 
     // Simulate the ack effect.
     vi.setSystemTime(new Date('2026-05-05T12:00:01.000Z'))
     store.getState().acknowledgeAgents([paneKey])
 
     // Second scan: idempotent — nothing to ack.
-    expect(computeAutoAckTargets(store.getState(), activeTabId)).toEqual([])
+    expect(computeAutoAckTargets(store.getState(), activeTabId, STABLE_2)).toEqual([])
   })
 
   it('skips retained rows whose paneKey is on a different tab', () => {
     const store = createTestStore()
-    const paneKey = 'tab-other:0'
+    const paneKey = `tab-other:${STABLE_2}`
     store.getState().setAgentStatus(paneKey, {
       state: 'done',
       prompt: 'p',
@@ -134,14 +140,14 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
     // Active tab differs — the retained row must NOT be acked while the user
     // is looking at a different tab; the bold-until-viewed signal must
     // survive the tab switch.
-    expect(computeAutoAckTargets(store.getState(), 'tab-codex')).toEqual([])
+    expect(computeAutoAckTargets(store.getState(), 'tab-codex', STABLE_2)).toEqual([])
   })
 
   it('acks a paneKey present in BOTH live and retained without throwing', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-05T12:00:00.000Z'))
     const store = createTestStore()
-    const paneKey = 'tab-codex:2'
+    const paneKey = `tab-codex:${STABLE_2}`
     const activeTabId = 'tab-codex'
 
     // Construct a (rare) state where retainedAgentsByPaneKey and
@@ -165,11 +171,45 @@ describe('computeAutoAckTargets — codex retain race regression', () => {
       }
     ])
 
-    const targets = computeAutoAckTargets(store.getState(), activeTabId)
+    const targets = computeAutoAckTargets(store.getState(), activeTabId, STABLE_2)
     // Two pushes, same paneKey — duplicates are intentional and harmless;
     // acknowledgeAgents short-circuits per key.
     expect(targets.length).toBeLessThanOrEqual(2)
     expect(targets.every((k) => k === paneKey)).toBe(true)
     expect(targets.includes(paneKey)).toBe(true)
+  })
+
+  it('does not ack rows whose paneKey is in the same tab but a different leaf', () => {
+    // Why: regression for the tab-prefix bug — clicking a blank pane in a
+    // split tab used to ack EVERY paneKey starting with `${activeTabId}:`,
+    // including the agent's pane the user never visually attended to.
+    const store = createTestStore()
+    const claudePaneKey = `tab-split:${STABLE_2}`
+    const blankStable = '22222222-2222-4222-8222-222222222222'
+    store.getState().setAgentStatus(claudePaneKey, {
+      state: 'working',
+      prompt: 'do something',
+      agentType: 'claude'
+    })
+
+    // Active leaf is the BLANK pane (different stablePaneId).
+    expect(computeAutoAckTargets(store.getState(), 'tab-split', blankStable)).toEqual([])
+
+    // Active leaf is the CLAUDE pane → it acks.
+    expect(computeAutoAckTargets(store.getState(), 'tab-split', STABLE_2)).toEqual([claudePaneKey])
+  })
+
+  it('returns no targets when the active leaf is unresolved (legacy snapshot)', () => {
+    // Why: a layout snapshot from before the stablePaneId migration won't
+    // populate stablePaneIdByLeafId — the hook resolves null in that case
+    // and the helper must not fall back to tab-prefix walking.
+    const store = createTestStore()
+    const paneKey = `tab-codex:${STABLE_2}`
+    store.getState().setAgentStatus(paneKey, {
+      state: 'done',
+      prompt: 'p',
+      agentType: 'codex'
+    })
+    expect(computeAutoAckTargets(store.getState(), 'tab-codex', null)).toEqual([])
   })
 })

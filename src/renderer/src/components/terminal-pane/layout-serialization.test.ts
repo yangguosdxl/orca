@@ -261,6 +261,41 @@ describe('serializeTerminalLayout', () => {
       expandedLeafId: null
     })
   })
+
+  it('omits stablePaneIdByLeafId when no map is supplied (legacy callers)', () => {
+    const pane = new MockHTMLElement({ classList: ['pane'], dataset: { paneId: '7' } })
+    const root = mockElement({ firstElementChild: pane }) as unknown as HTMLDivElement
+    const snapshot = serializeTerminalLayout(root, 7, null)
+    expect(snapshot).not.toHaveProperty('stablePaneIdByLeafId')
+  })
+
+  it('emits stablePaneIdByLeafId for each leaf when the map is supplied', () => {
+    const leaf1 = new MockHTMLElement({ classList: ['pane'], dataset: { paneId: '1' } })
+    const leaf2 = new MockHTMLElement({ classList: ['pane'], dataset: { paneId: '2' } })
+    const split = new MockHTMLElement({ classList: ['pane-split'], children: [leaf1, leaf2] })
+    const root = mockElement({ firstElementChild: split }) as unknown as HTMLDivElement
+    const stableMap = new Map<number, string>([
+      [1, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      [2, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']
+    ])
+    const snapshot = serializeTerminalLayout(root, 1, null, stableMap)
+    expect(snapshot.stablePaneIdByLeafId).toEqual({
+      'pane:1': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'pane:2': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    })
+  })
+
+  it('skips leaves whose numeric id is not present in the stable map', () => {
+    const leaf1 = new MockHTMLElement({ classList: ['pane'], dataset: { paneId: '1' } })
+    const leaf2 = new MockHTMLElement({ classList: ['pane'], dataset: { paneId: '2' } })
+    const split = new MockHTMLElement({ classList: ['pane-split'], children: [leaf1, leaf2] })
+    const root = mockElement({ firstElementChild: split }) as unknown as HTMLDivElement
+    const stableMap = new Map<number, string>([[1, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']])
+    const snapshot = serializeTerminalLayout(root, 1, null, stableMap)
+    expect(snapshot.stablePaneIdByLeafId).toEqual({
+      'pane:1': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,13 @@ type FitOverride = {
 const overridesByPtyId = new Map<string, FitOverride>()
 // Why: keyed by 'tabId:paneId' composite to avoid collisions when different
 // tabs have panes with the same numeric ID (pane IDs are per-tab, not global).
-const ptyIdByPaneKey = new Map<string, string>()
+// This is renderer-internal — never crosses an IPC boundary or persists across
+// reloads — so the key carries the renderer-local numeric paneId rather than
+// the cross-boundary stablePaneId. Renamed away from `ptyIdByInternalPaneKey` so the
+// shape doesn't collide visually with the ${tabId}:${stablePaneId} paneKey
+// used by agentStatusByPaneKey, ORCA_PANE_KEY, etc. See
+// docs/agent-status-pane-mismapping.md.
+const ptyIdByInternalPaneKey = new Map<string, string>()
 
 // Why: the override maps are plain JS — React components that read them
 // (e.g. the desktop mobile-fit banner) have no way to know when entries
@@ -69,7 +75,7 @@ export function setFitOverride(
 
 export function getPaneIdsForPty(ptyId: string): number[] {
   const result: number[] = []
-  for (const [key, boundPtyId] of ptyIdByPaneKey) {
+  for (const [key, boundPtyId] of ptyIdByInternalPaneKey) {
     if (boundPtyId === ptyId) {
       const paneId = Number(key.split(':').pop())
       if (!Number.isNaN(paneId)) {
@@ -86,7 +92,7 @@ export function getFitOverrideForPty(ptyId: string): FitOverride | null {
 
 export function getFitOverrideForPane(paneId: number, tabId?: string): FitOverride | null {
   if (tabId) {
-    const ptyId = ptyIdByPaneKey.get(`${tabId}:${paneId}`)
+    const ptyId = ptyIdByInternalPaneKey.get(`${tabId}:${paneId}`)
     if (!ptyId) {
       return null
     }
@@ -99,16 +105,16 @@ export function bindPanePtyId(paneId: number, ptyId: string | null, tabId?: stri
   if (tabId) {
     const key = `${tabId}:${paneId}`
     if (ptyId) {
-      ptyIdByPaneKey.set(key, ptyId)
+      ptyIdByInternalPaneKey.set(key, ptyId)
     } else {
-      ptyIdByPaneKey.delete(key)
+      ptyIdByInternalPaneKey.delete(key)
     }
   }
 }
 
 export function unbindPane(paneId: number, tabId?: string): void {
   if (tabId) {
-    ptyIdByPaneKey.delete(`${tabId}:${paneId}`)
+    ptyIdByInternalPaneKey.delete(`${tabId}:${paneId}`)
   }
 }
 

@@ -80,8 +80,14 @@ export type MergeContext = {
   tabsByWorktree: Record<string, TerminalTab[]>
   /** From useAppStore: maps tabId → ptyIds[] for the bound check. */
   ptyIdsByTabId: Record<string, string[]>
-  /** From useAppStore: per-tab live pane titles (for label resolution). */
+  /** From useAppStore: per-tab live pane titles (for label resolution).
+   *  Indexed by the renderer-local numeric paneId — the renderer-internal
+   *  handle that never crosses an IPC boundary. Cross-boundary callers must
+   *  resolve through `numericPaneIdByPaneKey` first. */
   runtimePaneTitlesByTabId: Record<string, Record<number, string>>
+  /** From useAppStore: maps `${tabId}:${stablePaneId}` paneKey → numeric
+   *  paneId. PaneManager writes this on pane create/adopt/close. */
+  numericPaneIdByPaneKey: Record<string, number>
   /** From useAppStore: false until the renderer has booted enough state to
    *  trust the bound/orphan distinction. Mirrors the existing gate. */
   workspaceSessionReady: boolean
@@ -137,7 +143,7 @@ function shortCwd(cwd: string): string {
   return parts.length > 2 ? parts.slice(-2).join(sep) : cwd
 }
 
-function parsePaneKey(paneKey: string | null): { tabId: string; paneRuntimeId: number } | null {
+function parsePaneKey(paneKey: string | null): { tabId: string; stablePaneId: string } | null {
   if (!paneKey) {
     return null
   }
@@ -145,11 +151,11 @@ function parsePaneKey(paneKey: string | null): { tabId: string; paneRuntimeId: n
   if (sepIdx <= 0) {
     return null
   }
-  const paneRuntimeId = Number(paneKey.slice(sepIdx + 1))
-  if (!Number.isFinite(paneRuntimeId)) {
+  const stablePaneId = paneKey.slice(sepIdx + 1)
+  if (!stablePaneId) {
     return null
   }
-  return { tabId: paneKey.slice(0, sepIdx), paneRuntimeId }
+  return { tabId: paneKey.slice(0, sepIdx), stablePaneId }
 }
 
 function resolveSnapshotSessionLabel(
@@ -167,7 +173,15 @@ function resolveSnapshotSessionLabel(
       if (custom) {
         return custom
       }
-      const runtime = ctx.runtimePaneTitlesByTabId[parsed.tabId]?.[parsed.paneRuntimeId]?.trim()
+      // Why: paneKey is opaque post-stablePaneId migration, but
+      // runtimePaneTitlesByTabId is still indexed by the renderer-local
+      // numeric paneId. Resolve through the store-backed mirror that
+      // PaneManager populates on pane create/adopt/close.
+      const numericId = ctx.numericPaneIdByPaneKey[session.paneKey ?? '']
+      const runtime =
+        typeof numericId === 'number'
+          ? ctx.runtimePaneTitlesByTabId[parsed.tabId]?.[numericId]?.trim()
+          : undefined
       if (runtime) {
         return runtime
       }

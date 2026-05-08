@@ -50,6 +50,7 @@ function getTerminalUrlOpenHint(): string {
 
 export function createPaneDOM(
   id: number,
+  stablePaneId: string,
   options: PaneManagerOptions,
   dragState: DragReorderState,
   dragCallbacks: DragReorderCallbacks,
@@ -116,6 +117,7 @@ export function createPaneDOM(
 
   const pane: ManagedPaneInternal = {
     id,
+    stablePaneId,
     terminal,
     container,
     xtermContainer,

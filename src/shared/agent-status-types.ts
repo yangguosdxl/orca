@@ -60,7 +60,10 @@ export type AgentStatusEntry = {
    *  (tool/prompt pings reset updatedAt but not stateStartedAt). */
   stateStartedAt: number
   agentType?: AgentType
-  /** Composite key: `${tabId}:${paneId}` — matches the cacheTimerByKey convention. */
+  /** Composite key: `${tabId}:${stablePaneId}` — matches the cacheTimerByKey
+   *  and ORCA_PANE_KEY conventions. The stablePaneId is an opaque UUID minted
+   *  in the renderer's PaneManager and persisted in the layout snapshot so
+   *  paneKey identity survives renderer reload. */
   paneKey: string
   terminalTitle?: string
   /** Rolling log of previous states. Each entry records a state the agent was in

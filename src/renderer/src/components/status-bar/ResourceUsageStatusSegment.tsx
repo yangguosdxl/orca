@@ -649,6 +649,7 @@ export function ResourceUsageStatusSegment({
   const ptyIdsByTabId = useAppStore((s) => s.ptyIdsByTabId)
   const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
   const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
+  const numericPaneIdByPaneKey = useAppStore((s) => s.numericPaneIdByPaneKey)
   const setActiveView = useAppStore((s) => s.setActiveView)
   const repos = useAppStore((s) => s.repos)
 
@@ -738,6 +739,7 @@ export function ResourceUsageStatusSegment({
             tabsByWorktree,
             ptyIdsByTabId,
             runtimePaneTitlesByTabId,
+            numericPaneIdByPaneKey,
             workspaceSessionReady,
             repoDisplayNameById
           })
@@ -749,6 +751,7 @@ export function ResourceUsageStatusSegment({
       tabsByWorktree,
       ptyIdsByTabId,
       runtimePaneTitlesByTabId,
+      numericPaneIdByPaneKey,
       workspaceSessionReady,
       repoDisplayNameById
     ]
@@ -845,17 +848,17 @@ export function ResourceUsageStatusSegment({
         }
       }
       setActiveView('terminal')
-      // Why: snapshot-derived rows carry a `${tabId}:${paneId}` paneKey from
-      // the main-process pty registry — parse the paneId tail so split-tab
-      // clicks land focus on the *clicked* pane rather than whichever pane
-      // was last active. Daemon-only rows have paneKey=null and degrade to
-      // tab-only activation.
+      // Why: snapshot-derived rows carry a `${tabId}:${stablePaneId}` paneKey
+      // from the main-process pty registry — pass the opaque suffix straight
+      // through so split-tab clicks land focus on the *clicked* pane rather
+      // than whichever pane was last active. Daemon-only rows have
+      // paneKey=null and degrade to tab-only activation. The focus listener
+      // resolves the UUID via the manager and surfaces a stale toast if the
+      // pane has been closed since the popover was last refreshed.
       const colon = paneKey ? paneKey.indexOf(':') : -1
-      const tail = colon > 0 && paneKey ? paneKey.slice(colon + 1) : ''
-      const parsed = /^\d+$/.test(tail) ? Number.parseInt(tail, 10) : NaN
-      const paneId =
-        Number.isFinite(parsed) && parsed > 0 && paneKey?.slice(0, colon) === tabId ? parsed : null
-      activateTabAndFocusPane(tabId, paneId)
+      const stablePaneId =
+        colon > 0 && paneKey && paneKey.slice(0, colon) === tabId ? paneKey.slice(colon + 1) : null
+      activateTabAndFocusPane(tabId, stablePaneId)
     },
     [tabsByWorktree, setActiveView]
   )

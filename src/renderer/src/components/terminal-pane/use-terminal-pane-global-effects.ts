@@ -9,6 +9,8 @@ import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import { fitAndFocusPanes, fitPanes } from './pane-helpers'
 import type { PtyTransport } from './pty-transport'
 import { handleTerminalFileDrop } from './terminal-drop-handler'
+import { surfaceStaleAgentRow } from './stale-agent-row'
+import { useAppStore } from '@/store'
 
 type UseTerminalPaneGlobalEffectsArgs = {
   tabId: string
@@ -115,11 +117,29 @@ export function useTerminalPaneGlobalEffects({
       if (!manager) {
         return
       }
-      const pane = manager.getPanes().find((candidate) => candidate.id === detail.paneId)
-      if (!pane) {
+      const stablePaneId = detail.stablePaneId
+      if (!stablePaneId) {
+        // Tab-only activation (no specific pane to focus).
         return
       }
-      manager.setActivePane(pane.id, { focus: true })
+      const numericId = manager.getNumericIdForStable(stablePaneId)
+      if (numericId === null) {
+        // Why: the carrying pane was closed or the snapshot's stablePaneId
+        // wasn't restored (legacy snapshot path). The right behavior is to
+        // surface that the agent's pane is gone, not to silently focus a
+        // different leaf — that's how the previous bug presented. Do NOT
+        // ack: the user didn't actually see the agent. See
+        // docs/agent-status-pane-mismapping.md.
+        surfaceStaleAgentRow(tabId, stablePaneId)
+        return
+      }
+      manager.setActivePane(numericId, { focus: true })
+      // Why: ack only after focus succeeds — keeps the "user saw this row"
+      // semantic crisp. If the pane resolved to a stale stableId, no ack is
+      // recorded, mirroring the WorktreeCardAgents intent.
+      if (detail.ackPaneKeyOnSuccess) {
+        useAppStore.getState().acknowledgeAgents([detail.ackPaneKeyOnSuccess])
+      }
     }
     window.addEventListener(FOCUS_TERMINAL_PANE_EVENT, onFocusPane)
     return () => window.removeEventListener(FOCUS_TERMINAL_PANE_EVENT, onFocusPane)

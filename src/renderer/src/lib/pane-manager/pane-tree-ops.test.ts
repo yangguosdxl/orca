@@ -44,6 +44,7 @@ function createPane({
 
   return {
     id: paneId,
+    stablePaneId: `aaaaaaaa-aaaa-4aaa-8aaa-${String(paneId).padStart(12, '0')}`,
     terminal: terminal as never,
     container: { dataset: {} } as never,
     xtermContainer: {} as never,

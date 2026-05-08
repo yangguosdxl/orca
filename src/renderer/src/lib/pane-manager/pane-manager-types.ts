@@ -34,6 +34,23 @@ export type PaneManagerOptions = {
   // helpers log warnings that are hard to correlate without knowing which
   // tab/worktree the PaneManager belongs to.
   debugLabel?: string
+  /** Notified when PaneManager mints a UUID for a freshly created pane.
+   *  Consumers (e.g. the store mirror used by IPC ingress) wire the
+   *  paneKey → numericId binding here so cross-boundary lookups work
+   *  without holding a manager ref. */
+  onStableIdRegistered?: (numericId: number, stablePaneId: string) => void
+  /** Notified when adoptStablePaneId reattaches a snapshot UUID after
+   *  layout replay. `previousStableId` is the UUID that
+   *  createPaneInternal originally minted before the adopt; consumers
+   *  that already wrote a mirror entry for it should drop that entry. */
+  onStableIdAdopted?: (
+    numericId: number,
+    stablePaneId: string,
+    previousStableId: string | null
+  ) => void
+  /** Notified when a pane closes (or PaneManager is destroyed) so the
+   *  store mirror can drop its paneKey row. */
+  onStableIdReleased?: (numericId: number, stablePaneId: string | null) => void
 }
 
 export type PaneStyleOptions = {
@@ -54,6 +71,13 @@ export type PaneStyleOptions = {
 
 export type ManagedPane = {
   id: number
+  /** Opaque per-pane UUID minted at creation. Stable across layout restores —
+   *  unlike `id`, which is a renderer-local counter that renumbers in
+   *  replayTerminalLayout. Use this (not `id`) as the cross-boundary identity
+   *  in paneKey (`${tabId}:${stablePaneId}`), in `ORCA_PANE_KEY`, and in any
+   *  store/IPC value that must survive a renderer reload. See
+   *  docs/agent-status-pane-mismapping.md. */
+  stablePaneId: string
   terminal: Terminal
   container: HTMLElement // the .pane element
   linkTooltip: HTMLElement

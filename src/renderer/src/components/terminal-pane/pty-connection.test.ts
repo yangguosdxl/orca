@@ -144,6 +144,10 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
 function createPane(paneId: number) {
   return {
     id: paneId,
+    // Why: pty-connection now keys cacheKey by stablePaneId so paneKey survives
+    // a renderer-reload renumber. Use a deterministic UUID per paneId so the
+    // existing assertions (`tab-1:1`) can match by replacing the suffix.
+    stablePaneId: `aaaaaaaa-aaaa-4aaa-8aaa-${String(paneId).padStart(12, '0')}`,
     terminal: {
       cols: 120,
       rows: 40,
@@ -1154,6 +1158,6 @@ describe('connectPanePty', () => {
 
     agentExitedHandler()
 
-    expect(deps.setCacheTimerStartedAt).toHaveBeenCalledWith('tab-1:1', null)
+    expect(deps.setCacheTimerStartedAt).toHaveBeenCalledWith(`tab-1:${pane.stablePaneId}`, null)
   })
 })

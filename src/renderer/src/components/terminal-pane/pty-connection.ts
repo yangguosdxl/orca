@@ -111,9 +111,12 @@ export function connectPanePty(
   const paneStartup = deps.startup ?? null
   deps.startup = undefined
 
-  // Why: cache timer state is keyed per-pane (not per-tab) so split-pane tabs
-  // can track each Claude session independently without overwriting each other.
-  const cacheKey = `${deps.tabId}:${pane.id}`
+  // Why: cache timer state and paneKey are keyed by stablePaneId (not the
+  // renderer-local numeric paneId) so they survive a renderer reload's
+  // pane renumber — see docs/agent-status-pane-mismapping.md. The same
+  // string crosses the IPC boundary as ORCA_PANE_KEY, so external hooks
+  // route their events back to the correct pane post-restore.
+  const cacheKey = `${deps.tabId}:${pane.stablePaneId}`
   const pendingSpawnKey = `${deps.tabId}:${paneLeafId(pane.id)}`
 
   const onExit = (ptyId: string): void => {
@@ -279,9 +282,12 @@ export function connectPanePty(
   }
   // Why: inject ORCA_PANE_KEY so global Claude/Codex hooks can attribute their
   // callbacks to the correct Orca pane without resolving worktrees from cwd.
-  // The key matches the `${tabId}:${paneId}` composite used for cacheTimerByKey.
-  // ORCA_TAB_ID / ORCA_WORKTREE_ID are exposed separately so the receiver has
-  // routing context without having to split paneKey back into its parts.
+  // The key matches the `${tabId}:${stablePaneId}` composite used for
+  // cacheTimerByKey + agentStatusByPaneKey, so hook callbacks land on the same
+  // identity the renderer indexes by. The format is documented as opaque —
+  // hook scripts must not parse the suffix as a number. ORCA_TAB_ID /
+  // ORCA_WORKTREE_ID are exposed separately so the receiver has routing
+  // context without having to split paneKey back into its parts.
   const paneEnv = {
     ...paneStartup?.env,
     ORCA_PANE_KEY: cacheKey,

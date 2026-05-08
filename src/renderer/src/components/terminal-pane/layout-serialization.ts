@@ -201,16 +201,53 @@ export function serializePaneTree(node: HTMLElement | null): TerminalPaneLayoutN
 export function serializeTerminalLayout(
   root: HTMLDivElement | null,
   activePaneId: number | null,
-  expandedPaneId: number | null
+  expandedPaneId: number | null,
+  stablePaneIdByPaneId?: ReadonlyMap<number, string>
 ): TerminalLayoutSnapshot {
   const rootNode = serializePaneTree(
     root?.firstElementChild instanceof HTMLElement ? root.firstElementChild : null
   )
-  return {
+  const snapshot: TerminalLayoutSnapshot = {
     root: rootNode,
     activeLeafId: activePaneId === null ? null : paneLeafId(activePaneId),
     expandedLeafId: expandedPaneId === null ? null : paneLeafId(expandedPaneId)
   }
+  // Why: persist stablePaneId per leaf so layout replay rebinds the same UUID
+  // to the corresponding leaf, preserving the cross-boundary paneKey identity
+  // that retained agent rows + ORCA_PANE_KEY hooks rely on. The DOM walk
+  // already produced the numeric paneId per leaf; this lift uses the snapshot
+  // map (taken from PaneManager.getStablePaneIdMap()) to map numeric → UUID
+  // without re-deriving identity from the DOM. Skipped when the caller didn't
+  // pass the map (legacy call sites or tests that don't have a manager).
+  if (stablePaneIdByPaneId && stablePaneIdByPaneId.size > 0 && rootNode) {
+    const stablePaneIdByLeafId: Record<string, string> = {}
+    for (const leafId of collectLeafIdsInOrder(rootNode)) {
+      const numericId = parsePaneIdFromLeafId(leafId)
+      if (numericId === null) {
+        continue
+      }
+      const stableId = stablePaneIdByPaneId.get(numericId)
+      if (stableId) {
+        stablePaneIdByLeafId[leafId] = stableId
+      }
+    }
+    if (Object.keys(stablePaneIdByLeafId).length > 0) {
+      snapshot.stablePaneIdByLeafId = stablePaneIdByLeafId
+    }
+  }
+  return snapshot
+}
+
+function parsePaneIdFromLeafId(leafId: string): number | null {
+  if (!leafId.startsWith('pane:')) {
+    return null
+  }
+  const tail = leafId.slice('pane:'.length)
+  const parsed = Number(tail)
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return parsed
 }
 
 function collectLeafIds(
@@ -314,5 +351,22 @@ export function replayTerminalLayout(
   }
 
   restoreNode(snapshot.root, initialPane.id)
+
+  // Why: reattach persisted stablePaneIds so the cross-boundary paneKey
+  // identity survives the renumber that replayTerminalLayout performs on
+  // numeric paneIds. Skipped when the snapshot lacks the field (legacy
+  // snapshot from a build before stablePaneId was persisted) — those panes
+  // keep the UUID createPaneInternal just minted, which forces a one-time
+  // identity reset for any retained agent rows from the prior build.
+  const stableIdByLeafId = snapshot.stablePaneIdByLeafId
+  if (stableIdByLeafId) {
+    for (const [leafId, stableId] of Object.entries(stableIdByLeafId)) {
+      const numericId = paneByLeafId.get(leafId)
+      if (numericId == null || !stableId) {
+        continue
+      }
+      manager.adoptStablePaneId(numericId, stableId)
+    }
+  }
   return paneByLeafId
 }

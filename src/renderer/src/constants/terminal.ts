@@ -23,7 +23,17 @@ export type ToggleTerminalPaneExpandDetail = {
 
 export type FocusTerminalPaneDetail = {
   tabId: string
-  paneId: number
+  /** Opaque per-pane UUID minted by PaneManager (see ManagedPane.stablePaneId).
+   *  Stable across renderer reload, unlike the renderer-local numeric paneId.
+   *  Use the manager's getNumericIdForStable() to resolve back to the numeric
+   *  handle on receipt. `null` means the dispatcher couldn't resolve a leaf
+   *  (e.g. malformed paneKey) and the listener should not focus anything. */
+  stablePaneId: string | null
+  /** Optional paneKey the listener should ack on focus-success. Set only by
+   *  callers that want the focus dispatch to double as a "user saw this row"
+   *  signal (sidebar inline agent rows). Left undefined for plain focus
+   *  routes (e.g. status-bar Resource Usage popover). */
+  ackPaneKeyOnSuccess?: string
 }
 
 export type SplitTerminalPaneDetail = {

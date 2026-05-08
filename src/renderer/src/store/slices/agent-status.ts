@@ -30,7 +30,7 @@ export type RetainedAgentEntry = {
 }
 
 export type AgentStatusSlice = {
-  /** Explicit agent status entries keyed by `${tabId}:${paneId}` composite.
+  /** Explicit agent status entries keyed by `${tabId}:${stablePaneId}` composite.
    *  Real-time only — lives in renderer memory, not persisted to disk. */
   agentStatusByPaneKey: Record<string, AgentStatusEntry>
   /** Monotonic tick that advances when agent-status freshness boundaries pass. */

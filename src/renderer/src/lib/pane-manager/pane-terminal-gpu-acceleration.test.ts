@@ -5,6 +5,7 @@ import { applyTerminalGpuAcceleration } from './pane-terminal-gpu-acceleration'
 function createPane(): ManagedPaneInternal {
   return {
     id: 1,
+    stablePaneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     terminal: {
       cols: 80,
       rows: 24

@@ -2,7 +2,14 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getDefaultUIState } from '../../shared/constants'
 
-import { ArrowLeft, ArrowRight, Minimize2, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Minimize2,
+  MoreHorizontal,
+  PanelLeft,
+  PanelRight
+} from 'lucide-react'
 import logo from '../../../resources/logo.svg'
 import { SYNC_FIT_PANES_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
@@ -75,10 +82,7 @@ function WindowControls(): React.JSX.Element {
         {maximized ? (
           // Restore icon (two overlapping squares)
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <path
-              d="M2 0v2H0v8h8V8h2V0H2zm6 9H1V3h7v6zM9 7H8V2H3V1h6v6z"
-              fill="currentColor"
-            />
+            <path d="M2 0v2H0v8h8V8h2V0H2zm6 9H1V3h7v6zM9 7H8V2H3V1h6v6z" fill="currentColor" />
           </svg>
         ) : (
           // Maximize icon (single square outline)
@@ -97,10 +101,7 @@ function WindowControls(): React.JSX.Element {
         onClick={() => window.api.ui.requestClose()}
       >
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-          <path
-            d="M1 0L0 1l4 4-4 4 1 1 4-4 4 4 1-1-4-4 4-4-1-1-4 4-4-4z"
-            fill="currentColor"
-          />
+          <path d="M1 0L0 1l4 4-4 4 1 1 4-4 4 4 1-1-4-4 4-4-1-1-4 4-4-4z" fill="currentColor" />
         </svg>
       </button>
     </div>
@@ -182,6 +183,7 @@ function App(): React.JSX.Element {
     useShallow((s) => ({
       tabsByWorktree: s.tabsByWorktree,
       runtimePaneTitlesByTabId: s.runtimePaneTitlesByTabId,
+      numericPaneIdByPaneKey: s.numericPaneIdByPaneKey,
       worktreesByRepo: s.worktreesByRepo
     }))
   )
@@ -881,7 +883,7 @@ function App(): React.JSX.Element {
                             className="titlebar-agent-hovercard-agent"
                             onClick={() => {
                               activateAndRevealWorktree(worktreeId)
-                              activateTabAndFocusPane(agent.tabId, agent.paneId)
+                              activateTabAndFocusPane(agent.tabId, agent.stablePaneId)
                             }}
                           >
                             <span className="titlebar-agent-hovercard-agent-label">

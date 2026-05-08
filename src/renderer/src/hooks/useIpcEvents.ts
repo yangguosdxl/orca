@@ -20,6 +20,7 @@ import {
   handleSwitchTerminalTab
 } from './ipc-tab-switch'
 import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
+import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
@@ -837,6 +838,20 @@ export function useIpcEvents(): void {
     // hook callback or an OSC fallback path.
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
+        // Why: drop incoming events whose paneKey suffix isn't a v4 UUID.
+        // Pre-migration daemon-survives-reload PTYs and the agent-hooks
+        // server's lastStatusByPaneKey replay map can re-inject paneKeys
+        // minted by the old build (numeric suffix). Those keys are no
+        // longer routable post-renumber and would create orphan rows. The
+        // guard is silent — it's a one-time migration filter, not a user-
+        // facing error. Internal renderer setAgentStatus calls (test
+        // fixtures, in-renderer mints) are unaffected because they don't
+        // pass through this listener. See
+        // docs/agent-status-pane-mismapping.md (Migration & rollout).
+        const parsed = parsePaneKey(data.paneKey)
+        if (!parsed) {
+          return
+        }
         const store = useAppStore.getState()
         // Why: the IPC payload is already a structured object — pass it
         // straight to the object-input normalizer instead of round-tripping
@@ -896,27 +911,34 @@ export function useIpcEvents(): void {
   }, [])
 }
 
-/** Resolve a paneKey (tabId:paneId) to both a liveness check and the current
- *  terminal title, in a single walk of tabsByWorktree. Used for agent type
- *  inference when the CLI payload omits agentType, plus to drop status updates
- *  targeted at panes whose tabs have already been torn down.
+/** Resolve a paneKey (tabId:stablePaneId) to both a liveness check and the
+ *  current terminal title, in a single walk of tabsByWorktree. Used for
+ *  agent type inference when the CLI payload omits agentType, plus to drop
+ *  status updates targeted at panes whose tabs have already been torn down.
  *  Why combined: callers need both pieces per hook event, and hook events can
  *  fire many times per second during a tool-use run. Two separate O(N) scans
- *  over the same map is wasteful; one pass returns both. */
+ *  over the same map is wasteful; one pass returns both.
+ *  Why the resolver goes through numericPaneIdByPaneKey: paneKey embeds the
+ *  opaque stablePaneId, but runtimePaneTitlesByTabId is keyed by the
+ *  renderer-local numeric paneId (which never crosses an IPC boundary).
+ *  PaneManager mirrors the binding so this layer can resolve without holding
+ *  a manager ref. */
 function resolvePaneKey(
   store: ReturnType<typeof useAppStore.getState>,
   paneKey: string
 ): { exists: boolean; title: string | undefined } {
-  const [tabId, paneIdRaw] = paneKey.split(':')
-  if (!tabId) {
+  const sepIdx = paneKey.indexOf(':')
+  if (sepIdx <= 0) {
     return { exists: false, title: undefined }
   }
+  const tabId = paneKey.slice(0, sepIdx)
   // Why: split panes track per-pane titles in runtimePaneTitlesByTabId; prefer
   // the pane's own title over the tab-level (last-winning) title so agent type
   // inference attributes status to the correct pane.
   const paneTitles = store.runtimePaneTitlesByTabId?.[tabId]
-  const paneIdNum = paneIdRaw !== undefined ? Number(paneIdRaw) : NaN
-  const rawPaneTitle = paneTitles && !Number.isNaN(paneIdNum) ? paneTitles[paneIdNum] : undefined
+  const numericPaneId = store.numericPaneIdByPaneKey?.[paneKey]
+  const rawPaneTitle =
+    paneTitles && typeof numericPaneId === 'number' ? paneTitles[numericPaneId] : undefined
   // Why: treat an empty-string paneTitle as "no title" so the tab-level
   // fallback still fires. `paneTitle ?? tabTitle` alone would short-circuit on
   // '' and also erase any previously-cached terminalTitle in the store

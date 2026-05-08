@@ -578,8 +578,12 @@ export function useTerminalPaneLifecycle({
           // Why: closing a pane is user-initiated teardown of this row — drop
           // (not remove) so any retained `done` snapshot for this pane is also
           // cleared and a same-frame live→gone transition cannot re-snapshot
-          // it via the retention sync.
-          useAppStore.getState().dropAgentStatus(`${tabId}:${paneId}`)
+          // it via the retention sync. Resolve paneKey by stablePaneId — the
+          // numeric paneId would not match the entry pty-connection wrote.
+          const stablePaneId = managerRef.current?.getStablePaneId(paneId)
+          if (stablePaneId) {
+            useAppStore.getState().dropAgentStatus(`${tabId}:${stablePaneId}`)
+          }
           transport.destroy?.()
           paneTransportsRef.current.delete(paneId)
         }
@@ -687,7 +691,29 @@ export function useTerminalPaneLifecycle({
       // still consumes Chromium's context budget and can blank visible panes.
       initialRenderingSuspended: !isVisibleRef.current,
       terminalGpuAcceleration: settingsRef.current?.terminalGpuAcceleration ?? 'auto',
-      debugLabel: `tab:${tabId}/wt:${worktreeId}`
+      debugLabel: `tab:${tabId}/wt:${worktreeId}`,
+      // Why: PaneManager owns the only authoritative numericId↔stablePaneId
+      // mapping. IPC-layer code (useIpcEvents.resolvePaneKey) and merge code
+      // (mergeSnapshotAndSessions) can't reach a manager ref, so the manager
+      // mirrors the binding into the store via these callbacks. paneKey is
+      // built here as ${tabId}:${stablePaneId} so all consumers can index by
+      // the same string they see in agentStatusByPaneKey, ORCA_PANE_KEY, etc.
+      onStableIdRegistered: (numericId, stablePaneId) => {
+        useAppStore.getState().registerPaneKeyMapping(`${tabId}:${stablePaneId}`, numericId)
+      },
+      onStableIdAdopted: (numericId, stablePaneId, previousStableId) => {
+        const store = useAppStore.getState()
+        if (previousStableId && previousStableId !== stablePaneId) {
+          store.unregisterPaneKeyMapping(`${tabId}:${previousStableId}`)
+        }
+        store.registerPaneKeyMapping(`${tabId}:${stablePaneId}`, numericId)
+      },
+      onStableIdReleased: (_numericId, stablePaneId) => {
+        if (!stablePaneId) {
+          return
+        }
+        useAppStore.getState().unregisterPaneKeyMapping(`${tabId}:${stablePaneId}`)
+      }
     })
 
     managerRef.current = manager

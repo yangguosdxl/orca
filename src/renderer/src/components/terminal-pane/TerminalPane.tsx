@@ -298,7 +298,12 @@ export default function TerminalPane({
       return
     }
     const activePaneId = manager.getActivePane()?.id ?? manager.getPanes()[0]?.id ?? null
-    const layout = serializeTerminalLayout(container, activePaneId, expandedPaneIdRef.current)
+    const layout = serializeTerminalLayout(
+      container,
+      activePaneId,
+      expandedPaneIdRef.current,
+      manager.getStablePaneIdMap()
+    )
     const existing = useAppStore.getState().terminalLayoutsByTabId[tabId]
     const currentPanes = manager.getPanes()
     const currentLeafIds = new Set(currentPanes.map((p) => paneLeafId(p.id)))
@@ -404,17 +409,26 @@ export default function TerminalPane({
       if (manager.getPanes().length <= 1) {
         onCloseTab()
       } else {
-        // Why: clear the cache timer for this specific pane before closing it,
-        // so the sidebar doesn't show a stale countdown for a pane that no
-        // longer exists. The closeTab path handles bulk cleanup, but closing
-        // a single split pane doesn't go through closeTab.
-        useAppStore.getState().setCacheTimerStartedAt(`${tabId}:${paneId}`, null)
+        // Why: cache timer + agent status are keyed by stablePaneId so the
+        // entries match what pty-connection wrote and what hook events
+        // landed under — see docs/agent-status-pane-mismapping.md. The
+        // numeric paneId here is the renderer-local handle for closing;
+        // identity uses the UUID.
+        const stablePaneId = manager.getStablePaneId(paneId)
+        if (stablePaneId) {
+          const paneKey = `${tabId}:${stablePaneId}`
+          // Why: clear the cache timer for this specific pane before closing it,
+          // so the sidebar doesn't show a stale countdown for a pane that no
+          // longer exists. The closeTab path handles bulk cleanup, but closing
+          // a single split pane doesn't go through closeTab.
+          useAppStore.getState().setCacheTimerStartedAt(paneKey, null)
+          // Why: Cmd+W on a split pane is user-initiated teardown — drop (not
+          // remove) so any retained `done` snapshot for this pane is also cleared
+          // and a same-frame live→gone transition cannot re-snapshot it via the
+          // retention sync.
+          useAppStore.getState().dropAgentStatus(paneKey)
+        }
         syncPanePtyLayoutBinding(paneId, null)
-        // Why: Cmd+W on a split pane is user-initiated teardown — drop (not
-        // remove) so any retained `done` snapshot for this pane is also cleared
-        // and a same-frame live→gone transition cannot re-snapshot it via the
-        // retention sync.
-        useAppStore.getState().dropAgentStatus(`${tabId}:${paneId}`)
         manager.closePane(paneId)
       }
     },
@@ -538,7 +552,13 @@ export default function TerminalPane({
       syncPanePtyLayoutBinding(paneId, null)
       transport?.destroy?.()
       paneTransportsRef.current.delete(paneId)
-      setCacheTimerStartedAt(`${tabId}:${paneId}`, null)
+      // Why: cache-timer key uses the pane's stablePaneId so the clear hits the
+      // same entry pty-connection wrote. The numeric paneId here is purely the
+      // renderer-local handle for the in-place reconnect.
+      const stablePaneId = manager.getStablePaneId(paneId)
+      if (stablePaneId) {
+        setCacheTimerStartedAt(`${tabId}:${stablePaneId}`, null)
+      }
       setTerminalError(null)
 
       const newPaneBinding = connectPanePty(pane, manager, {
@@ -868,7 +888,12 @@ export default function TerminalPane({
         }
       }
       const activePaneId = manager.getActivePane()?.id ?? panes[0]?.id ?? null
-      const layout = serializeTerminalLayout(container, activePaneId, expandedPaneIdRef.current)
+      const layout = serializeTerminalLayout(
+        container,
+        activePaneId,
+        expandedPaneIdRef.current,
+        manager.getStablePaneIdMap()
+      )
       // Why: setTabLayout REPLACES — it doesn't merge. captureBuffers can
       // run during a transient window (post-remount, just-attached,
       // mid-replay) where xterm hasn't rendered yet so serialize returns 0

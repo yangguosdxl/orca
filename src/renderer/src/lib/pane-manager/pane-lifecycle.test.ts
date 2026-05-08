@@ -23,6 +23,7 @@ vi.mock('@xterm/addon-webgl', () => ({
 function createPane(): ManagedPaneInternal {
   return {
     id: 1,
+    stablePaneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     terminal: {
       loadAddon: vi.fn(),
       refresh: vi.fn(),
@@ -231,6 +232,7 @@ describe('openTerminal — Unicode 11 ordering', () => {
 
     const pane: ManagedPaneInternal = {
       id: 1,
+      stablePaneId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       terminal,
       container: fakeContainer,
       xtermContainer: fakeContainer,

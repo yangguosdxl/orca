@@ -365,6 +365,12 @@ export type TerminalLayoutSnapshot = {
   /** User-assigned pane titles, keyed by leafId (e.g. "pane:3").
    *  Persisted alongside buffers via the existing session:set flow. */
   titlesByLeafId?: Record<string, string>
+  /** Per-leaf opaque UUID minted at pane creation. Persisted so layout replay
+   *  can reattach the same identity (paneKey, ORCA_PANE_KEY, retained agent
+   *  rows) to the leaf it previously belonged to. Optional on legacy snapshots
+   *  written before this field existed — see
+   *  docs/agent-status-pane-mismapping.md. */
+  stablePaneIdByLeafId?: Record<string, string>
 }
 
 /** Minimal subset of OpenFile persisted across restarts.
