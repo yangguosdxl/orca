@@ -175,4 +175,60 @@ describe('layout stablePaneId persistence', () => {
       [2, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc']
     ])
   })
+
+  it('skips late UUID adoption for collapsed leaves when split replay fails', () => {
+    const adopted: [number, string][] = []
+    let nextPaneId = 1
+    let splitCount = 0
+    const manager = {
+      createInitialPane: () => ({ id: nextPaneId++ }),
+      splitPane: () => {
+        splitCount += 1
+        // Why: fail the nested split only. replayTerminalLayout then maps both
+        // nested leaves onto pane 2; late adoption must not assign two snapshot
+        // UUIDs to that one surviving pane.
+        if (splitCount === 2) {
+          return null
+        }
+        return { id: nextPaneId++ }
+      },
+      adoptStablePaneId: (numericId: number, stablePaneId: string) => {
+        adopted.push([numericId, stablePaneId])
+      }
+    }
+
+    const snapshot = {
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: { type: 'leaf', leafId: 'leaf-a' },
+        second: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', leafId: 'leaf-b' },
+          second: { type: 'leaf', leafId: 'leaf-c' }
+        }
+      },
+      activeLeafId: 'leaf-a',
+      expandedLeafId: null,
+      stablePaneIdByLeafId: {
+        'leaf-a': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        'leaf-b': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'leaf-c': 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+      }
+    } satisfies Parameters<typeof replayTerminalLayout>[1]
+
+    const paneByLeafId = replayTerminalLayout(
+      manager as unknown as Parameters<typeof replayTerminalLayout>[0],
+      snapshot,
+      false
+    )
+
+    expect(Object.fromEntries(paneByLeafId)).toEqual({
+      'leaf-a': 1,
+      'leaf-b': 2,
+      'leaf-c': 2
+    })
+    expect(adopted).toEqual([[1, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']])
+  })
 })

@@ -131,9 +131,6 @@ export function connectPanePty(
     // first emitting a non-agent title, the cache timer would persist as stale
     // state. Clear it unconditionally on PTY exit.
     deps.setCacheTimerStartedAt(cacheKey, null)
-    // Why: a dead terminal has no running agent — remove its explicit status
-    // entry so the hover UI only shows what is running *now*.
-    useAppStore.getState().removeAgentStatus(cacheKey)
     // The runtime graph is the CLI's source for live terminal bindings, so
     // we must republish when a pane loses its PTY instead of waiting for a
     // broader layout change that may never happen.
@@ -149,9 +146,17 @@ export function connectPanePty(
     manager.setPaneGpuRendering(pane.id, true)
     const panes = manager.getPanes()
     if (panes.length <= 1) {
+      // Why: a dead terminal has no running agent — remove its explicit status
+      // entry so the hover UI only shows what is running now. The tab-close path
+      // owns any broader teardown cleanup for the final pane.
+      useAppStore.getState().removeAgentStatus(cacheKey)
       deps.onPtyExitRef.current(ptyId)
       return
     }
+    // Why: split-pane PTY exit closes only this pane. Drop while the live entry
+    // still exists so teardown suppresses retained `done` resurrection for the
+    // pane that is about to disappear.
+    useAppStore.getState().dropAgentStatus(cacheKey, { suppressRetentionIfLiveMissing: true })
     manager.closePane(pane.id)
   }
 

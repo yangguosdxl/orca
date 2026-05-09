@@ -36,6 +36,8 @@ type StoreState = {
   removeDeferredSshSessionId: ReturnType<typeof vi.fn>
   consumePendingColdRestore: ReturnType<typeof vi.fn>
   consumePendingSnapshot: ReturnType<typeof vi.fn>
+  dropAgentStatus: ReturnType<typeof vi.fn>
+  removeAgentStatus: ReturnType<typeof vi.fn>
 }
 
 type ConnectCallbacks = {
@@ -243,6 +245,7 @@ describe('connectPanePty', () => {
       removeDeferredSshSessionId: vi.fn(),
       consumePendingColdRestore: vi.fn(() => null),
       consumePendingSnapshot: vi.fn(() => null),
+      dropAgentStatus: vi.fn(),
       removeAgentStatus: vi.fn()
     } as StoreState
     ;(globalThis as unknown as { window: unknown }).window = {
@@ -942,6 +945,29 @@ describe('connectPanePty', () => {
 
     expect(deps.clearTerminalTabUnread).not.toHaveBeenCalled()
     expect(deps.clearWorktreeUnread).not.toHaveBeenCalled()
+  })
+
+  it('drops agent status before closing a split pane on PTY exit', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('pty-exited')
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    const manager = createManager(2)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    const onPtyExit = createdTransportOptions[0].onPtyExit as (ptyId: string) => void
+    onPtyExit('pty-exited')
+
+    const paneKey = makePaneKey('tab-1', pane.stablePaneId)
+    expect(mockStoreState.dropAgentStatus).toHaveBeenCalledWith(paneKey, {
+      suppressRetentionIfLiveMissing: true
+    })
+    expect(mockStoreState.removeAgentStatus).not.toHaveBeenCalled()
+    expect(manager.closePane).toHaveBeenCalledWith(1)
+    expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
   })
 
   // Why: symmetric to the replay guard — if the pane is stale-codex (pending

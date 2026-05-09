@@ -243,11 +243,13 @@ function parsePaneIdFromLeafId(leafId: string): number | null {
     return null
   }
   const tail = leafId.slice('pane:'.length)
-  const parsed = Number(tail)
-  if (!Number.isFinite(parsed)) {
+  // Why: nextPaneId only allocates positive integers starting at 1. Use a strict
+  // digit regex (rather than Number(tail)) to reject non-canonical inputs like
+  // '1e3', '+2', ' 3 ', or leading zeros that Number() would silently coerce.
+  if (!/^[1-9]\d*$/.test(tail)) {
     return null
   }
-  return parsed
+  return Number.parseInt(tail, 10)
 }
 
 function collectLeafIds(
@@ -370,6 +372,20 @@ export function replayTerminalLayout(
 
   restoreNode(snapshot.root, initialPane.id)
 
+  // Why: when splitPane fails inside restoreNode, collectLeafIds collapses
+  // every leaf in the failed subtree onto the same numericId. Detect those
+  // collapsed numericIds up front so the late-binding adopt loop can skip
+  // them — see comment inside the loop.
+  const duplicatedNumericIds = new Set<number>()
+  const seenNumericIds = new Set<number>()
+  for (const numericId of paneByLeafId.values()) {
+    if (seenNumericIds.has(numericId)) {
+      duplicatedNumericIds.add(numericId)
+    } else {
+      seenNumericIds.add(numericId)
+    }
+  }
+
   // Why: defensive late-binding fallback. Mint-time hints (above) handle the
   // common path; this only fires for leaves whose snapshot UUID either failed
   // the v4 guard or collided with a live pane at mint time. adoptStablePaneId
@@ -378,6 +394,14 @@ export function replayTerminalLayout(
     for (const [leafId, stableId] of Object.entries(stableIdByLeafId)) {
       const numericId = paneByLeafId.get(leafId)
       if (numericId == null || !stableId) {
+        continue
+      }
+      // Why: split-failed subtrees collapse every leaf onto the same numericId.
+      // adoptStablePaneId would then overwrite previous→new for each iteration,
+      // silently dropping every leaf's UUID except the last. Skip the adoption
+      // entirely for those collapsed leaves — better to keep the freshly minted
+      // UUID than to assign one snapshot UUID to a pane representing N leaves.
+      if (duplicatedNumericIds.has(numericId)) {
         continue
       }
       manager.adoptStablePaneId(numericId, stableId)

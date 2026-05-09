@@ -97,6 +97,19 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
         dismissStaleAgentRowByKey(paneKey)
         return
       }
+      // Why: defensive — if the row's tabId disagrees with the paneKey's
+      // embedded tabId (stale row, upstream bug), activating the row's tab
+      // while dispatching focus for a stablePaneId that belongs to a different
+      // tab would silently misroute. Mirrors the equivalent guard in
+      // ResourceUsageStatusSegment.tsx.
+      if (parsed.tabId !== tabId) {
+        console.warn('[WorktreeCardAgents] paneKey tabId mismatch, dismissing row', {
+          tabId,
+          paneKey
+        })
+        dismissStaleAgentRowByKey(paneKey)
+        return
+      }
       const stablePaneId = parsed.stablePaneId
       // Why: route through activateAndRevealWorktree so cross-repo clicks also
       // set activeRepoId, record a nav-history entry, clear sidebar filters,

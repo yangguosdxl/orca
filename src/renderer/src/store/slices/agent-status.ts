@@ -29,6 +29,13 @@ export type RetainedAgentEntry = {
   startedAt: number
 }
 
+export type DropAgentStatusOptions = {
+  /** Plant a retention suppressor even if the live row has already disappeared.
+   *  Why: pane teardown can race after title-revert/removeAgentStatus but before
+   *  the retention sync consumes the previous live row. */
+  suppressRetentionIfLiveMissing?: boolean
+}
+
 export type AgentStatusSlice = {
   /** Explicit agent status entries keyed by `${tabId}:${stablePaneId}` composite.
    *  Real-time only — lives in renderer memory, not persisted to disk. */
@@ -64,7 +71,7 @@ export type AgentStatusSlice = {
   /** Remove a single entry AND suppress re-retention on its next disappearance.
    *  Used for USER-INITIATED teardown — the dashboard/hover X button, and
    *  pane close — where the user is telling us "I'm done with this row". */
-  dropAgentStatus: (paneKey: string) => void
+  dropAgentStatus: (paneKey: string, options?: DropAgentStatusOptions) => void
 
   /** Remove all entries under a tab AND suppress re-retention for each.
    *  Used on tab close — the user is tearing down the whole tab, so any
@@ -313,7 +320,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       queueMicrotask(() => freshness.schedule())
     },
 
-    dropAgentStatus: (paneKey) => {
+    dropAgentStatus: (paneKey, options) => {
       // Why: single sync read — zustand set is synchronous, so the value we
       // observe inside the set callback is the same one we would re-read via
       // get() immediately after. Capture it once from inside the callback
@@ -331,14 +338,23 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           nextAck = { ...nextAck }
           delete nextAck[paneKey]
         }
-        // Why: bail when there is genuinely nothing to do. The old guard
-        // `!hasLive && !hasRetained && alreadySuppressed` leaked a phantom
-        // suppressor write in the `!hasLive && !hasRetained && !alreadySuppressed`
-        // case. With the hasLive-gated suppressor below, a no-op drop on a
-        // paneKey with no live and no retained entry truly has nothing to
-        // change, so short-circuit here — but still flush a pending ack
-        // cleanup if one is present.
+        // Why: bail when there is genuinely nothing to do. Pane teardown can opt
+        // into a missing-live suppressor below; ordinary dismiss/no-op drops keep
+        // the old identity-preserving short-circuit.
+        const shouldSuppressWithoutLive = options?.suppressRetentionIfLiveMissing === true
+        const alreadySuppressed = paneKey in s.retentionSuppressedPaneKeys
         if (!hasLive && !hasRetained) {
+          if (shouldSuppressWithoutLive && !alreadySuppressed) {
+            return {
+              ...(nextAck !== s.acknowledgedAgentsByPaneKey
+                ? { acknowledgedAgentsByPaneKey: nextAck }
+                : {}),
+              retentionSuppressedPaneKeys: {
+                ...s.retentionSuppressedPaneKeys,
+                [paneKey]: true
+              }
+            }
+          }
           if (nextAck !== s.acknowledgedAgentsByPaneKey) {
             return { acknowledgedAgentsByPaneKey: nextAck }
           }
@@ -369,23 +385,26 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         // cheaper than threading frame-level ordering guarantees through the
         // retention sync.
         //
-        // Why gate on hasLive: the suppressor is a one-shot flag consumed by
-        // `collectRetainedAgentsOnDisappear` (useRetainedAgents.ts), which
-        // iterates the PREVIOUS render's LIVE agents to decide what to
+        // Why gate on hasLive by default: the suppressor is a one-shot flag
+        // consumed by `collectRetainedAgentsOnDisappear` (useRetainedAgents.ts),
+        // which iterates the PREVIOUS render's LIVE agents to decide what to
         // retain. If we dismiss a retained-only row (no live entry at drop
         // time), no live→gone transition will ever fire for this paneKey, so
         // the suppressor would never be consumed and would leak indefinitely
         // — only clearing if the same paneKey later became live again via
         // setAgentStatus. A retained-only dismissal just needs the retained
         // entry removed; there is no live-agent resurrection risk to guard
-        // against. Only spread retentionSuppressedPaneKeys when hasLive.
+        // against. Pane teardown passes suppressRetentionIfLiveMissing to cover
+        // the race where removeAgentStatus already cleared the live row but the
+        // retention sync has not yet processed the previous live row.
         //
         // Why the `!(paneKey in s.retentionSuppressedPaneKeys)` check: if a
         // suppressor is already present, re-spreading produces a new object
         // reference with identical contents and spuriously re-renders any
         // subscriber selecting on retentionSuppressedPaneKeys. Mirror the
         // guard used in setAgentStatus.
-        const needsSuppressorWrite = hasLive && !(paneKey in s.retentionSuppressedPaneKeys)
+        const needsSuppressorWrite =
+          (hasLive || shouldSuppressWithoutLive) && !(paneKey in s.retentionSuppressedPaneKeys)
 
         return {
           agentStatusByPaneKey: nextLive,

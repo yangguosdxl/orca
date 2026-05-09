@@ -150,6 +150,49 @@ describe('dropAgentStatus + retention suppressor', () => {
     expect(s.retainedAgentsByPaneKey).toBe(retainedBefore)
   })
 
+  it('with teardown suppression: writes a suppressor even when the live row is already gone', () => {
+    vi.useFakeTimers()
+    const store = createTestStore()
+
+    store.getState().dropAgentStatus('tab-missing:0', { suppressRetentionIfLiveMissing: true })
+
+    const s = store.getState()
+    expect(s.retentionSuppressedPaneKeys['tab-missing:0']).toBe(true)
+    // Why: no live row was removed, so freshness/smart-sort epochs should not
+    // tick just because pane teardown planted a one-shot suppressor.
+    expect(s.agentStatusEpoch).toBe(0)
+    expect(s.sortEpoch).toBe(0)
+  })
+
+  it('with teardown suppression: removes retained-only row and still suppresses pending retention', () => {
+    vi.useFakeTimers()
+    const store = createTestStore()
+    const now = Date.now()
+    const entry: AgentStatusEntry = {
+      state: 'done',
+      prompt: '',
+      updatedAt: now,
+      stateStartedAt: now,
+      paneKey: 'tab-retained:0',
+      stateHistory: []
+    }
+    store.getState().retainAgents([
+      {
+        entry,
+        worktreeId: 'wt-x',
+        tab: { id: 'tab-retained', title: 'claude' } as unknown as TerminalTab,
+        agentType: 'claude',
+        startedAt: now
+      }
+    ])
+
+    store.getState().dropAgentStatus('tab-retained:0', { suppressRetentionIfLiveMissing: true })
+
+    const s = store.getState()
+    expect(s.retainedAgentsByPaneKey['tab-retained:0']).toBeUndefined()
+    expect(s.retentionSuppressedPaneKeys['tab-retained:0']).toBe(true)
+  })
+
   it('setAgentStatus clears a pending suppressor so the row can be retained normally on next disappearance', () => {
     vi.useFakeTimers()
     const store = createTestStore()

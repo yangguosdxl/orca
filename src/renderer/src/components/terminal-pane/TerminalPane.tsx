@@ -426,7 +426,7 @@ export default function TerminalPane({
           // remove) so any retained `done` snapshot for this pane is also cleared
           // and a same-frame live→gone transition cannot re-snapshot it via the
           // retention sync.
-          useAppStore.getState().dropAgentStatus(paneKey)
+          useAppStore.getState().dropAgentStatus(paneKey, { suppressRetentionIfLiveMissing: true })
         }
         syncPanePtyLayoutBinding(paneId, null)
         manager.closePane(paneId)

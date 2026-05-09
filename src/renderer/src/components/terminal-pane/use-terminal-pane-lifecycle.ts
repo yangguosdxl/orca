@@ -576,16 +576,18 @@ export function useTerminalPaneLifecycle({
             syncPanePtyLayoutBinding(paneId, null)
             clearTabPtyId(tabId, ptyId)
           }
-          // Why: closing a pane is user-initiated teardown of this row — drop
-          // (not remove) so any retained `done` snapshot for this pane is also
-          // cleared and a same-frame live→gone transition cannot re-snapshot
-          // it via the retention sync.
-          const stablePaneId = closedStableId
-          if (stablePaneId) {
-            useAppStore.getState().dropAgentStatus(makePaneKey(tabId, stablePaneId))
-          }
           transport.destroy?.()
           paneTransportsRef.current.delete(paneId)
+        }
+        // Why: drop (not remove) so any retained `done` snapshot for this pane is
+        // also cleared and a same-frame live→gone transition cannot re-snapshot it
+        // via the retention sync. Runs on every close path — including pty-exit-
+        // driven closes where transport may already be torn down — so retained
+        // agent rows never outlive the pane.
+        if (closedStableId) {
+          useAppStore.getState().dropAgentStatus(makePaneKey(tabId, closedStableId), {
+            suppressRetentionIfLiveMissing: true
+          })
         }
         clearRuntimePaneTitle(tabId, paneId)
         paneFontSizesRef.current.delete(paneId)
