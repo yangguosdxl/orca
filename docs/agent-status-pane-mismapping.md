@@ -117,7 +117,7 @@ Two narrower fixes were considered and rejected:
 - **Local patches (active‑leaf check + fallback in focus listener).** This treats the auto‑ack symptom correctly but only papers over click‑to‑focus by falling back to the active pane on miss. It cannot detect the silent‑aliasing case (lookup succeeds at the wrong leaf), and it leaves cache timers, retained snapshots, and `ORCA_PANE_KEY` drifting silently across reloads. The user‑reported symptom can persist post‑fix in restore‑renumber edge cases.
 - **Reuse the existing `pane:N` leafId string as the cross‑boundary key.** Because `paneLeafId(paneId)` is derived from the renumberable numeric id, this is not actually stable across restores. It collapses into the proposed approach with a less‑opaque naming convention.
 
-The proposed approach matches how Waveterm (the closest architectural analog — Electron renderer + persistent backend + per‑pane identity exposed to child processes via env var) handles this: a UUID minted at creation, persisted in the layout snapshot, exported verbatim to child processes (`WAVETERM_BLOCKID`), with display ordering computed from leaf order separately. VS Code uses a renderer‑local counter only because that counter is **never** exposed across boundaries — extension API never sees it; persistent identity flows through `persistentProcessId` instead. Our bug class is the predictable consequence of exposing the renderer‑local counter across boundaries.
+The proposed approach is the standard pattern when per‑pane identity has to cross boundaries that outlive the renderer: a UUID minted at creation, persisted in the layout snapshot, exported verbatim to child processes via env var, with display ordering computed from leaf order separately. A renderer‑local counter is only safe when that counter is **never** exposed across boundaries — extension/plugin APIs and external hook scripts must route persistent identity through a separate, opaque field. Our bug class is the predictable consequence of exposing the renderer‑local counter across boundaries.
 
 ### Identity model
 
@@ -138,7 +138,7 @@ Resolve via a small store‑backed mirror: `numericPaneIdByPaneKey: Record<strin
 
 ### Why: separating display id from identity
 
-Two ids may seem like more complexity than needed, but conflating them is exactly what produced the bug. Numbering panes 1..N is useful for keyboard shortcuts and labels — derived from leaf order, not identity (waveterm calls this `blockNum`). Identity must be opaque and stable; UUID is the simplest construction that guarantees both. Once they're separated, neither can corrupt the other.
+Two ids may seem like more complexity than needed, but conflating them is exactly what produced the bug. Numbering panes 1..N is useful for keyboard shortcuts and labels — derived from leaf order, not identity. Identity must be opaque and stable; UUID is the simplest construction that guarantees both. Once they're separated, neither can corrupt the other.
 
 ### Layout snapshot back‑compat
 
