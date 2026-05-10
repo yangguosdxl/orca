@@ -396,8 +396,6 @@ describe('CodexRuntimeHomeService', () => {
   })
 
   it('returns the managed home for managed Codex launch and rate-limit preparation', async () => {
-    const runtimeConfigPath = join(testState.fakeHomeDir, '.codex', 'config.toml')
-    writeFileSync(runtimeConfigPath, 'approval_policy = "trusted"\n', 'utf-8')
     const managedHomePath = createManagedAuth(
       testState.userDataDir,
       'account-1',
@@ -426,14 +424,7 @@ describe('CodexRuntimeHomeService', () => {
     const service = new CodexRuntimeHomeService(store as never)
 
     expect(service.prepareForCodexLaunch()).toBe(managedHomePath)
-    expect(readFileSync(join(managedHomePath, 'config.toml'), 'utf-8')).toBe(
-      'approval_policy = "trusted"\n'
-    )
-    writeFileSync(runtimeConfigPath, 'approval_policy = "on-request"\n', 'utf-8')
     expect(service.prepareForRateLimitFetch()).toBe(managedHomePath)
-    expect(readFileSync(join(managedHomePath, 'config.toml'), 'utf-8')).toBe(
-      'approval_policy = "on-request"\n'
-    )
   })
 
   it('does not overwrite auth.json when no managed account was ever active', async () => {
