@@ -97,6 +97,7 @@ const STATUS_LABELS: Record<ConnectionState, string> = {
 function TerminalPaneView({
   handle,
   active,
+  keyboardLift,
   onRef,
   onWebReady,
   onSelectionMode,
@@ -107,6 +108,7 @@ function TerminalPaneView({
 }: {
   handle: string
   active: boolean
+  keyboardLift: number
   onRef: (handle: string, ref: TerminalWebViewHandle | null) => void
   onWebReady: (handle: string) => void
   onSelectionMode: (handle: string, active: boolean) => void
@@ -125,7 +127,11 @@ function TerminalPaneView({
   return (
     <View
       pointerEvents={active ? 'auto' : 'none'}
-      style={[styles.terminalPane, !active && styles.terminalPaneHidden]}
+      style={[
+        styles.terminalPane,
+        keyboardLift > 0 && { transform: [{ translateY: -keyboardLift }] },
+        !active && styles.terminalPaneHidden
+      ]}
     >
       <TerminalWebView
         ref={setRef}
@@ -171,8 +177,9 @@ export default function SessionScreen() {
   const [deleteKeyTarget, setDeleteKeyTarget] = useState<CustomKey | null>(null)
   // Why: in Expo SDK 55 edge-to-edge mode the OS does NOT resize the window when
   // the IME opens — the keyboard draws on top of the app. We track the keyboard
-  // height ourselves and apply it as paddingBottom on the input/accessory area
-  // so the input lifts above the IME and the terminal flex container shrinks.
+  // height ourselves and translate the input/accessory area above the IME without
+  // changing the terminal frame height, so keyboard open/close does not resize
+  // the desktop PTY.
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   // Why: server-authoritative display mode per terminal. The runtime is the
   // single source of truth — this state is populated from subscribe responses.
@@ -286,7 +293,8 @@ export default function SessionScreen() {
         {
           terminal: handle,
           client: { id: deviceTokenRef.current!, type: 'mobile' as const },
-          viewport: viewportRef.current ?? undefined
+          viewport: viewportRef.current ?? undefined,
+          capabilities: { terminalBinaryStream: 1 }
         },
         (result) => {
           if (subscribeSeqRef.current.get(handle) !== seq) return
@@ -318,6 +326,9 @@ export default function SessionScreen() {
             layoutSeqRef.current.set(handle, eventSeq)
           } else if (eventSeq != null && data.type === 'scrollback') {
             layoutSeqRef.current.set(handle, eventSeq)
+          }
+          if (data.type === 'subscribed') {
+            return
           }
           if (data.type === 'scrollback') {
             if (initializedHandlesRef.current.has(handle)) {
@@ -439,11 +450,12 @@ export default function SessionScreen() {
             // dims with fresh scrollback. No resubscribe needed.
             const cols = (data.cols as number) || 80
             const rows = (data.rows as number) || 24
-            const serialized =
-              typeof data.serialized === 'string' && data.serialized.length > 0
-                ? data.serialized
-                : ''
-            getTerminalRef(handle)?.init(cols, rows, serialized)
+            const serialized = typeof data.serialized === 'string' ? data.serialized : null
+            if (serialized != null) {
+              getTerminalRef(handle)?.init(cols, rows, serialized)
+            } else {
+              getTerminalRef(handle)?.resize(cols, rows)
+            }
             if (data.displayMode) {
               setTerminalModes((prev) =>
                 new Map(prev).set(handle, data.displayMode as MobileDisplayMode)
@@ -612,11 +624,7 @@ export default function SessionScreen() {
     void loadCustomKeys().then(setCustomKeys)
   }, [])
 
-  // Why: drive the bottom padding from the keyboard height (edge-to-edge mode
-  // doesn't resize the window) and refit xterm once the layout settles so the
-  // terminal grid matches the new visible area. iOS exposes 'will' events that
-  // animate in sync with the IME; Android only fires 'did' events reliably.
-  // Also drives re-measurement when other layout-affecting state changes
+  // Why: re-measure when non-keyboard layout-affecting state changes
   // (e.g. tab strip toggling visibility when the terminal count crosses
   // 0↔1 — without this, a freshly-created 2nd tab subscribes with a
   // stale viewport that doesn't account for the now-visible tab strip,
@@ -665,11 +673,9 @@ export default function SessionScreen() {
   useEffect(() => {
     const onShow = (e: KeyboardEvent) => {
       setKeyboardHeight(e.endCoordinates?.height ?? 0)
-      scheduleViewportRefit()
     }
     const onHide = () => {
       setKeyboardHeight(0)
-      scheduleViewportRefit()
     }
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide'
@@ -680,7 +686,7 @@ export default function SessionScreen() {
       showSub.remove()
       hideSub.remove()
     }
-  }, [scheduleViewportRefit])
+  }, [])
 
   // Why: the tab strip is hidden when only one terminal exists and shown
   // once a second is created. Crossing the 1↔2 boundary changes the
@@ -726,13 +732,12 @@ export default function SessionScreen() {
 
   useEffect(() => {
     if (connState !== 'connected') return
-    // Why: on reconnect the RPC client auto-resends terminal.subscribe,
-    // creating new server-side handlers. Clear local subscription state
-    // so subscribeToTerminal's guards don't block fresh subscriptions,
-    // and clear xterm buffers so the new scrollback snapshot replaces
-    // stale content (including data that arrived while disconnected).
-    clearTerminalCache()
-    setTerminalsLoaded(false)
+    // Why: the RPC client auto-resends terminal.subscribe on reconnect.
+    // Keep the current xterm visible while the binary snapshot hydrates,
+    // instead of clearing to a blank "Loading terminals" surface.
+    if (initializedHandlesRef.current.size === 0) {
+      setTerminalsLoaded(false)
+    }
     let disposed = false
     const timers: ReturnType<typeof setTimeout>[] = []
     function addTimer(fn: () => void, ms: number) {
@@ -1200,17 +1205,15 @@ export default function SessionScreen() {
           : `${terminals.length} terminals`
       : STATUS_LABELS[connState]
 
-  // Why: on Android (Samsung 3-button) the keyboard event reports only the IME
-  // height; the system nav bar sits below the keyboard and adds its own height
-  // on top, so we must add insets.bottom too or the input stays clipped behind
-  // the nav bar. On iOS the keyboard coordinates already include the home
-  // indicator region, so adding insets.bottom would double-count.
-  const bottomPadding =
+  // Why: keep safe-area padding in layout at all times, then visually translate
+  // the controls over the terminal when the keyboard appears. iOS keyboard
+  // height includes the home-indicator inset; Android IME height does not.
+  const keyboardLift =
     keyboardHeight > 0
       ? Platform.OS === 'ios'
-        ? keyboardHeight
-        : keyboardHeight + insets.bottom
-      : insets.bottom
+        ? Math.max(0, keyboardHeight - insets.bottom)
+        : keyboardHeight
+      : 0
 
   return (
     <View style={styles.container}>
@@ -1313,6 +1316,7 @@ export default function SessionScreen() {
                 key={terminal.handle}
                 handle={terminal.handle}
                 active={terminal.handle === activeHandle}
+                keyboardLift={keyboardLift}
                 onRef={setTerminalWebViewRef}
                 onWebReady={handleTerminalWebReady}
                 onSelectionMode={handleSelectionMode}
@@ -1333,9 +1337,14 @@ export default function SessionScreen() {
           </View>
         )}
 
-        {/* Why: bottomPadding lifts the entire input region above the keyboard
-            (when shown) or above the system nav bar / home indicator (when hidden). */}
-        <View style={{ paddingBottom: bottomPadding }}>
+        {/* Why: translate instead of resizing so keyboard open/close does not
+            trigger a server-side PTY viewport change. */}
+        <View
+          style={[
+            styles.commandDock,
+            { paddingBottom: insets.bottom, transform: [{ translateY: -keyboardLift }] }
+          ]}
+        >
           {/* Accessory keys */}
           <View style={styles.accessoryBar}>
             <ScrollView
@@ -1718,6 +1727,9 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: typography.bodySize,
     fontWeight: '600'
+  },
+  commandDock: {
+    zIndex: 20
   },
   accessoryBar: {
     borderTopWidth: 1,
