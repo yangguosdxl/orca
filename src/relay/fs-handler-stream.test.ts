@@ -86,6 +86,16 @@ async function flush(times = 5): Promise<void> {
   }
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error('waitFor: predicate did not become true in time')
+    }
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
 describe('FsHandler readFileStream', () => {
   let dispatcher: ReturnType<typeof createMockDispatcher>
   let handler: FsHandler
@@ -116,7 +126,7 @@ describe('FsHandler readFileStream', () => {
     expect(meta.totalSize).toBe(content.length)
     expect(meta.resultEncoding).toBe('base64')
 
-    await flush()
+    await waitFor(() => collectStream(dispatcher).end !== null)
     const { chunks, end, err } = collectStream(dispatcher)
     expect(err).toBeNull()
     expect(end).toEqual({ streamId: meta.streamId })
