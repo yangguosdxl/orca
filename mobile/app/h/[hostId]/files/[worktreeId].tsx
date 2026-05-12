@@ -120,7 +120,11 @@ export default function MobileFileExplorerScreen() {
   const [truncated, setTruncated] = useState(false)
 
   const loadFiles = useCallback(async () => {
-    if (!client || connState !== 'connected') return
+    if (!client || connState !== 'connected') {
+      setLoading(false)
+      setError(connState === 'connected' ? 'Connecting to desktop...' : 'Waiting for desktop...')
+      return
+    }
     setLoading(true)
     setError(null)
     try {
