@@ -201,7 +201,7 @@ export default function MobileFileExplorerScreen() {
         onPress={() => {
           if (isDirectory) {
             toggleDirectory(item.relativePath)
-          } else {
+          } else if (item.kind === 'text' || item.kind === 'binary') {
             void openFile(item.relativePath, item.kind)
           }
         }}
