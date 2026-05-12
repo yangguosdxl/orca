@@ -43,6 +43,8 @@ import { useEditorExternalWatch } from './hooks/useEditorExternalWatch'
 import { useAutoAckViewedAgent } from './hooks/useAutoAckViewedAgent'
 import { useUnreadDockBadge } from './hooks/useUnreadDockBadge'
 import {
+  getRuntimeMobileSessionSyncKey,
+  scheduleRuntimeGraphSync,
   setRuntimeGraphStoreStateGetter,
   setRuntimeGraphSyncEnabled
 } from './runtime/sync-runtime-graph'
@@ -401,6 +403,32 @@ function App(): React.JSX.Element {
     return () => {
       setRuntimeGraphStoreStateGetter(null)
     }
+  }, [])
+
+  useEffect(() => {
+    let previousKey = getRuntimeMobileSessionSyncKey(useAppStore.getState())
+    return useAppStore.subscribe((state, previousState) => {
+      if (
+        state.tabsByWorktree === previousState.tabsByWorktree &&
+        state.groupsByWorktree === previousState.groupsByWorktree &&
+        state.activeGroupIdByWorktree === previousState.activeGroupIdByWorktree &&
+        state.unifiedTabsByWorktree === previousState.unifiedTabsByWorktree &&
+        state.tabBarOrderByWorktree === previousState.tabBarOrderByWorktree &&
+        state.activeFileId === previousState.activeFileId &&
+        state.activeFileIdByWorktree === previousState.activeFileIdByWorktree &&
+        state.openFiles === previousState.openFiles &&
+        state.editorDrafts === previousState.editorDrafts &&
+        state.activeTabId === previousState.activeTabId
+      ) {
+        return
+      }
+      const nextKey = getRuntimeMobileSessionSyncKey(state)
+      if (nextKey === previousKey) {
+        return
+      }
+      previousKey = nextKey
+      scheduleRuntimeGraphSync()
+    })
   }, [])
 
   useEffect(() => registerUpdaterBeforeUnloadBypass(), [])

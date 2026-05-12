@@ -145,11 +145,12 @@ function restoreFailedMobileSaveDraft(
   previousDirty: boolean
 ): void {
   const state = useAppStore.getState()
-  if (state.editorDrafts[fileId] !== injectedContent) {
+  const currentDraft = state.editorDrafts[fileId]
+  if (currentDraft !== undefined && currentDraft !== injectedContent) {
     return
   }
   // Why: mobile save injects a desktop draft only to reuse the editor save path.
-  // If that save fails, put the desktop editor back exactly as it was before.
+  // If save or verification fails, put the desktop editor back exactly as it was before.
   if (previousDraft === undefined) {
     state.clearEditorDraft(fileId)
   } else {

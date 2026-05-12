@@ -893,6 +893,18 @@ export function connect(
               ...(clientId ? { client: { id: clientId } } : {})
             }
           })
+        } else if (
+          stream?.method === 'session.tabs.subscribe' &&
+          stream.params &&
+          typeof stream.params === 'object' &&
+          typeof (stream.params as { worktree?: unknown }).worktree === 'string'
+        ) {
+          sendEncrypted({
+            id: nextId(),
+            deviceToken,
+            method: 'session.tabs.unsubscribe',
+            params: { worktree: (stream.params as { worktree: string }).worktree }
+          })
         }
       }
     },

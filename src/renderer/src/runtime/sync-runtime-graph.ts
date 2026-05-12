@@ -64,6 +64,45 @@ export function scheduleRuntimeGraphSync(): void {
   })
 }
 
+export function getRuntimeMobileSessionSyncKey(state: AppState): string {
+  return JSON.stringify({
+    tabsByWorktree: Object.fromEntries(
+      Object.entries(state.tabsByWorktree).map(([worktreeId, tabs]) => [
+        worktreeId,
+        tabs.map((tab) => ({
+          id: tab.id,
+          title: tab.title,
+          customTitle: tab.customTitle,
+          active: state.activeTabId === tab.id
+        }))
+      ])
+    ),
+    groupsByWorktree: state.groupsByWorktree,
+    activeGroupIdByWorktree: state.activeGroupIdByWorktree,
+    unifiedTabsByWorktree: state.unifiedTabsByWorktree,
+    tabBarOrderByWorktree: state.tabBarOrderByWorktree,
+    activeFileId: state.activeFileId,
+    activeFileIdByWorktree: state.activeFileIdByWorktree,
+    openFiles: state.openFiles.map((file) => ({
+      id: file.id,
+      filePath: file.filePath,
+      relativePath: file.relativePath,
+      worktreeId: file.worktreeId,
+      language: file.language,
+      mode: file.mode,
+      isDirty: file.isDirty,
+      isUntitled: file.isUntitled,
+      markdownPreviewSourceFileId: file.markdownPreviewSourceFileId
+    })),
+    editorDrafts: Object.fromEntries(
+      Object.entries(state.editorDrafts).map(([fileId, content]) => [
+        fileId,
+        stableHashString(content)
+      ])
+    )
+  })
+}
+
 async function syncRuntimeGraph(): Promise<void> {
   if (!syncEnabled || !getStoreState) {
     return
@@ -233,11 +272,12 @@ function buildMobileMarkdownTab(
     sourceFileId: sourceFile.id,
     sourceFilePath: sourceFile.filePath,
     sourceRelativePath: sourceFile.relativePath,
-    documentVersion: draftContent !== undefined ? hashString(draftContent) : `file:${sourceFile.id}`
+    documentVersion:
+      draftContent !== undefined ? stableHashString(draftContent) : `file:${sourceFile.id}`
   }
 }
 
-function hashString(value: string): string {
+function stableHashString(value: string): string {
   let hash = 2166136261
   for (let i = 0; i < value.length; i += 1) {
     hash ^= value.charCodeAt(i)

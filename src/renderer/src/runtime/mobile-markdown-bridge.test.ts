@@ -251,6 +251,43 @@ describe('mobile markdown bridge', () => {
     }
   })
 
+  it('restores the previous desktop draft when save verification fails after write', async () => {
+    openMarkdownFile()
+    const state = useAppStore.getState()
+    state.setEditorDraft('/repo/README.md', 'desktop draft')
+    state.markFileDirty('/repo/README.md', true)
+    let diskContent = 'desktop draft'
+    const readFile = vi.fn().mockImplementation(async () => ({
+      content: 'verified mismatch',
+      isBinary: false
+    }))
+    const writeFile = vi.fn().mockImplementation(async ({ content }) => {
+      diskContent = content
+    })
+    setupWindow({ readFile, writeFile })
+    const detachBridge = attachMobileMarkdownBridge()
+    const detachAutosave = attachEditorAutosaveController(useAppStore as never)
+
+    try {
+      const response = await sendRequest({
+        id: 'save-verify-fail',
+        operation: 'save',
+        worktreeId: 'wt-1',
+        tabId: 'tab-md',
+        baseVersion: hashMarkdownContent('desktop draft'),
+        content: 'mobile edit'
+      })
+
+      expect(response).toMatchObject({ id: 'save-verify-fail', ok: false })
+      expect(diskContent).toBe('mobile edit')
+      expect(useAppStore.getState().editorDrafts['/repo/README.md']).toBe('desktop draft')
+      expect(useAppStore.getState().openFiles[0]?.isDirty).toBe(true)
+    } finally {
+      detachAutosave()
+      detachBridge()
+    }
+  })
+
   it('serializes saves so duplicate base versions do not both write', async () => {
     openMarkdownFile()
     let diskContent = 'original'

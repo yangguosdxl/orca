@@ -52,9 +52,19 @@ export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
         subscriptionId,
         () => {
           unsubscribe()
+          emit({ type: 'end' })
         },
         connectionId
       )
+    }
+  }),
+  defineMethod({
+    name: 'session.tabs.unsubscribe',
+    params: WorktreeTabSelector,
+    handler: async (params, { runtime, connectionId }) => {
+      const snapshot = await runtime.listMobileSessionTabs(params.worktree)
+      runtime.cleanupSubscription(`session.tabs:${connectionId ?? 'local'}:${snapshot.worktree}`)
+      return { unsubscribed: true }
     }
   }),
   defineMethod({
