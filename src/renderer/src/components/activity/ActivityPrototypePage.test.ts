@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
+import {
+  AGENT_STATUS_STALE_AFTER_MS,
+  type AgentStatusEntry
+} from '../../../../shared/agent-status-types'
 import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
+import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 import { buildActivityEvents } from './ActivityPrototypePage'
 
 function makeRepo(): Repo {
@@ -67,13 +71,45 @@ function makeWorkingEntryWithPriorDone(): AgentStatusEntry {
   }
 }
 
+function makeWorkingEntryWithoutHistory(): AgentStatusEntry {
+  return {
+    state: 'working',
+    prompt: 'New run',
+    updatedAt: 3_000,
+    stateStartedAt: 3_000,
+    paneKey: 'tab-1:1',
+    terminalTitle: 'Claude',
+    stateHistory: [],
+    agentType: 'claude'
+  }
+}
+
+function makeRetainedDoneEntry(tab: TerminalTab): RetainedAgentEntry {
+  return {
+    entry: {
+      state: 'done',
+      prompt: 'Retained prior run',
+      updatedAt: 1_000,
+      stateStartedAt: 1_000,
+      paneKey: 'tab-1:1',
+      terminalTitle: 'Claude',
+      stateHistory: [],
+      agentType: 'claude'
+    },
+    worktreeId: 'wt-1',
+    tab,
+    agentType: 'claude',
+    startedAt: 1_000
+  }
+}
+
 describe('buildActivityEvents', () => {
   it('keeps a prior done event after the same pane starts working again', () => {
     const repo = makeRepo()
     const worktree = makeWorktree()
     const tab = makeTab()
 
-    const events = buildActivityEvents({
+    const result = buildActivityEvents({
       agentStatusByPaneKey: {
         'tab-1:1': makeWorkingEntryWithPriorDone()
       },
@@ -83,14 +119,69 @@ describe('buildActivityEvents', () => {
       },
       worktreeMap: new Map([[worktree.id, worktree]]),
       repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {}
+      acknowledgedAgentsByPaneKey: {},
+      now: 2_000
     })
 
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({
       state: 'done',
       timestamp: 1_000
     })
-    expect(events[0].entry.prompt).toBe('First prompt')
+    expect(result.events[0].entry.prompt).toBe('First prompt')
+    expect(result.liveAgentStateByPaneKey['tab-1:1']).toBe('working')
+  })
+
+  it('does not keep showing a stale live agent as running', () => {
+    const repo = makeRepo()
+    const worktree = makeWorktree()
+    const tab = makeTab()
+
+    const result = buildActivityEvents({
+      agentStatusByPaneKey: {
+        'tab-1:1': makeWorkingEntryWithPriorDone()
+      },
+      retainedAgentsByPaneKey: {},
+      tabsByWorktree: {
+        [worktree.id]: [tab]
+      },
+      worktreeMap: new Map([[worktree.id, worktree]]),
+      repoMap: new Map([[repo.id, repo]]),
+      acknowledgedAgentsByPaneKey: {},
+      now: 2_000 + AGENT_STATUS_STALE_AFTER_MS + 1
+    })
+
+    expect(result.events).toHaveLength(1)
+    expect(result.liveAgentStateByPaneKey['tab-1:1']).toBeUndefined()
+  })
+
+  it('overlays fresh live state onto retained-only activity for a reused pane key', () => {
+    const repo = makeRepo()
+    const worktree = makeWorktree()
+    const tab = makeTab()
+
+    const result = buildActivityEvents({
+      agentStatusByPaneKey: {
+        'tab-1:1': makeWorkingEntryWithoutHistory()
+      },
+      retainedAgentsByPaneKey: {
+        'tab-1:1': makeRetainedDoneEntry(tab)
+      },
+      tabsByWorktree: {
+        [worktree.id]: [tab]
+      },
+      worktreeMap: new Map([[worktree.id, worktree]]),
+      repoMap: new Map([[repo.id, repo]]),
+      acknowledgedAgentsByPaneKey: {},
+      now: 3_000
+    })
+
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({
+      state: 'done',
+      timestamp: 1_000
+    })
+    expect(result.events[0].entry.prompt).toBe('Retained prior run')
+    expect(result.liveAgentStateByPaneKey['tab-1:1']).toBe('working')
   })
 })
