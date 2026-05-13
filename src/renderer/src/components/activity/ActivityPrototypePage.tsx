@@ -618,7 +618,7 @@ function LiveAgentStateIndicator({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="inline-flex h-5 w-4 shrink-0 items-center justify-center"
+          className="inline-flex size-4 shrink-0 items-center justify-center"
           aria-label={label}
         >
           <StatusIndicator status={liveAgentWorktreeStatus(state)} aria-hidden="true" />
@@ -685,6 +685,7 @@ function ThreadRow({
           full-width for the repo badge + branch name, which used to get
           truncated when the right cluster ate horizontal space. */}
       <div className="flex min-w-0 items-start gap-2">
+        <LiveAgentStateIndicator state={thread.currentAgentState} />
         <span className="inline-flex shrink-0 pt-px">
           <AgentIcon agent={agentTypeToIconAgent(thread.agentType)} size={14} />
         </span>
@@ -737,7 +738,6 @@ function ThreadRow({
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
-        <LiveAgentStateIndicator state={thread.currentAgentState} />
         <EventRepoBadge repo={thread.repo} />
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
           {thread.worktree.displayName}
@@ -1131,7 +1131,7 @@ export default function ActivityPrototypePage(): React.JSX.Element {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="size-8 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                        className="size-8 shrink-0 border-input bg-transparent p-0 text-muted-foreground shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-transparent dark:hover:bg-accent dark:hover:text-accent-foreground"
                         aria-label="Thread list options"
                       >
                         <MoreVertical className="size-3.5" />
@@ -1196,6 +1196,7 @@ export default function ActivityPrototypePage(): React.JSX.Element {
               <div className="flex shrink-0 items-start gap-4 border-b border-border px-4 pt-2 pb-3">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-start gap-2">
+                    <LiveAgentStateIndicator state={selectedThread.currentAgentState} />
                     <span className="inline-flex shrink-0 pt-[3px]">
                       <AgentIcon agent={agentTypeToIconAgent(selectedThread.agentType)} size={16} />
                     </span>
@@ -1204,7 +1205,6 @@ export default function ActivityPrototypePage(): React.JSX.Element {
                     </h2>
                   </div>
                   <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                    <LiveAgentStateIndicator state={selectedThread.currentAgentState} />
                     <EventRepoBadge repo={selectedThread.repo} />
                     <span className="truncate text-xs text-muted-foreground">
                       {selectedThread.worktree.displayName}
