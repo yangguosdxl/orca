@@ -3,15 +3,7 @@ and current visual skeleton together until the next refinement pass decides
 which pieces become production modules. */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import {
-  Bell,
-  BellDot,
-  BellOff,
-  MessageSquareText,
-  Search,
-  Settings,
-  TerminalSquare
-} from 'lucide-react'
+import { Bell, BellDot, BellOff, MessageSquareText, Search, TerminalSquare } from 'lucide-react'
 
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
@@ -23,14 +15,6 @@ import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Toggle } from '@/components/ui/toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -48,7 +32,6 @@ import type {
 } from '../../../../shared/agent-status-types'
 
 type ThreadReadFilter = 'all' | 'unread'
-type ActivityDensity = 'compact' | 'comfortable'
 type ActivityEventState = Extract<AgentStatusState, 'done' | 'blocked' | 'waiting'>
 
 type ActivityEvent = {
@@ -552,19 +535,16 @@ function EventRepoBadge({ repo }: { repo: Repo | null }): React.JSX.Element | nu
 
 function ThreadRow({
   thread,
-  density,
   selected,
   onSelect,
   onToggleRead
 }: {
   thread: AgentPaneThread
-  density: ActivityDensity
   selected: boolean
   onSelect: () => void
   onToggleRead: () => void
 }): React.JSX.Element {
   const latest = thread.latestEvent
-  const compact = density === 'compact'
   const toggleLabel = thread.unread ? 'Mark thread read' : 'Mark thread unread'
   return (
     <div
@@ -588,8 +568,7 @@ function ThreadRow({
         //   tint, mirroring WorktreeCard's "weight alone" pattern. Three
         //   stacked tints (selected + unread + hover) made selected and
         //   unread look identical when hovered.
-        'group relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-border px-3 text-left transition-colors',
-        compact ? 'py-1.5' : 'py-2.5',
+        'group relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-border px-3 py-1.5 text-left transition-colors',
         selected
           ? 'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-white/[0.10] dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
           : 'hover:bg-accent/40'
@@ -622,13 +601,8 @@ function ThreadRow({
             {thread.worktree.displayName}
           </span>
         </span>
-        {!compact ? (
-          <span className="mt-1 block truncate text-xs text-muted-foreground">
-            {agentTitle(latest)}
-          </span>
-        ) : null}
       </span>
-      <span className={cn('flex flex-col items-end pt-0.5', compact ? 'gap-1' : 'gap-2')}>
+      <span className="flex flex-col items-end gap-1 pt-0.5">
         <span className="flex min-w-16 flex-col items-end gap-1">
           <span className="relative flex h-6 min-w-16 items-start justify-end">
             <span className="transition-opacity group-hover:opacity-0">
@@ -673,8 +647,6 @@ function ThreadRow({
 
 export default function ActivityPrototypePage(): React.JSX.Element {
   const [readFilter, setReadFilter] = useState<ThreadReadFilter>('all')
-  const [leftSidebarCompact, setLeftSidebarCompact] = useState(true)
-  const leftSidebarDensity: ActivityDensity = leftSidebarCompact ? 'compact' : 'comfortable'
   const [query, setQuery] = useState('')
   const [selectedPaneKey, setSelectedPaneKey] = useState<string | null>(null)
   const [displayedPaneKey, setDisplayedPaneKey] = useState<string | null>(null)
@@ -941,33 +913,10 @@ export default function ActivityPrototypePage(): React.JSX.Element {
           style={{ width: threadListWidth }}
         >
           <div className="shrink-0 border-b border-border px-2 pt-1.5 pb-2">
-            <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="mb-2 flex items-center gap-2">
               <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
                 Agents
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Activity list display options"
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <Settings className="size-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" side="bottom" className="min-w-44">
-                  <DropdownMenuLabel>Display style</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={leftSidebarCompact}
-                    onCheckedChange={(checked) => setLeftSidebarCompact(checked === true)}
-                  >
-                    Compact list
-                  </DropdownMenuCheckboxItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
@@ -1006,7 +955,6 @@ export default function ActivityPrototypePage(): React.JSX.Element {
               <ThreadRow
                 key={thread.paneKey}
                 thread={thread}
-                density={leftSidebarDensity}
                 selected={thread.paneKey === selectedThread?.paneKey}
                 onSelect={() => selectThread(thread)}
                 onToggleRead={() => toggleThreadRead(thread)}
