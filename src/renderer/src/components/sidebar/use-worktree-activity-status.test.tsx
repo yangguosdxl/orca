@@ -5,6 +5,8 @@ import { makePaneKey } from '../../../../shared/stable-pane-id'
 import type { TerminalTab } from '../../../../shared/types'
 import { useWorktreeActivityStatus } from './use-worktree-activity-status'
 
+const LEAF_ID = '11111111-1111-4111-8111-111111111111'
+
 type MockState = {
   tabsByWorktree: Record<string, TerminalTab[]>
   browserTabsByWorktree: Record<string, { id: string }[]>
@@ -72,7 +74,7 @@ describe('useWorktreeActivityStatus', () => {
 
   it('keeps a restored offscreen working agent yellow from the hook snapshot', () => {
     const worktreeId = 'repo1::/path/wt1'
-    const paneKey = makePaneKey('tab-1', '00000000-0000-4000-8000-000000000001')
+    const paneKey = makePaneKey('tab-1', LEAF_ID)
     mockState = {
       ...mockState,
       tabsByWorktree: {
