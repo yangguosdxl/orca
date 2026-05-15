@@ -4,15 +4,25 @@ import { formatCliError, formatWorktreeList } from './format'
 import type { RuntimeWorktreeRecord } from '../shared/runtime-types'
 
 function worktree(overrides: Partial<RuntimeWorktreeRecord> = {}): RuntimeWorktreeRecord {
-  return {
+  const base: RuntimeWorktreeRecord = {
     id: 'repo::/tmp/repo/child',
     repoId: 'repo',
     path: '/tmp/repo/child',
+    head: 'abc123',
     branch: 'feature/child',
+    isBare: false,
+    isMainWorktree: false,
     parentWorktreeId: null,
     childWorktreeIds: [],
     lineage: null,
     linkedIssue: null,
+    linkedPR: null,
+    linkedLinearIssue: null,
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: 0,
     git: {
       path: '/tmp/repo/child',
       head: 'abc123',
@@ -21,9 +31,9 @@ function worktree(overrides: Partial<RuntimeWorktreeRecord> = {}): RuntimeWorktr
       isMainWorktree: false
     },
     displayName: '',
-    comment: '',
-    ...overrides
+    comment: ''
   }
+  return { ...base, ...overrides }
 }
 
 describe('formatCliError', () => {

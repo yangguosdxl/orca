@@ -242,6 +242,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         return { messages, count: messages.length }
       }
 
+      if (signal?.aborted) {
+        return { messages: [], count: 0 }
+      }
       const result = readAndReturn()
       if (result.count > 0 || !params.wait) {
         return result
@@ -258,6 +261,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         timeoutMs: params.timeoutMs ?? undefined,
         signal
       })
+      if (signal?.aborted) {
+        return { messages: [], count: 0 }
+      }
       return readAndReturn()
     }
   }),

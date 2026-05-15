@@ -8,18 +8,34 @@ import type {
   PersistedTrustedOrcaHooks,
   PersistedUIState,
   StatusBarItem,
+  TaskProvider,
   TaskResumeState,
   TaskViewPresetId,
   TuiAgent,
   UpdateStatus,
+  WorkspaceStatusDefinition,
   WorktreeCardProperty
 } from '../../../../shared/types'
 import { PET_SIZE_DEFAULT, PET_SIZE_MAX, PET_SIZE_MIN } from '../../../../shared/types'
+import {
+  WORKSPACE_CLEANUP_CLASSIFIER_VERSION,
+  type WorkspaceCleanupDismissal
+} from '../../../../shared/workspace-cleanup'
 import { PER_REPO_FETCH_LIMIT } from '../../../../shared/work-items'
+import {
+  normalizeVisibleTaskProviders,
+  resolveVisibleTaskProvider
+} from '../../../../shared/task-providers'
 import {
   DEFAULT_STATUS_BAR_ITEMS,
   DEFAULT_WORKTREE_CARD_PROPERTIES
 } from '../../../../shared/constants'
+import {
+  clampWorkspaceBoardOpacity,
+  cloneDefaultWorkspaceStatuses,
+  normalizeWorkspaceBoardCompact,
+  normalizeWorkspaceStatuses
+} from '../../../../shared/workspace-statuses'
 import { normalizeKagiSessionLink } from '../../../../shared/browser-url'
 import type { OrcaHookScriptKind } from '../../lib/orca-hook-trust'
 import { DEFAULT_PET_ID, isBundledPetId } from '../../components/pet/pet-models'
@@ -145,6 +161,40 @@ function sanitizeAcknowledgedAgentsByPaneKey(value: unknown): Record<string, num
   return out
 }
 
+function sanitizeWorkspaceCleanupDismissals(
+  value: unknown
+): Record<string, WorkspaceCleanupDismissal> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  const out: Record<string, WorkspaceCleanupDismissal> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      continue
+    }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      continue
+    }
+    const input = raw as Record<string, unknown>
+    if (
+      typeof input.worktreeId !== 'string' ||
+      typeof input.dismissedAt !== 'number' ||
+      !Number.isFinite(input.dismissedAt) ||
+      typeof input.fingerprint !== 'string' ||
+      input.classifierVersion !== WORKSPACE_CLEANUP_CLASSIFIER_VERSION
+    ) {
+      continue
+    }
+    out[key] = {
+      worktreeId: input.worktreeId,
+      dismissedAt: input.dismissedAt,
+      fingerprint: input.fingerprint,
+      classifierVersion: input.classifierVersion
+    }
+  }
+  return out
+}
+
 function sanitizeTaskResumeState(value: unknown): TaskResumeState | undefined {
   if (!value || typeof value !== 'object') {
     return undefined
@@ -194,16 +244,17 @@ export type UISlice = {
   acknowledgedAgentsByPaneKey: Record<string, number>
   acknowledgeAgents: (paneKeys: string[]) => void
   unacknowledgeAgents: (paneKeys: string[]) => void
-  activeView: 'terminal' | 'settings' | 'tasks' | 'activity' | 'automations'
-  previousViewBeforeTasks: 'terminal' | 'settings' | 'activity' | 'automations'
-  previousViewBeforeSettings: 'terminal' | 'tasks' | 'activity' | 'automations'
-  previousViewBeforeActivity: 'terminal' | 'settings' | 'tasks' | 'automations'
-  previousViewBeforeAutomations: 'terminal' | 'settings' | 'tasks' | 'activity'
+  activeView: 'terminal' | 'settings' | 'tasks' | 'activity' | 'automations' | 'space'
+  previousViewBeforeTasks: 'terminal' | 'settings' | 'activity' | 'automations' | 'space'
+  previousViewBeforeSettings: 'terminal' | 'tasks' | 'activity' | 'automations' | 'space'
+  previousViewBeforeActivity: 'terminal' | 'settings' | 'tasks' | 'automations' | 'space'
+  previousViewBeforeAutomations: 'terminal' | 'settings' | 'tasks' | 'activity' | 'space'
+  previousViewBeforeSpace: 'terminal' | 'settings' | 'tasks' | 'activity' | 'automations'
   setActiveView: (view: UISlice['activeView']) => void
   taskPageData: {
     preselectedRepoId?: string
     prefilledName?: string
-    taskSource?: 'github' | 'linear' | 'gitlab'
+    taskSource?: TaskProvider
   }
   taskResumeState: TaskResumeState | undefined
   setTaskResumeState: (updates: Partial<TaskResumeState>) => void
@@ -238,6 +289,8 @@ export type UISlice = {
   setSelectedAutomationId: (id: string | null) => void
   openAutomationsPage: () => void
   closeAutomationsPage: () => void
+  openSpacePage: () => void
+  closeSpacePage: () => void
   setNewWorkspaceDraft: (draft: NonNullable<UISlice['newWorkspaceDraft']>) => void
   clearNewWorkspaceDraft: () => void
   openSettingsPage: () => void
@@ -247,6 +300,7 @@ export type UISlice = {
       | 'general'
       | 'browser'
       | 'appearance'
+      | 'tasks'
       | 'terminal'
       | 'computer-use'
       | 'developer-permissions'
@@ -256,6 +310,7 @@ export type UISlice = {
       | 'accounts'
       | 'voice'
       | 'experimental'
+      | 'servers'
       | 'mobile'
       | 'ssh'
     repoId: string | null
@@ -273,6 +328,7 @@ export type UISlice = {
     | 'add-repo'
     | 'quick-open'
     | 'worktree-palette'
+    | 'workspace-cleanup'
     | 'feature-wall'
     | 'new-workspace-composer'
     | 'confirm-orca-yaml-hooks'
@@ -306,6 +362,12 @@ export type UISlice = {
   toggleCollapsedGroup: (key: string) => void
   worktreeCardProperties: WorktreeCardProperty[]
   toggleWorktreeCardProperty: (prop: WorktreeCardProperty) => void
+  workspaceStatuses: WorkspaceStatusDefinition[]
+  setWorkspaceStatuses: (statuses: WorkspaceStatusDefinition[]) => void
+  workspaceBoardOpacity: number
+  setWorkspaceBoardOpacity: (opacity: number) => void
+  workspaceBoardCompact: boolean
+  setWorkspaceBoardCompact: (compact: boolean) => void
   statusBarItems: StatusBarItem[]
   toggleStatusBarItem: (item: StatusBarItem) => void
   statusBarVisible: boolean
@@ -425,6 +487,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   previousViewBeforeSettings: 'terminal',
   previousViewBeforeActivity: 'terminal',
   previousViewBeforeAutomations: 'terminal',
+  previousViewBeforeSpace: 'terminal',
   setActiveView: (view) => set({ activeView: view }),
   taskPageData: {},
   taskResumeState: undefined,
@@ -449,7 +512,11 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     // be deduped. This removes ~300–800ms of perceived latency on initial
     // page load.
     const state = get()
-    const resolvedSource = data.taskSource ?? state.settings?.defaultTaskSource ?? 'github'
+    const visibleTaskProviders = normalizeVisibleTaskProviders(state.settings?.visibleTaskProviders)
+    const resolvedSource = resolveVisibleTaskProvider(
+      data.taskSource ?? state.settings?.defaultTaskSource,
+      visibleTaskProviders
+    )
     const resolvedMode = state.taskResumeState?.githubMode ?? 'items'
     if (resolvedSource === 'github' && resolvedMode === 'items') {
       const eligibleRepos = state.repos.filter((repo) => isGitRepoKind(repo) && repo.path)
@@ -537,6 +604,16 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   closeAutomationsPage: () =>
     set((state) => ({
       activeView: state.previousViewBeforeAutomations
+    })),
+  openSpacePage: () =>
+    set((state) => ({
+      activeView: 'space',
+      previousViewBeforeSpace:
+        state.activeView === 'space' ? state.previousViewBeforeSpace : state.activeView
+    })),
+  closeSpacePage: () =>
+    set((state) => ({
+      activeView: state.previousViewBeforeSpace
     })),
   setNewWorkspaceDraft: (draft) => set({ newWorkspaceDraft: draft }),
   clearNewWorkspaceDraft: () => set({ newWorkspaceDraft: null }),
@@ -665,6 +742,27 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       window.api.ui.set({ worktreeCardProperties: updated }).catch(console.error)
       return { worktreeCardProperties: updated }
     }),
+
+  workspaceStatuses: cloneDefaultWorkspaceStatuses(),
+  setWorkspaceStatuses: (statuses) => {
+    const normalized = normalizeWorkspaceStatuses(statuses)
+    window.api.ui.set({ workspaceStatuses: normalized }).catch(console.error)
+    set({ workspaceStatuses: normalized })
+  },
+
+  workspaceBoardOpacity: 1,
+  setWorkspaceBoardOpacity: (opacity) => {
+    const clamped = clampWorkspaceBoardOpacity(opacity)
+    window.api.ui.set({ workspaceBoardOpacity: clamped }).catch(console.error)
+    set({ workspaceBoardOpacity: clamped })
+  },
+
+  workspaceBoardCompact: false,
+  setWorkspaceBoardCompact: (compact) => {
+    const normalized = normalizeWorkspaceBoardCompact(compact)
+    window.api.ui.set({ workspaceBoardCompact: normalized }).catch(console.error)
+    set({ workspaceBoardCompact: normalized })
+  },
 
   statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
   toggleStatusBarItem: (item) =>
@@ -806,6 +904,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         uiZoomLevel: ui.uiZoomLevel ?? 0,
         editorFontZoomLevel: ui.editorFontZoomLevel ?? 0,
         worktreeCardProperties: ui.worktreeCardProperties ?? [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+        workspaceStatuses: normalizeWorkspaceStatuses(ui.workspaceStatuses),
+        workspaceBoardOpacity: clampWorkspaceBoardOpacity(ui.workspaceBoardOpacity),
+        workspaceBoardCompact: normalizeWorkspaceBoardCompact(ui.workspaceBoardCompact),
         statusBarItems: migrateStatusBarItems(ui.statusBarItems),
         statusBarVisible: ui.statusBarVisible ?? true,
         // Why: absent → true so existing users see the pet the first time
@@ -849,6 +950,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // the in-session cleanup in agent-status.ts can't accumulate forever.
         acknowledgedAgentsByPaneKey: sanitizeAcknowledgedAgentsByPaneKey(
           ui.acknowledgedAgentsByPaneKey
+        ),
+        workspaceCleanupDismissals: sanitizeWorkspaceCleanupDismissals(
+          ui.workspaceCleanup?.dismissals
         ),
         persistedUIReady: true
       }

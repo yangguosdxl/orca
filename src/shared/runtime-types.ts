@@ -1,14 +1,31 @@
 /* eslint-disable max-lines -- Why: shared type definitions for all runtime RPC methods live in one file for discoverability and import simplicity. */
-import type { TerminalPaneLayoutNode, WorktreeLineage, WorktreeLineageWarning } from './types'
-import type { BrowserSessionProfile, GitWorktreeInfo, Repo } from './types'
+import type {
+  BrowserCookieImportResult,
+  BrowserSessionProfile,
+  BrowserSessionProfileSource,
+  GitWorktreeInfo,
+  Repo,
+  Worktree,
+  WorktreeLineage,
+  WorktreeLineageWarning
+} from './types'
+import type { TerminalPaneLayoutNode } from './types'
 import type {
   RuntimeMarkdownReadTabResult,
   RuntimeMarkdownSaveTabResult
 } from './mobile-markdown-document'
+import type { RuntimeCapability } from './protocol-version'
 
 export type { RuntimeMarkdownReadTabResult, RuntimeMarkdownSaveTabResult }
 
 export type RuntimeGraphStatus = 'ready' | 'reloading' | 'unavailable'
+
+// Why: presence-lock driver state crosses main/preload/renderer IPC. Keep one
+// checked source so future variants cannot drift silently across layers.
+export type RuntimeTerminalDriverState =
+  | { kind: 'idle' }
+  | { kind: 'desktop' }
+  | { kind: 'mobile'; clientId: string }
 
 export type RuntimeStatus = {
   runtimeId: string
@@ -17,9 +34,13 @@ export type RuntimeStatus = {
   authoritativeWindowId: number | null
   liveTabCount: number
   liveLeafCount: number
-  // Why: optional so mobile builds can read both new and pre-PR desktops.
-  // Absence is treated as 0 by mobile's compat evaluator. See
-  // src/shared/protocol-version.ts for bump discipline.
+  // Why: optional so clients can read both new and pre-contract runtimes.
+  // Absence is treated as protocol 0 by the compat evaluator.
+  runtimeProtocolVersion?: number
+  minCompatibleRuntimeClientVersion?: number
+  capabilities?: RuntimeCapability[]
+  // COMPAT(runtimeStatusMobileAliases): added 2026-05-15 for mobile builds
+  // that still read these names; new desktop/CLI code uses the fields above.
   protocolVersion?: number
   minCompatibleMobileVersion?: number
 }
@@ -189,6 +210,13 @@ export type RuntimeFileReadResult = {
   byteLength: number
 }
 
+export type RuntimeFilePreviewResult = {
+  content: string
+  isBinary: boolean
+  isImage?: boolean
+  mimeType?: string
+}
+
 export type RuntimeTerminalSummary = {
   handle: string
   worktreeId: string
@@ -294,19 +322,11 @@ export type RuntimeWorktreePsSummary = {
 
 export type RuntimeWorktreeStatus = 'active' | 'working' | 'permission' | 'done' | 'inactive'
 
-export type RuntimeWorktreeRecord = {
-  id: string
-  instanceId?: string
-  repoId: string
-  path: string
-  branch: string
+export type RuntimeWorktreeRecord = Worktree & {
   parentWorktreeId: string | null
   childWorktreeIds: string[]
   lineage: WorktreeLineage | null
-  linkedIssue: number | null
   git: GitWorktreeInfo
-  displayName: string
-  comment: string
 }
 
 export type RuntimeWorktreeCreateResult = {
@@ -457,6 +477,28 @@ export type BrowserProfileCreateResult = {
 export type BrowserProfileDeleteResult = {
   deleted: boolean
   profileId: string
+}
+
+export type BrowserDetectedProfileInfo = {
+  name: string
+  directory: string
+}
+
+export type BrowserDetectedInfo = {
+  family: BrowserSessionProfileSource['browserFamily']
+  label: string
+  profiles: BrowserDetectedProfileInfo[]
+  selectedProfile: string
+}
+
+export type BrowserDetectProfilesResult = {
+  browsers: BrowserDetectedInfo[]
+}
+
+export type BrowserProfileImportFromBrowserResult = BrowserCookieImportResult
+
+export type BrowserProfileClearDefaultCookiesResult = {
+  cleared: boolean
 }
 
 export type BrowserHoverResult = {

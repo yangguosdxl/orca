@@ -5,6 +5,7 @@ import { LoaderCircle, ExternalLink, RefreshCw, Check, X, Pencil } from 'lucide-
 import { useAppStore } from '@/store'
 import { useActiveWorktree, useRepoById } from '@/store/selectors'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import PRActions from './PRActions'
 import {
@@ -14,9 +15,18 @@ import {
   MergeConflictNotice,
   ChecksList,
   PRCommentsList
-} from './checks-helpers'
+} from './checks-panel-content'
 import { ENTRY_REFRESH_GRACE_MS, shouldEntryRefresh } from './checks-entry-refresh'
 import type { PRInfo, PRCheckDetail, PRComment } from '../../../../shared/types'
+import { getConnectionId } from '@/lib/connection-context'
+import { CreatePullRequestDialog } from './CreatePullRequestDialog'
+import type { HostedReviewCreationEligibility } from '../../../../shared/hosted-review'
+import { toast } from 'sonner'
+import {
+  classifyHostedReview,
+  type HostedReviewClassificationOptions
+} from '../../../../shared/hosted-review-queue'
+import { hostedReviewSummaryFromGitHubPRInfo } from '../../../../shared/hosted-review-github'
 
 export default function ChecksPanel(): React.JSX.Element {
   const activeWorktree = useActiveWorktree()
@@ -24,7 +34,17 @@ export default function ChecksPanel(): React.JSX.Element {
   const repo = useRepoById(activeWorktree?.repoId ?? null)
   const prCache = useAppStore((s) => s.prCache)
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
+  const fetchHostedReviewForBranch = useAppStore((s) => s.fetchHostedReviewForBranch)
+  const getHostedReviewCreationEligibility = useAppStore(
+    (s) => s.getHostedReviewCreationEligibility
+  )
   const gitConflictOperationByWorktree = useAppStore((s) => s.gitConflictOperationByWorktree)
+  const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
+  const remoteStatusesByWorktree = useAppStore((s) => s.remoteStatusesByWorktree)
+  const pushBranch = useAppStore((s) => s.pushBranch)
+  const fetchUpstreamStatus = useAppStore((s) => s.fetchUpstreamStatus)
+  const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen)
+  const setRightSidebarTab = useAppStore((s) => s.setRightSidebarTab)
 
   // Why: the sidebar stays mounted when closed (for performance). Gate
   // polling on visibility so we don't fetch checks/comments in the background
@@ -43,6 +63,11 @@ export default function ChecksPanel(): React.JSX.Element {
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [emptyRefreshing, setEmptyRefreshing] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [conflictDetailsRefreshing, setConflictDetailsRefreshing] = useState(false)
+  const [createPrDialogOpen, setCreatePrDialogOpen] = useState(false)
+  const [createPrPushFirst, setCreatePrPushFirst] = useState(false)
+  const [hostedReviewCreation, setHostedReviewCreation] =
+    useState<HostedReviewCreationEligibility | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [titleSaving, setTitleSaving] = useState(false)
@@ -67,15 +92,22 @@ export default function ChecksPanel(): React.JSX.Element {
     setTitleSaving(false)
     setIsRefreshing(false)
     setEmptyRefreshing(false)
+    setConflictDetailsRefreshing(false)
+    setCreatePrDialogOpen(false)
+    setCreatePrPushFirst(false)
     conflictSummaryRefreshKeyRef.current = null
   }
 
   // Find active worktree and repo
   const branch = activeWorktree ? activeWorktree.branch.replace(/^refs\/heads\//, '') : ''
   const isFolder = repo ? isFolderRepo(repo) : false
-  const prCacheKey = repo && branch ? `${repo.path}::${branch}` : ''
+  const prCacheKey = repo && branch ? `${repo.id}::${branch}` : ''
   const pr: PRInfo | null = prCacheKey ? (prCache[prCacheKey]?.data ?? null) : null
   const prNumber = pr?.number ?? null
+  const remoteStatus = activeWorktreeId ? remoteStatusesByWorktree[activeWorktreeId] : undefined
+  const hasUncommittedChanges = activeWorktreeId
+    ? (gitStatusByWorktree[activeWorktreeId]?.length ?? 0) > 0
+    : false
   const conflictOperation = activeWorktreeId
     ? (gitConflictOperationByWorktree[activeWorktreeId] ?? 'unknown')
     : 'unknown'
@@ -86,8 +118,8 @@ export default function ChecksPanel(): React.JSX.Element {
   const prFetchedAt = useAppStore((s) =>
     prCacheKey ? s.prCache[prCacheKey]?.fetchedAt : undefined
   )
-  const checksCacheKey = repo && prNumber ? `${repo.path}::pr-checks::${prNumber}` : ''
-  const commentsCacheKey = repo && prNumber ? `${repo.path}::pr-comments::${prNumber}` : ''
+  const checksCacheKey = repo && prNumber ? `${repo.id}::pr-checks::${prNumber}` : ''
+  const commentsCacheKey = repo && prNumber ? `${repo.id}::pr-comments::${prNumber}` : ''
   const checksFetchedAt = useAppStore((s) =>
     checksCacheKey ? s.checksCache[checksCacheKey]?.fetchedAt : undefined
   )
@@ -101,13 +133,56 @@ export default function ChecksPanel(): React.JSX.Element {
   const linkedPR = activeWorktree?.linkedPR ?? null
   useEffect(() => {
     if (repo && !isFolder && branch) {
-      void fetchPRForBranch(repo.path, branch, { linkedPRNumber: linkedPR })
+      void fetchPRForBranch(repo.path, branch, { repoId: repo.id, linkedPRNumber: linkedPR })
     }
   }, [repo, isFolder, branch, linkedPR, fetchPRForBranch])
 
   useEffect(() => {
+    if (!repo || isFolder || !branch || !isPanelVisible) {
+      setHostedReviewCreation(null)
+      return
+    }
+    let stale = false
+    void getHostedReviewCreationEligibility({
+      repoPath: repo.path,
+      branch,
+      base: repo.worktreeBaseRef ?? null,
+      hasUncommittedChanges,
+      hasUpstream: remoteStatus?.hasUpstream,
+      ahead: remoteStatus?.ahead,
+      behind: remoteStatus?.behind,
+      linkedGitHubPR: linkedPR
+    })
+      .then((result) => {
+        if (!stale) {
+          setHostedReviewCreation(result)
+        }
+      })
+      .catch(() => {
+        if (!stale) {
+          setHostedReviewCreation(null)
+        }
+      })
+    return () => {
+      stale = true
+    }
+  }, [
+    branch,
+    getHostedReviewCreationEligibility,
+    hasUncommittedChanges,
+    isFolder,
+    isPanelVisible,
+    linkedPR,
+    remoteStatus?.ahead,
+    remoteStatus?.behind,
+    remoteStatus?.hasUpstream,
+    repo
+  ])
+
+  useEffect(() => {
     if (!repo || isFolder || !branch || !pr || pr.mergeable !== 'CONFLICTING') {
       conflictSummaryRefreshKeyRef.current = null
+      setConflictDetailsRefreshing(false)
       return
     }
 
@@ -121,7 +196,19 @@ export default function ChecksPanel(): React.JSX.Element {
     // them so we don't keep rendering cached branch summaries or empty file
     // lists from an older payload.
     conflictSummaryRefreshKeyRef.current = refreshKey
-    void fetchPRForBranch(repo.path, branch, { force: true, linkedPRNumber: linkedPR })
+    setConflictDetailsRefreshing(true)
+    void fetchPRForBranch(repo.path, branch, {
+      force: true,
+      repoId: repo.id,
+      linkedPRNumber: linkedPR
+    }).finally(() => {
+      // Why: fetchPRForBranch updates the PR cache before resolving, which
+      // can rerun this effect. Only the current refresh key may clear the
+      // spinner so stale requests don't race newer worktrees/branches.
+      if (conflictSummaryRefreshKeyRef.current === refreshKey) {
+        setConflictDetailsRefreshing(false)
+      }
+    })
   }, [repo, isFolder, branch, pr, linkedPR, fetchPRForBranch])
 
   // Fetch checks via cached store method
@@ -137,7 +224,8 @@ export default function ChecksPanel(): React.JSX.Element {
       setChecksLoading(true)
       try {
         const result = await fetchPRChecks(repo.path, targetPRNumber, branch, pr?.headSha, {
-          force
+          force,
+          repoId: repo.id
         })
         setChecks(result)
 
@@ -205,7 +293,7 @@ export default function ChecksPanel(): React.JSX.Element {
       }
       setCommentsLoading(true)
       try {
-        const result = await fetchPRComments(repo.path, targetPRNumber, { force })
+        const result = await fetchPRComments(repo.path, targetPRNumber, { force, repoId: repo.id })
         setComments(result)
       } catch (err) {
         console.warn('Failed to fetch PR comments:', err)
@@ -226,7 +314,7 @@ export default function ChecksPanel(): React.JSX.Element {
     // state after the user switches worktrees, showing the wrong PR's comments.
     let cancelled = false
     setCommentsLoading(true)
-    void fetchPRComments(repo.path, prNumber).then(
+    void fetchPRComments(repo.path, prNumber, { repoId: repo.id }).then(
       (result) => {
         if (!cancelled) {
           setComments(result)
@@ -253,6 +341,7 @@ export default function ChecksPanel(): React.JSX.Element {
     try {
       const refreshedPR = await fetchPRForBranch(repo.path, branch, {
         force: true,
+        repoId: repo.id,
         linkedPRNumber: linkedPR
       })
       if (refreshedPR) {
@@ -265,7 +354,7 @@ export default function ChecksPanel(): React.JSX.Element {
           refreshedPR.number,
           branch,
           refreshedPR.headSha,
-          { force: true }
+          { force: true, repoId: repo.id }
         ).then(
           (result) => {
             setChecks(result)
@@ -366,12 +455,17 @@ export default function ChecksPanel(): React.JSX.Element {
     try {
       const ok = await window.api.gh.updatePRTitle({
         repoPath: repo.path,
+        repoId: repo.id,
         prNumber: pr.number,
         title: titleDraft.trim()
       })
       if (ok) {
         // Re-fetch PR to get updated title
-        await fetchPRForBranch(repo.path, branch, { force: true, linkedPRNumber: linkedPR })
+        await fetchPRForBranch(repo.path, branch, {
+          force: true,
+          repoId: repo.id,
+          linkedPRNumber: linkedPR
+        })
       }
     } finally {
       setTitleSaving(false)
@@ -396,14 +490,18 @@ export default function ChecksPanel(): React.JSX.Element {
       if (!repo || !prNumber) {
         return
       }
-      void resolveReviewThread(repo.path, prNumber, threadId, resolve).then((ok) => {
-        if (ok) {
-          // Update local state to match the optimistic store update
-          setComments((prev) =>
-            prev.map((c) => (c.threadId === threadId ? { ...c, isResolved: resolve } : c))
-          )
+      void resolveReviewThread(repo.path, prNumber, threadId, resolve, { repoId: repo.id }).then(
+        (ok) => {
+          if (ok) {
+            // Update local state to match the optimistic store update
+            setComments((prev) =>
+              prev.map((c) => (c.threadId === threadId ? { ...c, isResolved: resolve } : c))
+            )
+          } else {
+            toast.error('Could not update review thread. Check the GitHub API budget.')
+          }
         }
-      })
+      )
     },
     [repo, prNumber, resolveReviewThread]
   )
@@ -411,7 +509,11 @@ export default function ChecksPanel(): React.JSX.Element {
   // Refresh PR (passed to PRActions)
   const handleRefreshPR = useCallback(async () => {
     if (repo && branch) {
-      await fetchPRForBranch(repo.path, branch, { force: true, linkedPRNumber: linkedPR })
+      await fetchPRForBranch(repo.path, branch, {
+        force: true,
+        repoId: repo.id,
+        linkedPRNumber: linkedPR
+      })
     }
   }, [repo, branch, linkedPR, fetchPRForBranch])
 
@@ -421,6 +523,128 @@ export default function ChecksPanel(): React.JSX.Element {
       window.api.shell.openUrl(pr.url)
     }
   }, [pr])
+
+  const pushBeforeCreatePullRequest = useCallback(async (): Promise<boolean> => {
+    if (!activeWorktreeId || !activeWorktree?.path) {
+      return false
+    }
+    const connectionId = getConnectionId(activeWorktreeId) ?? undefined
+    try {
+      await pushBranch(
+        activeWorktreeId,
+        activeWorktree.path,
+        false,
+        connectionId,
+        activeWorktree.pushTarget
+      )
+      await fetchUpstreamStatus(activeWorktreeId, activeWorktree.path, connectionId)
+      return true
+    } catch {
+      return false
+    }
+  }, [activeWorktree, activeWorktreeId, fetchUpstreamStatus, pushBranch])
+
+  const handlePullRequestCreated = useCallback(
+    async (result: { number: number; url: string }): Promise<void> => {
+      if (!repo || !branch) {
+        return
+      }
+      setRightSidebarOpen(true)
+      setRightSidebarTab('checks')
+      try {
+        const refreshedPR = await fetchPRForBranch(repo.path, branch, {
+          force: true,
+          linkedPRNumber: result.number
+        })
+        await fetchHostedReviewForBranch(repo.path, branch, {
+          force: true,
+          linkedGitHubPR: result.number
+        })
+        if (refreshedPR) {
+          await Promise.all([
+            fetchPRChecks(repo.path, refreshedPR.number, branch, refreshedPR.headSha, {
+              force: true
+            }).then(setChecks),
+            fetchPRComments(repo.path, refreshedPR.number, { force: true }).then(setComments)
+          ])
+        }
+      } catch {
+        // The success toast keeps the hosted URL available; Checks can be refreshed manually.
+      }
+    },
+    [
+      branch,
+      fetchHostedReviewForBranch,
+      fetchPRChecks,
+      fetchPRComments,
+      fetchPRForBranch,
+      repo,
+      setRightSidebarOpen,
+      setRightSidebarTab
+    ]
+  )
+
+  const activeReviewClassification = React.useMemo(() => {
+    if (!pr || !repo) {
+      return null
+    }
+    let host = 'github.com'
+    let owner = 'unknown'
+    let repoName = 'unknown'
+    try {
+      const parsed = new URL(pr.url)
+      host = parsed.host || host
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      if (segments.length >= 2) {
+        owner = segments[0]
+        repoName = segments[1]
+      }
+    } catch {
+      // Why: malformed URLs should not block queue-state classification.
+    }
+
+    // Why: unresolved thread data is paginated and fetched separately. Until
+    // comments have loaded for this PR, do not let queue badges imply a clean review.
+    const commentsForClassification =
+      commentsFetchedAt !== undefined && !commentsLoading ? comments : undefined
+    const summary = hostedReviewSummaryFromGitHubPRInfo({
+      pr,
+      owner,
+      repo: repoName,
+      host,
+      comments: commentsForClassification,
+      checks
+    })
+    const options: HostedReviewClassificationOptions = {
+      agentAuthorLogins: [],
+      viewer: null
+    }
+    return classifyHostedReview(summary, options)
+  }, [pr, repo, comments, commentsFetchedAt, commentsLoading, checks])
+
+  const queueBadges = React.useMemo(() => {
+    if (!activeReviewClassification) {
+      return [] as string[]
+    }
+    const badges: string[] = []
+    if (activeReviewClassification.needsResponse) {
+      badges.push('Needs response')
+    }
+    if (activeReviewClassification.readyToMerge) {
+      badges.push('Ready to merge')
+    }
+    if (activeReviewClassification.requested) {
+      badges.push('Review requested')
+    }
+    if (activeReviewClassification.state === 'mine') {
+      badges.push('My PR')
+    } else if (activeReviewClassification.state === 'agent') {
+      badges.push('AI PR')
+    } else {
+      badges.push('Teammate PR')
+    }
+    return badges
+  }, [activeReviewClassification])
 
   // ── Empty state ──
   if (!activeWorktree) {
@@ -459,34 +683,67 @@ export default function ChecksPanel(): React.JSX.Element {
             ? 'Cherry-pick'
             : null
 
+    const canCreate = hostedReviewCreation?.canCreate
+    const canPushCreate = hostedReviewCreation?.blockedReason === 'needs_push'
     return (
-      <div className="px-4 py-6">
-        <div className="text-sm font-medium text-foreground">
-          {operationInProgress ? `${operationLabel} in progress` : 'No pull request found'}
-        </div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {operationInProgress
-            ? 'PR checks will be available after the operation completes'
-            : 'Push your branch and open a PR to see checks here'}
-        </div>
-        {!operationInProgress && (
-          <button
-            className="mt-3 px-3 py-1 text-xs font-medium rounded-md border border-border bg-accent/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-            disabled={emptyRefreshing}
-            onClick={() => {
-              if (!activeWorktreeId) {
-                return
-              }
-              setEmptyRefreshing(true)
-              void handleRefresh().finally(() => {
-                setEmptyRefreshing(false)
-              })
-            }}
-          >
-            {emptyRefreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
+      <>
+        {repo && (
+          <CreatePullRequestDialog
+            open={createPrDialogOpen}
+            repoId={repo.id}
+            repoPath={repo.path}
+            branch={branch}
+            eligibility={hostedReviewCreation}
+            pushBeforeCreate={createPrPushFirst}
+            onOpenChange={setCreatePrDialogOpen}
+            onPushBeforeCreate={pushBeforeCreatePullRequest}
+            onCreated={handlePullRequestCreated}
+          />
         )}
-      </div>
+        <div className="px-4 py-6">
+          <div className="text-sm font-medium text-foreground">
+            {operationInProgress ? `${operationLabel} in progress` : 'No pull request found'}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {operationInProgress
+              ? 'PR checks will be available after the operation completes'
+              : canPushCreate
+                ? 'Push your branch before creating a pull request.'
+                : 'Create a pull request to start checks and review.'}
+          </div>
+          {!operationInProgress && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(canCreate || canPushCreate) && (
+                <Button
+                  size="xs"
+                  onClick={() => {
+                    setCreatePrPushFirst(canPushCreate)
+                    setCreatePrDialogOpen(true)
+                  }}
+                >
+                  {canPushCreate ? 'Push & Create PR' : 'Create PR'}
+                </Button>
+              )}
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={emptyRefreshing}
+                onClick={() => {
+                  if (!activeWorktreeId) {
+                    return
+                  }
+                  setEmptyRefreshing(true)
+                  void handleRefresh().finally(() => {
+                    setEmptyRefreshing(false)
+                  })
+                }}
+              >
+                {emptyRefreshing ? 'Refreshing…' : 'Refresh'}
+              </Button>
+            </div>
+          )}
+        </div>
+      </>
     )
   }
 
@@ -573,6 +830,19 @@ export default function ChecksPanel(): React.JSX.Element {
           </div>
         )}
 
+        {queueBadges.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {queueBadges.map((badge) => (
+              <span
+                key={badge}
+                className="rounded border border-border bg-accent/30 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                {badge}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Merge / Delete Worktree actions */}
         {activeWorktree && repo && (
           <PRActions pr={pr} repo={repo} worktree={activeWorktree} onRefreshPR={handleRefreshPR} />
@@ -580,7 +850,10 @@ export default function ChecksPanel(): React.JSX.Element {
       </div>
 
       <ConflictingFilesSection pr={pr} />
-      <MergeConflictNotice pr={pr} />
+      <MergeConflictNotice
+        pr={pr}
+        isRefreshingConflictDetails={isRefreshing || conflictDetailsRefreshing}
+      />
       {/* Why: when the PR has merge conflicts and no checks have been fetched,
           showing "No checks configured" is misleading — checks may exist but
           simply cannot run until conflicts are resolved. Hide the empty state. */}

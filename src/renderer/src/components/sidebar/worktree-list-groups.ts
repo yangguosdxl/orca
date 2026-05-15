@@ -1,18 +1,32 @@
 /* eslint-disable max-lines -- Why: sidebar row construction keeps every grouping mode in one pure module so reveal, virtualized rendering, and tests share the same flat row contract. */
-import {
-  CircleCheckBig,
-  CircleDot,
-  CircleX,
-  Folder,
-  GitPullRequest,
-  LayoutList,
-  Pin
-} from 'lucide-react'
+import { CircleCheckBig, CircleDot, CircleX, Folder, GitPullRequest, Pin } from 'lucide-react'
 import type React from 'react'
-import type { Repo, Worktree, WorktreeLineage } from '../../../../shared/types'
+import type {
+  Repo,
+  Worktree,
+  WorktreeLineage,
+  WorkspaceStatusDefinition
+} from '../../../../shared/types'
 import { branchName } from '@/lib/git-utils'
+import {
+  getWorkspaceStatus,
+  getWorkspaceStatusFromGroupKey,
+  getWorkspaceStatusGroupKey,
+  getWorkspaceStatusVisualMeta
+} from './workspace-status'
+import { cloneDefaultWorkspaceStatuses } from '../../../../shared/workspace-statuses'
+import type { SortBy } from './smart-sort'
 
 export { branchName }
+
+export type WorktreeGroupBy = 'none' | 'repo' | 'pr-status'
+export type RepoGroupOrdering = 'manual' | 'visible-worktree-order'
+
+export function getRepoGroupOrdering(groupBy: WorktreeGroupBy, sortBy: SortBy): RepoGroupOrdering {
+  return groupBy === 'repo' && (sortBy === 'recent' || sortBy === 'smart')
+    ? 'visible-worktree-order'
+    : 'manual'
+}
 
 export type GroupHeaderRow = {
   type: 'header'
@@ -86,14 +100,6 @@ export const PINNED_GROUP_META = {
   icon: Pin
 } as const
 
-export const ALL_GROUP_KEY = 'all'
-
-export const ALL_GROUP_META = {
-  label: 'All',
-  tone: 'text-foreground',
-  icon: LayoutList
-} as const
-
 export const MISSING_PARENT_GROUP_META = {
   label: 'Missing parent'
 } as const
@@ -128,7 +134,6 @@ export function getLineageRenderInfo(
   }
   return { state: 'valid', lineage, parent }
 }
-
 export function getPRGroupKey(
   worktree: Worktree,
   repoMap: Map<string, Repo>,
@@ -169,10 +174,11 @@ function emitPinnedGroup(
   worktreeMap: Map<string, Worktree>,
   collapsedGroups: Set<string>,
   result: Row[],
-  showLineageContext: boolean
+  showLineageContext: boolean,
+  force = false
 ): Set<string> {
   const pinned = worktrees.filter((w) => w.isPinned)
-  if (pinned.length === 0) {
+  if (pinned.length === 0 && !force) {
     return new Set()
   }
 
@@ -335,12 +341,14 @@ function appendWorktreeRows(
  * Extracted here to keep WorktreeList.tsx under the line-count lint limit.
  */
 export function buildRows(
-  groupBy: 'none' | 'repo' | 'pr-status',
+  groupBy: WorktreeGroupBy,
   worktrees: Worktree[],
   repoMap: Map<string, Repo>,
   prCache: Record<string, unknown> | null,
   collapsedGroups: Set<string>,
   repoOrder?: Map<string, number>,
+  workspaceStatuses: readonly WorkspaceStatusDefinition[] = cloneDefaultWorkspaceStatuses(),
+  repoGroupOrdering: RepoGroupOrdering = 'manual',
   lineageById: Record<string, WorktreeLineage> = {},
   worktreeMap: Map<string, Worktree> = new Map(
     worktrees.map((worktree) => [worktree.id, worktree])
@@ -356,34 +364,10 @@ export function buildRows(
     worktreeMap,
     collapsedGroups,
     result,
-    nestLineage
+    nestLineage,
+    groupBy === 'none'
   )
   const unpinned = pinnedIds.size > 0 ? worktrees.filter((w) => !pinnedIds.has(w.id)) : worktrees
-
-  if (groupBy === 'none') {
-    // Without an "All" header, the unpinned block is visually indistinguishable
-    // from a continuation of the Pinned section — so when pinned items exist,
-    // mark the boundary with a sibling header that mirrors the Pinned one.
-    if (pinnedIds.size > 0 && unpinned.length > 0) {
-      result.push({
-        type: 'header',
-        key: ALL_GROUP_KEY,
-        label: ALL_GROUP_META.label,
-        count: unpinned.length,
-        tone: ALL_GROUP_META.tone,
-        icon: ALL_GROUP_META.icon
-      })
-      if (collapsedGroups.has(ALL_GROUP_KEY)) {
-        return result
-      }
-    }
-    appendWorktreeRows(result, unpinned, repoMap, lineageById, worktreeMap, {
-      nestLineage,
-      showLineageContext: nestLineage,
-      collapsedGroups
-    })
-    return result
-  }
 
   const grouped = new Map<string, { label: string; items: Worktree[]; repo?: Repo }>()
   for (const w of unpinned) {
@@ -394,6 +378,11 @@ export function buildRows(
       repo = repoMap.get(w.repoId)
       key = `repo:${w.repoId}`
       label = repo?.displayName ?? 'Unknown'
+    } else if (groupBy === 'none') {
+      const workspaceStatus = getWorkspaceStatus(w, workspaceStatuses)
+      key = getWorkspaceStatusGroupKey(workspaceStatus)
+      label =
+        workspaceStatuses.find((status) => status.id === workspaceStatus)?.label ?? workspaceStatus
     } else {
       const prGroup = getPRGroupKey(w, repoMap, prCache)
       key = `pr:${prGroup}`
@@ -414,14 +403,23 @@ export function buildRows(
         orderedGroups.push([key, group])
       }
     }
+  } else if (groupBy === 'none') {
+    // Why: the old "All" grouping now organizes workspaces by user status.
+    // Keep the sidebar compact by rendering only sections that contain cards;
+    // the board drawer is the wider all-lanes drag target.
+    for (const status of workspaceStatuses) {
+      const key = getWorkspaceStatusGroupKey(status.id)
+      const group = grouped.get(key)
+      if (group) {
+        orderedGroups.push([key, group])
+      }
+    }
   } else {
-    // Why: header order must follow the canonical state.repos array order, not
-    // first-encounter from the smart-sorted worktree stream — otherwise sorting
-    // or filtering side effects could shuffle which repo header appears first,
-    // and manual reorder would have nothing to bind to. Unknown ids (no entry
-    // in repoOrder) sort last by label so they remain deterministic.
+    // Why: dynamic sorts need repo headers to follow their highest-ranked
+    // visible child. Manual ordering still uses the canonical state.repos
+    // order so repo-header drag has a stable source of truth.
     const entries = Array.from(grouped.entries())
-    if (repoOrder) {
+    if (repoGroupOrdering === 'manual' && repoOrder) {
       const rankFor = (key: string): number => {
         const repoId = key.startsWith('repo:') ? key.slice('repo:'.length) : key
         const rank = repoOrder.get(repoId)
@@ -453,18 +451,35 @@ export function buildRows(
             icon: REPO_GROUP_META.icon,
             repo
           }
-        : (() => {
-            const prGroup = key.replace(/^pr:/, '') as PRGroupKey
-            const meta = PR_GROUP_META[prGroup]
-            return {
-              type: 'header' as const,
-              key,
-              label: meta.label,
-              count: group.items.length,
-              tone: meta.tone,
-              icon: meta.icon
-            }
-          })()
+        : groupBy === 'none'
+          ? (() => {
+              const workspaceStatus =
+                getWorkspaceStatusFromGroupKey(key, workspaceStatuses) ??
+                workspaceStatuses[0]?.id ??
+                'in-progress'
+              const definition = workspaceStatuses.find((status) => status.id === workspaceStatus)
+              const meta = getWorkspaceStatusVisualMeta(definition ?? workspaceStatus)
+              return {
+                type: 'header' as const,
+                key,
+                label: definition?.label ?? workspaceStatus,
+                count: group.items.length,
+                tone: meta.tone,
+                icon: meta.icon
+              }
+            })()
+          : (() => {
+              const prGroup = key.replace(/^pr:/, '') as PRGroupKey
+              const meta = PR_GROUP_META[prGroup]
+              return {
+                type: 'header' as const,
+                key,
+                label: meta.label,
+                count: group.items.length,
+                tone: meta.tone,
+                icon: meta.icon
+              }
+            })()
 
     result.push(header)
     if (!isCollapsed) {
@@ -480,13 +495,14 @@ export function buildRows(
 }
 
 export function getGroupKeyForWorktree(
-  groupBy: 'none' | 'repo' | 'pr-status',
+  groupBy: WorktreeGroupBy,
   worktree: Worktree,
   repoMap: Map<string, Repo>,
-  prCache: Record<string, unknown> | null
+  prCache: Record<string, unknown> | null,
+  workspaceStatuses: readonly WorkspaceStatusDefinition[] = cloneDefaultWorkspaceStatuses()
 ): string | null {
   if (groupBy === 'none') {
-    return null
+    return getWorkspaceStatusGroupKey(getWorkspaceStatus(worktree, workspaceStatuses))
   }
   if (groupBy === 'repo') {
     return `repo:${worktree.repoId}`

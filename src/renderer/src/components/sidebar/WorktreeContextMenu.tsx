@@ -4,12 +4,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
-  FolderOpen,
   Copy,
   Bell,
   BellOff,
@@ -19,6 +23,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Kanban,
   Trash2,
   Unlink,
   Workflow
@@ -32,6 +37,8 @@ import { runWorktreeBatchDelete, runWorktreeDelete } from './delete-worktree-flo
 import { runSleepWorktrees } from './sleep-worktree-flow'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { getLineageRenderInfo } from './worktree-list-groups'
+import { getWorkspaceStatus, getWorkspaceStatusVisualMeta } from './workspace-status'
+import { WorktreeOpenInSubMenu } from './WorktreeOpenInMenu'
 
 type Props = {
   worktree: Worktree
@@ -76,6 +83,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   onContextMenuSelect
 }: Props) {
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
+  const workspaceStatuses = useAppStore((s) => s.workspaceStatuses)
   const openModal = useAppStore((s) => s.openModal)
   const repo = useRepoById(worktree.repoId)
   const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
@@ -109,6 +117,16 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     () => activeContextWorktrees.some((item) => deleteStateByWorktreeId[item.id]?.isDeleting),
     [activeContextWorktrees, deleteStateByWorktreeId]
   )
+  const contextWorkspaceStatus = useMemo(() => {
+    const [first, ...rest] = activeContextWorktrees
+    if (!first) {
+      return ''
+    }
+    const status = getWorkspaceStatus(first, workspaceStatuses)
+    return rest.every((item) => getWorkspaceStatus(item, workspaceStatuses) === status)
+      ? status
+      : ''
+  }, [activeContextWorktrees, workspaceStatuses])
   const batchDeleteWorktrees = useMemo(
     () =>
       activeContextWorktrees.filter((item) => {
@@ -141,10 +159,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     return () => window.removeEventListener(CLOSE_ALL_CONTEXT_MENUS_EVENT, closeMenu)
   }, [])
 
-  const handleOpenInFinder = useCallback(() => {
-    window.api.shell.openPath(worktree.path)
-  }, [worktree.path])
-
   const handleCopyPath = useCallback(() => {
     window.api.ui.writeClipboardText(worktree.path)
   }, [worktree.path])
@@ -156,6 +170,20 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const handleTogglePin = useCallback(() => {
     updateWorktreeMeta(worktree.id, { isPinned: !worktree.isPinned })
   }, [worktree.id, worktree.isPinned, updateWorktreeMeta])
+
+  const handleAssignWorkspaceStatus = useCallback(
+    (status: string) => {
+      setMenuOpen(false)
+      void Promise.all(
+        activeContextWorktrees.map((item) =>
+          getWorkspaceStatus(item, workspaceStatuses) === status
+            ? Promise.resolve()
+            : updateWorktreeMeta(item.id, { workspaceStatus: status })
+        )
+      )
+    },
+    [activeContextWorktrees, updateWorktreeMeta, workspaceStatuses]
+  )
 
   const handleRename = useCallback(() => {
     openModal('edit-meta', {
@@ -320,10 +348,11 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         >
           {!isMultiContext && (
             <>
-              <DropdownMenuItem onSelect={handleOpenInFinder} disabled={isDeleting}>
-                <FolderOpen className="size-3.5" />
-                Open in Finder
-              </DropdownMenuItem>
+              <WorktreeOpenInSubMenu
+                worktreePath={worktree.path}
+                connectionId={repo?.connectionId ?? null}
+                disabled={isDeleting}
+              />
               <DropdownMenuItem onSelect={handleCopyPath} disabled={isDeleting}>
                 <Copy className="size-3.5" />
                 Copy Path
@@ -381,6 +410,30 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
               <DropdownMenuSeparator />
             </>
           )}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger disabled={deletingContext}>
+              <Kanban className="size-3.5" />
+              {isMultiContext ? 'Move Selected to Status' : 'Move to Status'}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              <DropdownMenuRadioGroup value={contextWorkspaceStatus}>
+                {workspaceStatuses.map((status) => {
+                  const meta = getWorkspaceStatusVisualMeta(status)
+                  return (
+                    <DropdownMenuRadioItem
+                      key={status.id}
+                      value={status.id}
+                      onSelect={() => handleAssignWorkspaceStatus(status.id)}
+                    >
+                      <meta.icon className={cn('size-3.5', meta.tone)} />
+                      {status.label}
+                    </DropdownMenuRadioItem>
+                  )
+                })}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSeparator />
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuItem

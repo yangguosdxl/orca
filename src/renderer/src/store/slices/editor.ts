@@ -23,6 +23,19 @@ import type {
 } from '../../../../shared/types'
 import { stripCredentialsFromMessage } from '../../../../shared/git-remote-error'
 import type { RemoteOpKind } from '@/components/right-sidebar/source-control-primary-action'
+import {
+  fetchRuntimeGit,
+  getRuntimeGitUpstreamStatus,
+  pullRuntimeGit,
+  pushRuntimeGit
+} from '@/runtime/runtime-git-client'
+import {
+  deleteRuntimePath,
+  deleteRuntimeRelativePath,
+  runtimePathExists
+} from '@/runtime/runtime-file-client'
+import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
+import { findWorktreeById, getRepoIdFromWorktreeId } from './worktree-helpers'
 
 export type DiffSource =
   | 'unstaged'
@@ -91,6 +104,9 @@ export type OpenFile = {
   worktreeId: string
   language: string
   isDirty: boolean
+  // Why: remote untitled cleanup must target the environment that created the
+  // file, even if the user switches to Local or another runtime before closing.
+  runtimeEnvironmentId?: string
   /** Why: markdown preview tabs are separate editor tabs that mirror a source
    *  markdown file's live draft. Storing the source file ID lets the preview
    *  follow unsaved edits from the normal editor without becoming editable
@@ -124,13 +140,7 @@ export type OpenFile = {
   mode: 'edit' | 'diff' | 'conflict-review' | 'markdown-preview'
 }
 
-export type RightSidebarTab =
-  | 'explorer'
-  | 'search'
-  | 'source-control'
-  | 'checks'
-  | 'ports'
-  | 'notes'
+export type RightSidebarTab = 'explorer' | 'search' | 'source-control' | 'checks' | 'ports'
 export type ActivityBarPosition = 'top' | 'side'
 
 export type MarkdownViewMode = 'source' | 'rich' | 'preview'
@@ -146,6 +156,27 @@ export type EditorViewMode = 'edit' | 'changes'
 export type ClosedEditorTabSnapshot = Omit<OpenFile, 'id' | 'isDirty'>
 
 const MAX_RECENT_CLOSED_EDITOR_TABS = 10
+
+function scheduleEditorLineReveal(
+  get: () => AppState,
+  filePath: string,
+  line: number,
+  column?: number
+): void {
+  // Why: openFile can replace a preview and remount Monaco asynchronously; the
+  // reveal must land after that remount or the old editor can clear it.
+  get().setPendingEditorReveal(null)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      get().setPendingEditorReveal({
+        filePath,
+        line,
+        column: column ?? 1,
+        matchLength: 0
+      })
+    })
+  })
+}
 
 export type EditorSlice = {
   // Why: #300 originally kept EditorPanel mounted while hidden so unsaved
@@ -199,7 +230,12 @@ export type EditorSlice = {
   setActiveTabType: (type: WorkspaceVisibleTabType) => void
   openFile: (
     file: Omit<OpenFile, 'id' | 'isDirty'>,
-    options?: { preview?: boolean; targetGroupId?: string; recordReplacedPreview?: boolean }
+    options?: {
+      preview?: boolean
+      targetGroupId?: string
+      recordReplacedPreview?: boolean
+      suppressActiveRuntimeFallback?: boolean
+    }
   ) => void
   // Why: dispatcher for markdown link activation. Lives on the slice because it
   // sequences openFile, setMarkdownViewMode, and setPendingEditorReveal around
@@ -207,10 +243,18 @@ export type EditorSlice = {
   // docs/markdown-internal-link-opening-design.md.
   activateMarkdownLink: (
     rawHref: string | undefined,
-    ctx: { sourceFilePath: string; worktreeId: string; worktreeRoot: string | null }
+    ctx: {
+      sourceFilePath: string
+      worktreeId: string
+      worktreeRoot: string | null
+      runtimeEnvironmentId?: string | null
+    }
   ) => Promise<void>
   openMarkdownPreview: (
-    file: Pick<OpenFile, 'filePath' | 'relativePath' | 'worktreeId' | 'language'>,
+    file: Pick<
+      OpenFile,
+      'filePath' | 'relativePath' | 'worktreeId' | 'language' | 'runtimeEnvironmentId'
+    >,
     options?: { anchor?: string | null; targetGroupId?: string }
   ) => void
   pinFile: (fileId: string, tabId?: string) => void
@@ -494,6 +538,31 @@ function resolveRemoteOperationErrorMessage(
   return error.message
 }
 
+function deleteUntouchedUntitledFile(state: AppState, file: OpenFile): void {
+  const worktree = findWorktreeById(state.worktreesByRepo, file.worktreeId)
+  const repoId = worktree?.repoId ?? getRepoIdFromWorktreeId(file.worktreeId)
+  const repo = state.repos.find((candidate) => candidate.id === repoId)
+  const owningRuntimeEnvironmentId = file.runtimeEnvironmentId?.trim()
+  // Why: untitled placeholders may live on a remote runtime or SSH target.
+  // Route through the runtime-aware client instead of assuming client-local FS.
+  const context = {
+    settings: owningRuntimeEnvironmentId
+      ? { activeRuntimeEnvironmentId: owningRuntimeEnvironmentId }
+      : state.settings,
+    worktreeId: file.worktreeId,
+    worktreePath: worktree?.path ?? null,
+    connectionId: repo?.connectionId ?? undefined
+  }
+  void deleteRuntimeRelativePath(context, file.relativePath)
+    .then((deletedRemotely) => {
+      if (!deletedRemotely && !owningRuntimeEnvironmentId) {
+        return deleteRuntimePath(context, file.filePath)
+      }
+      return undefined
+    })
+    .catch(() => {})
+}
+
 export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (set, get) => ({
   editorDrafts: {},
   setEditorDraft: (fileId, content) =>
@@ -606,6 +675,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       const id = file.filePath
       const existing = s.openFiles.find((f) => f.id === id)
       const worktreeId = file.worktreeId
+      const runtimeEnvironmentId =
+        file.runtimeEnvironmentId ??
+        (options?.suppressActiveRuntimeFallback
+          ? undefined
+          : (s.settings?.activeRuntimeEnvironmentId?.trim() ?? undefined))
       const isPreview = options?.preview ?? false
       const recordReplacedPreview = options?.recordReplacedPreview ?? false
       // Why: resolve the target group up-front so preview replacement can be
@@ -647,7 +721,8 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           existing.isPreview !== updatedPreview ||
           existing.language !== file.language ||
           existing.relativePath !== file.relativePath ||
-          existing.worktreeId !== file.worktreeId
+          existing.worktreeId !== file.worktreeId ||
+          existing.runtimeEnvironmentId !== runtimeEnvironmentId
         if (!needsExistingUpdate) {
           return activeResult
         }
@@ -659,6 +734,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                   relativePath: file.relativePath,
                   worktreeId: file.worktreeId,
                   language: file.language,
+                  runtimeEnvironmentId,
                   mode: file.mode,
                   diffSource: file.diffSource,
                   branchCompare: file.branchCompare,
@@ -729,7 +805,9 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                 )
           // Replace in-place to preserve tab position
           newFiles = s.openFiles.map((f, i) =>
-            i === existingPreviewIdx ? { ...file, id, isDirty: false, isPreview: true } : f
+            i === existingPreviewIdx
+              ? { ...file, id, isDirty: false, isPreview: true, runtimeEnvironmentId }
+              : f
           )
           // Swap the old preview ID for the new one in the stored tab bar order
           const prevOrder = s.tabBarOrderByWorktree?.[worktreeId]
@@ -799,7 +877,13 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       return {
         openFiles: [
           ...newFiles,
-          { ...file, id, isDirty: false, isPreview: isPreview || undefined }
+          {
+            ...file,
+            id,
+            isDirty: false,
+            isPreview: isPreview || undefined,
+            runtimeEnvironmentId
+          }
         ],
         ...tabBarUpdate,
         ...activeResult
@@ -826,6 +910,8 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     set((s) => {
       const existing = s.openFiles.find((openFile) => openFile.id === id)
       const worktreeId = file.worktreeId
+      const runtimeEnvironmentId =
+        file.runtimeEnvironmentId ?? s.settings?.activeRuntimeEnvironmentId?.trim() ?? undefined
       const activeResult = {
         activeFileId: id,
         activeTabType: 'editor' as const,
@@ -851,6 +937,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                       relativePath: file.relativePath,
                       worktreeId: file.worktreeId,
                       language: file.language,
+                      runtimeEnvironmentId,
                       markdownPreviewSourceFileId: file.filePath,
                       markdownPreviewAnchor: anchor,
                       mode: 'markdown-preview' as const
@@ -869,6 +956,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         worktreeId: file.worktreeId,
         language: file.language,
         isDirty: false,
+        runtimeEnvironmentId,
         markdownPreviewSourceFileId: file.filePath,
         markdownPreviewAnchor: anchor,
         mode: 'markdown-preview'
@@ -1075,7 +1163,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     // tab without typing anything, the file is just clutter. Fire-and-forget
     // delete; failure (e.g. already removed externally) is harmless.
     if (shouldDeleteFromDisk && preClose && typeof window !== 'undefined') {
-      void window.api?.fs?.deletePath({ targetPath: preClose.filePath })?.catch(() => {})
+      deleteUntouchedUntitledFile(get(), preClose)
     }
 
     // Why: the unified tab model drives visual tab-bar order and next-active
@@ -1242,8 +1330,9 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
     })
     if (typeof window !== 'undefined') {
+      const postCloseState = get()
       for (const f of untitledToDelete) {
-        void window.api?.fs?.deletePath({ targetPath: f.filePath })?.catch(() => {})
+        deleteUntouchedUntitledFile(postCloseState, f)
       }
     }
     for (const itemId of closingItemIds) {
@@ -1904,7 +1993,9 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     }),
   fetchUpstreamStatus: async (worktreeId, worktreePath, connectionId) => {
     try {
-      const status = await window.api.git.upstreamStatus({
+      const status = await getRuntimeGitUpstreamStatus({
+        settings: get().settings,
+        worktreeId,
         worktreePath,
         connectionId
       })
@@ -1931,7 +2022,10 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     // store as soon as the IPC resolves.
     get().beginRemoteOperation(publish ? 'publish' : 'push')
     try {
-      await window.api.git.push({ worktreePath, publish, connectionId, pushTarget })
+      await pushRuntimeGit(
+        { settings: get().settings, worktreeId, worktreePath, connectionId },
+        { publish, pushTarget }
+      )
     } catch (error) {
       toast.error(resolveRemoteOperationErrorMessage(error, { publish, isPush: true }))
       throw error
@@ -1943,7 +2037,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
   pullBranch: async (worktreeId, worktreePath, connectionId) => {
     get().beginRemoteOperation('pull')
     try {
-      await window.api.git.pull({ worktreePath, connectionId })
+      await pullRuntimeGit({ settings: get().settings, worktreeId, worktreePath, connectionId })
     } catch (error) {
       toast.error(resolveRemoteOperationErrorMessage(error))
       throw error
@@ -1963,23 +2057,17 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     // outer catch must then skip toasting to avoid a double-toast.
     let pushStageToastShown = false
     try {
-      await window.api.git.fetch({ worktreePath, connectionId })
-      await window.api.git.pull({ worktreePath, connectionId })
+      const context = { settings: get().settings, worktreeId, worktreePath, connectionId }
+      await fetchRuntimeGit(context)
+      await pullRuntimeGit(context)
       // Why: push only if the pull left local commits that aren't on the
       // remote. After a merge pull the ahead count can be >0 (local commits +
       // the new merge commit) or 0 (pure fast-forward), and we avoid a
       // no-op push round-trip in the fast-forward case.
-      const upstreamStatus = await window.api.git.upstreamStatus({
-        worktreePath,
-        connectionId
-      })
+      const upstreamStatus = await getRuntimeGitUpstreamStatus(context)
       if (upstreamStatus.ahead > 0) {
         try {
-          await window.api.git.push({
-            worktreePath,
-            connectionId,
-            pushTarget
-          })
+          await pushRuntimeGit(context, { pushTarget })
         } catch (error) {
           // Why: format under the user-facing operation (sync) rather than
           // the inner step (push) — the user clicked Sync and shouldn't see
@@ -2010,7 +2098,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     // ahead/behind counts on the upstream-status payload.
     get().beginRemoteOperation('fetch')
     try {
-      await window.api.git.fetch({ worktreePath, connectionId })
+      await fetchRuntimeGit({ settings: get().settings, worktreeId, worktreePath, connectionId })
     } catch (error) {
       toast.error(resolveRemoteOperationErrorMessage(error))
       throw error
@@ -2142,6 +2230,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
   setPendingEditorReveal: (reveal) => set({ pendingEditorReveal: reveal }),
 
   activateMarkdownLink: async (rawHref, ctx) => {
+    const sourceRuntimeEnvironmentId =
+      ctx.runtimeEnvironmentId ??
+      get().openFiles.find((file) => file.filePath === ctx.sourceFilePath)?.runtimeEnvironmentId ??
+      null
+    const sourceSettings = settingsForRuntimeOwner(get().settings, sourceRuntimeEnvironmentId)
     const target = resolveMarkdownLinkTarget(rawHref, ctx.sourceFilePath, ctx.worktreeRoot)
     if (!target) {
       return
@@ -2154,7 +2247,15 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       return
     }
     if (target.kind === 'file') {
+      const { line, column } = target
       if (target.relativePath === undefined) {
+        if (sourceSettings?.activeRuntimeEnvironmentId?.trim()) {
+          // Why: a file:// link outside the worktree is a client-local escape
+          // hatch. Remote runtime editors must not authorize/open client paths
+          // as though the server could read them.
+          toast.error('External local file links are not available for remote runtime files yet.')
+          return
+        }
         // Why: terminal file links already authorize clicked external paths
         // before opening them in Orca. Markdown file:// links need the same
         // user-gesture authorization so /tmp screenshots can use ImageViewer.
@@ -2166,6 +2267,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           filePath: target.absolutePath,
           relativePath: target.relativePath ?? target.absolutePath,
           worktreeId: ctx.worktreeId,
+          runtimeEnvironmentId: sourceRuntimeEnvironmentId ?? undefined,
           language: detectLanguage(target.absolutePath),
           mode: 'edit'
         },
@@ -2175,19 +2277,33 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           recordReplacedPreview: true
         }
       )
+      if (line !== undefined) {
+        scheduleEditorLineReveal(get, target.absolutePath, line, column)
+      }
       return
     }
 
     // target.kind === 'markdown'
     const { absolutePath, relativePath, line, column } = target
-    const exists = await window.api.shell.pathExists(absolutePath)
+    const exists = await runtimePathExists(
+      {
+        settings: sourceSettings,
+        worktreeId: ctx.worktreeId,
+        worktreePath: ctx.worktreeRoot
+      },
+      absolutePath
+    )
     if (!exists) {
       toast.error(`File not found: ${relativePath}`)
       return
     }
 
     const state = get()
-    const existing = state.openFiles.find((f) => f.filePath === absolutePath)
+    const existing = state.openFiles.find(
+      (f) =>
+        f.filePath === absolutePath &&
+        (f.runtimeEnvironmentId ?? null) === sourceRuntimeEnvironmentId
+    )
     const fileId = existing?.id ?? absolutePath
 
     // Why: pendingEditorReveal is consumed by MonacoEditor on mount. If the
@@ -2205,6 +2321,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           filePath: absolutePath,
           relativePath,
           worktreeId: ctx.worktreeId,
+          runtimeEnvironmentId: sourceRuntimeEnvironmentId ?? undefined,
           language: 'markdown',
           mode: 'edit'
         },
@@ -2219,21 +2336,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
     }
 
     if (line !== undefined) {
-      // Why: double-RAF matches search-match-open.ts. openFile may replace a
-      // preview, remounting Monaco asynchronously; the mount's own
-      // setPendingEditorReveal(null) would otherwise clobber a reveal scheduled
-      // in the same tick.
-      get().setPendingEditorReveal(null)
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          get().setPendingEditorReveal({
-            filePath: absolutePath,
-            line,
-            column: column ?? 1,
-            matchLength: 0
-          })
-        })
-      })
+      scheduleEditorLineReveal(get, absolutePath, line, column)
     }
   },
 
@@ -2272,6 +2375,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
             language: detectLanguage(pf.relativePath || pf.filePath),
             isDirty: false,
             isPreview: pf.isPreview,
+            runtimeEnvironmentId: pf.runtimeEnvironmentId,
             mode: 'edit'
           })
         }
