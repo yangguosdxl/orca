@@ -25,25 +25,41 @@ const {
   removeWorktreeMock,
   computeWorktreePathMock,
   ensurePathWithinWorkspaceMock,
+  sshGitProviders,
   getSshGitProviderMock,
+  registerSshGitProviderMock,
+  unregisterSshGitProviderMock,
   invalidateAuthorizedRootsCacheMock
-} = vi.hoisted(() => ({
-  MOCK_GIT_WORKTREES: [
-    {
-      path: '/tmp/worktree-a',
-      head: 'abc',
-      branch: 'feature/foo',
-      isBare: false,
-      isMainWorktree: false
-    }
-  ],
-  addWorktreeMock: vi.fn(),
-  removeWorktreeMock: vi.fn(),
-  computeWorktreePathMock: vi.fn(),
-  ensurePathWithinWorkspaceMock: vi.fn(),
-  getSshGitProviderMock: vi.fn(),
-  invalidateAuthorizedRootsCacheMock: vi.fn()
-}))
+} = vi.hoisted(() => {
+  // Why: SSH runtime tests register providers through the public dispatcher API,
+  // so the mock needs the same registry semantics as the real module.
+  const sshGitProviders = new Map<string, unknown>()
+
+  return {
+    MOCK_GIT_WORKTREES: [
+      {
+        path: '/tmp/worktree-a',
+        head: 'abc',
+        branch: 'feature/foo',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ],
+    addWorktreeMock: vi.fn(),
+    removeWorktreeMock: vi.fn(),
+    computeWorktreePathMock: vi.fn(),
+    ensurePathWithinWorkspaceMock: vi.fn(),
+    sshGitProviders,
+    getSshGitProviderMock: vi.fn((connectionId: string) => sshGitProviders.get(connectionId)),
+    registerSshGitProviderMock: vi.fn((connectionId: string, provider: unknown) => {
+      sshGitProviders.set(connectionId, provider)
+    }),
+    unregisterSshGitProviderMock: vi.fn((connectionId: string) => {
+      sshGitProviders.delete(connectionId)
+    }),
+    invalidateAuthorizedRootsCacheMock: vi.fn()
+  }
+})
 
 vi.mock('../git/worktree', () => ({
   listWorktrees: vi.fn().mockResolvedValue(MOCK_GIT_WORKTREES),
@@ -52,7 +68,9 @@ vi.mock('../git/worktree', () => ({
 }))
 
 vi.mock('../providers/ssh-git-dispatch', () => ({
-  getSshGitProvider: getSshGitProviderMock
+  getSshGitProvider: getSshGitProviderMock,
+  registerSshGitProvider: registerSshGitProviderMock,
+  unregisterSshGitProvider: unregisterSshGitProviderMock
 }))
 
 vi.mock('../hooks', () => ({
@@ -99,7 +117,19 @@ afterEach(() => {
   vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
   vi.mocked(addWorktree).mockReset()
   vi.mocked(removeWorktree).mockReset()
+  sshGitProviders.clear()
   getSshGitProviderMock.mockReset()
+  getSshGitProviderMock.mockImplementation((connectionId: string) =>
+    sshGitProviders.get(connectionId)
+  )
+  registerSshGitProviderMock.mockReset()
+  registerSshGitProviderMock.mockImplementation((connectionId: string, provider: unknown) => {
+    sshGitProviders.set(connectionId, provider)
+  })
+  unregisterSshGitProviderMock.mockReset()
+  unregisterSshGitProviderMock.mockImplementation((connectionId: string) => {
+    sshGitProviders.delete(connectionId)
+  })
   vi.mocked(createSetupRunnerScript).mockReset()
   vi.mocked(getEffectiveHooks).mockReset()
   vi.mocked(hasHooksFile).mockReset()
