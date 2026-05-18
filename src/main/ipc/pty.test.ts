@@ -326,6 +326,14 @@ describe('registerPtyHandlers', () => {
     }
   }
 
+  function getPtyWriteListener(): (event: unknown, args: { id: string; data: string }) => void {
+    const writeCall = onMock.mock.calls.find((call: unknown[]) => call[0] === 'pty:write')
+    if (!writeCall) {
+      throw new Error('missing pty:write listener')
+    }
+    return writeCall[1] as (event: unknown, args: { id: string; data: string }) => void
+  }
+
   /** Helper: trigger pty:spawn and return the env passed to node-pty. */
   async function spawnAndGetEnv(
     argsEnv?: Record<string, string>,
@@ -2265,6 +2273,197 @@ describe('registerPtyHandlers', () => {
       await Promise.resolve()
       vi.runAllTimers()
       expect(mockProc.proc.write).toHaveBeenCalledWith('codex\n')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('batches PTY output when it is not responding to recent input', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawnResult = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      mainWindow.webContents.send.mockClear()
+
+      mockProc.emitData('background output')
+
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(7)
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+        id: spawnResult.id,
+        data: 'background output'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sends small PTY redraws immediately after terminal input', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawnResult = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      const writeListener = getPtyWriteListener()
+
+      writeListener(null, {
+        id: spawnResult.id,
+        data: 'a'
+      })
+      mainWindow.webContents.send.mockClear()
+
+      mockProc.emitData('\x1b[20;2Hredraw')
+
+      expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+        id: spawnResult.id,
+        data: '\x1b[20;2Hredraw'
+      })
+      vi.advanceTimersByTime(8)
+      expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores PTY input for unknown sessions', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })
+      const writeListener = getPtyWriteListener()
+
+      writeListener(null, {
+        id: 'missing-pty',
+        data: 'a'
+      })
+
+      expect(mockProc.proc.write).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('batches large PTY output even after recent terminal input', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawnResult = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      const writeListener = getPtyWriteListener()
+
+      writeListener(null, {
+        id: spawnResult.id,
+        data: 'a'
+      })
+      mainWindow.webContents.send.mockClear()
+
+      const largeOutput = 'x'.repeat(1025)
+      mockProc.emitData(largeOutput)
+
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(8)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+        id: spawnResult.id,
+        data: largeOutput
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('batches combined pending output that exceeds the interactive size limit', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawnResult = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      const writeListener = getPtyWriteListener()
+
+      const pendingOutput = 'x'.repeat(1020)
+      mockProc.emitData(pendingOutput)
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+
+      writeListener(null, {
+        id: spawnResult.id,
+        data: 'a'
+      })
+      mockProc.emitData('redraw')
+
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(8)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+        id: spawnResult.id,
+        data: `${pendingOutput}redraw`
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('batches stale PTY output after the interactive window expires', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawnResult = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      const writeListener = getPtyWriteListener()
+
+      writeListener(null, {
+        id: spawnResult.id,
+        data: 'a'
+      })
+      vi.advanceTimersByTime(101)
+      mainWindow.webContents.send.mockClear()
+
+      mockProc.emitData('stale redraw')
+
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(8)
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+        id: spawnResult.id,
+        data: 'stale redraw'
+      })
     } finally {
       vi.useRealTimers()
     }
