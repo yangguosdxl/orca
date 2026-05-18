@@ -993,23 +993,14 @@ function ConfirmRemove({
           ))}
         </ScrollArea>
       </div>
-      <DialogFooter className="flex-col-reverse items-stretch gap-2 border-t border-border px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-          <span>
-            Orca rechecks each workspace first. Any workspaces no longer safe to delete are skipped
-            and reported.
-          </span>
-        </div>
-        <div className="flex shrink-0 gap-2 sm:justify-end">
-          <Button variant="outline" onClick={onCancel} disabled={removing}>
-            Cancel
-          </Button>
-          <Button variant="destructive" onClick={onConfirm} disabled={removing || count === 0}>
-            {removing ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-            Delete {count} {noun}
-          </Button>
-        </div>
+      <DialogFooter className="border-t border-border px-5 py-3">
+        <Button variant="outline" onClick={onCancel} disabled={removing}>
+          Cancel
+        </Button>
+        <Button variant="destructive" onClick={onConfirm} disabled={removing || count === 0}>
+          {removing ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+          Delete {count} {noun}
+        </Button>
       </DialogFooter>
     </>
   )
