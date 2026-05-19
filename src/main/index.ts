@@ -80,6 +80,8 @@ import {
 } from './crash-reporting/crash-breadcrumb-store'
 import { CrashReportStore } from './crash-reporting/crash-report-store'
 import { isCrashReportReason } from '../shared/crash-reporting'
+import { shouldWaitForAsyncQuitCleanup } from './update-quit-policy'
+import { quitIfRelaunchedDuringMacUpdate } from './mac-update-relaunch-guard'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -132,6 +134,7 @@ if (app.isPackaged && process.platform !== 'win32') {
   })
 }
 configureDevUserDataPath(is.dev)
+const isStaleRelaunchDuringMacUpdate = quitIfRelaunchedDuringMacUpdate()
 
 function focusExistingWindow(): void {
   // Why: the second-instance event fires on the *primary* Electron process
@@ -170,8 +173,11 @@ function focusExistingWindow(): void {
 // agent work, so that routing ambiguity is acceptable. Packaged Orca keeps
 // the lock to protect against the corruption documented in PR #1326 /
 // issue #1312.
-const hasSingleInstanceLock =
-  is.dev && !isServeMode ? true : acquireSingleInstanceLock(app, focusExistingWindow)
+let hasSingleInstanceLock = false
+if (!isStaleRelaunchDuringMacUpdate) {
+  hasSingleInstanceLock =
+    is.dev && !isServeMode ? true : acquireSingleInstanceLock(app, focusExistingWindow)
+}
 if (!hasSingleInstanceLock) {
   if (is.dev) {
     // Why: packaged runs have no attached console, but dev runs do. Emit a
@@ -1048,6 +1054,18 @@ app.on('will-quit', (e) => {
   killAllPty()
   const watcherShutdown = shutdownWatchersOnce()
   store?.flush()
+
+  if (
+    !shouldWaitForAsyncQuitCleanup({
+      daemonDisconnectDone,
+      isUpdaterInstallQuit: isQuittingForUpdate()
+    })
+  ) {
+    // Why: daemon PTYs intentionally survive app updates, but ShipIt needs the
+    // target app process itself to exit. The normal async disconnect/checkpoint
+    // barrier can be delayed by stale legacy daemons; skip it for updater quits.
+    return
+  }
 
   // Why: disconnectDaemon writes final checkpoints via async getSnapshot RPCs.
   // Without preventDefault, Electron exits before the RPCs complete and the

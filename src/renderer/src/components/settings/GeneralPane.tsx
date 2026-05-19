@@ -75,10 +75,15 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
   if (
     (updateStatus.state === 'available' ||
       updateStatus.state === 'downloading' ||
-      updateStatus.state === 'downloaded') &&
+      updateStatus.state === 'downloaded' ||
+      updateStatus.state === 'preparing' ||
+      updateStatus.state === 'installing' ||
+      updateStatus.state === 'restarting') &&
     updateStatus.version
   ) {
     updateVersionRef.current = updateStatus.version
+  } else if (updateStatus.state === 'recovery' && updateStatus.targetVersion) {
+    updateVersionRef.current = updateStatus.targetVersion
   } else if (
     updateStatus.state === 'checking' ||
     updateStatus.state === 'idle' ||
@@ -769,7 +774,13 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
                   includePrerelease: event.shiftKey
                 })
               }
-              disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
+              disabled={
+                updateStatus.state === 'checking' ||
+                updateStatus.state === 'downloading' ||
+                updateStatus.state === 'preparing' ||
+                updateStatus.state === 'installing' ||
+                updateStatus.state === 'restarting'
+              }
               className="gap-2"
             >
               {updateStatus.state === 'checking' ? (
@@ -800,6 +811,32 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
               <Button variant="default" size="sm" onClick={handleRestartToUpdate} className="gap-2">
                 <Download className="size-3.5" />
                 Restart to Update ({updateStatus.version})
+              </Button>
+            ) : updateStatus.state === 'recovery' ? (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => {
+                  if (updateStatus.targetVersion) {
+                    void window.api.updater.download().catch((error) => {
+                      toast.error('Could not restart the update download.', {
+                        description: String((error as Error)?.message ?? error)
+                      })
+                    })
+                    return
+                  }
+                  void window.api.updater.check({ includePrerelease: false })
+                }}
+                className="gap-2"
+              >
+                {updateStatus.targetVersion ? (
+                  <Download className="size-3.5" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                {updateStatus.targetVersion
+                  ? `Retry Install (${updateStatus.targetVersion})`
+                  : 'Check Again'}
               </Button>
             ) : null}
           </div>
@@ -843,6 +880,16 @@ export function GeneralPane({ settings, updateSettings }: GeneralPaneProps): Rea
                 </a>
               </>
             )}
+            {updateStatus.state === 'preparing' &&
+              `Preparing to install v${updateStatus.version}...`}
+            {updateStatus.state === 'installing' &&
+              `Installing v${updateStatus.version}. Orca may close briefly.`}
+            {updateStatus.state === 'restarting' &&
+              `Restarting to finish v${updateStatus.version}...`}
+            {updateStatus.state === 'recovery' &&
+              `${updateStatus.message} Current version: ${updateStatus.currentVersion}.${
+                updateStatus.targetVersion ? ` Target version: ${updateStatus.targetVersion}.` : ''
+              }`}
             {updateStatus.state === 'error' &&
               // Why: `{ state: 'error' }` is emitted for both check-time
               // failures (no version cached) and download/install failures

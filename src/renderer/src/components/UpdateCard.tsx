@@ -127,6 +127,8 @@ export function UpdateCard() {
   const versionRef = useRef<string | null>(null)
   if ('version' in status && status.version) {
     versionRef.current = status.version
+  } else if (status.state === 'recovery' && status.targetVersion) {
+    versionRef.current = status.targetVersion
   } else if (
     status.state === 'checking' ||
     status.state === 'idle' ||
@@ -209,7 +211,8 @@ export function UpdateCard() {
   const isUserInitiated = 'userInitiated' in status && status.userInitiated
   const cachedVersion = versionRef.current
   const shouldShowDetailedErrorCard =
-    status.state === 'error' && (hasStartedDownload.current || cachedVersion !== null)
+    status.state === 'recovery' ||
+    (status.state === 'error' && (hasStartedDownload.current || cachedVersion !== null))
 
   // Why: track whether the current check cycle was user-initiated so the
   // dismiss gate doesn't hide the result of an explicit "Check for Updates"
@@ -264,14 +267,27 @@ export function UpdateCard() {
     dismissedVersion === versionRef.current &&
     !userInitiatedCycleRef.current
   ) {
-    if (status.state !== 'downloading' && status.state !== 'error') {
+    if (
+      status.state !== 'downloading' &&
+      status.state !== 'preparing' &&
+      status.state !== 'installing' &&
+      status.state !== 'restarting' &&
+      status.state !== 'recovery' &&
+      status.state !== 'error'
+    ) {
       return null
     }
   }
 
   if (
     collapsed &&
-    (status.state === 'downloading' || status.state === 'downloaded' || status.state === 'error')
+    (status.state === 'downloading' ||
+      status.state === 'downloaded' ||
+      status.state === 'preparing' ||
+      status.state === 'installing' ||
+      status.state === 'restarting' ||
+      status.state === 'recovery' ||
+      status.state === 'error')
   ) {
     return null
   }
@@ -314,43 +330,60 @@ export function UpdateCard() {
   }
 
   const errorCard: ErrorCardModel | null =
-    status.state === 'error'
+    status.state === 'recovery'
       ? {
-          // Why: title is scoped to the operation that failed so check-time
-          // failures (commonly GitHub-side) don't read as a bug in Orca.
-          title: cachedVersion ? 'Update Error' : 'Update Check Failed',
-          summary: cachedVersion
-            ? 'Could not complete the update.'
-            : 'Could not check for updates.',
+          title: 'Update Recovery',
+          summary: status.targetVersion
+            ? `Orca stayed on v${status.currentVersion}.`
+            : 'Orca found incomplete update metadata.',
           message: status.message,
-          releaseUrl: releaseUrlForVersion(cachedVersion),
-          // Why: check-time failures are often transient (offline, GitHub
-          // hiccup), so offer a Re-check next to "Download Manually" instead
-          // of forcing the user into the manual fallback.
-          primaryAction: cachedVersion
-            ? {
-                label: 'Retry Download',
-                onClick: handleUpdate
-              }
-            : {
-                label: 'Re-check',
-                onClick: () => {
+          releaseUrl: status.releaseUrl ?? releaseUrlForVersion(status.targetVersion),
+          primaryAction: {
+            label: status.targetVersion ? 'Retry Install' : 'Re-check',
+            onClick: status.targetVersion
+              ? handleUpdate
+              : () => {
                   void window.api.updater.check({ includePrerelease: false })
                 }
-              }
-        }
-      : installError
-        ? {
-            title: 'Update Error',
-            summary: 'Could not restart to install the update.',
-            message: installError,
-            releaseUrl: releaseUrlForVersion(cachedVersion),
-            primaryAction: {
-              label: 'Try Again',
-              onClick: handleInstallRetry
-            }
           }
-        : null
+        }
+      : status.state === 'error'
+        ? {
+            // Why: title is scoped to the operation that failed so check-time
+            // failures (commonly GitHub-side) don't read as a bug in Orca.
+            title: cachedVersion ? 'Update Error' : 'Update Check Failed',
+            summary: cachedVersion
+              ? 'Could not complete the update.'
+              : 'Could not check for updates.',
+            message: status.message,
+            releaseUrl: releaseUrlForVersion(cachedVersion),
+            // Why: check-time failures are often transient (offline, GitHub
+            // hiccup), so offer a Re-check next to "Download Manually" instead
+            // of forcing the user into the manual fallback.
+            primaryAction: cachedVersion
+              ? {
+                  label: 'Retry Download',
+                  onClick: handleUpdate
+                }
+              : {
+                  label: 'Re-check',
+                  onClick: () => {
+                    void window.api.updater.check({ includePrerelease: false })
+                  }
+                }
+          }
+        : installError
+          ? {
+              title: 'Update Error',
+              summary: 'Could not restart to install the update.',
+              message: installError,
+              releaseUrl: releaseUrlForVersion(cachedVersion),
+              primaryAction: {
+                label: 'Try Again',
+                onClick: handleInstallRetry
+              }
+            }
+          : null
 
   const handleDismissWithAnimation = () => {
     if (prefersReducedMotion) {
@@ -384,6 +417,10 @@ export function UpdateCard() {
     if (
       status.state === 'downloading' ||
       status.state === 'downloaded' ||
+      status.state === 'preparing' ||
+      status.state === 'installing' ||
+      status.state === 'restarting' ||
+      status.state === 'recovery' ||
       status.state === 'error'
     ) {
       handleCollapseWithAnimation()
@@ -405,9 +442,15 @@ export function UpdateCard() {
             ? 'Downloading update'
             : status.state === 'downloaded'
               ? 'Update ready to install'
-              : status.state === 'error'
-                ? 'Update error'
-                : 'Update status'
+              : status.state === 'preparing' ||
+                  status.state === 'installing' ||
+                  status.state === 'restarting'
+                ? 'Installing update'
+                : status.state === 'recovery'
+                  ? 'Update recovery'
+                  : status.state === 'error'
+                    ? 'Update error'
+                    : 'Update status'
 
   // ── Card wrapper ──────────────────────────────────────────────────
 
@@ -461,6 +504,20 @@ export function UpdateCard() {
           onClose={handleCollapseWithAnimation}
         />
       )
+    }
+
+    if (
+      status.state === 'preparing' ||
+      status.state === 'installing' ||
+      status.state === 'restarting'
+    ) {
+      const text =
+        status.state === 'preparing'
+          ? 'Preparing update...'
+          : status.state === 'installing'
+            ? 'Installing update...'
+            : 'Restarting to finish the update...'
+      return <CompactCardContent icon="spinner" text={text} />
     }
 
     // ── Downloading state ────────────────────────────────────────────

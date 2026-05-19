@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const {
   appMock,
@@ -64,6 +67,7 @@ const {
     appMock: {
       isPackaged: true,
       getVersion: vi.fn(() => '1.0.51'),
+      getPath: vi.fn(() => '/tmp/orca-updater-mac-install-test'),
       on: appOn,
       emit: appEmit,
       quit: vi.fn()
@@ -127,6 +131,8 @@ describe('updater mac install handoff', () => {
     shellMock.openExternal.mockReset()
     appMock.getVersion.mockReset()
     appMock.getVersion.mockReturnValue('1.0.51')
+    appMock.getPath.mockReset()
+    appMock.getPath.mockReturnValue(mkdtempSync(join(tmpdir(), 'orca-updater-mac-install-test-')))
     appMock.quit.mockReset()
     appMock.isPackaged = true
     isMock.dev = false

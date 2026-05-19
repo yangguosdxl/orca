@@ -33,6 +33,33 @@ export function statusesEqual(left: UpdateStatus, right: UpdateStatus): boolean 
         left.activeNudgeId === right.activeNudgeId &&
         left.releaseUrl === right.releaseUrl
       )
+    case 'preparing':
+      return (
+        right.state === 'preparing' &&
+        left.version === right.version &&
+        left.activeNudgeId === right.activeNudgeId
+      )
+    case 'installing':
+      return (
+        right.state === 'installing' &&
+        left.version === right.version &&
+        left.activeNudgeId === right.activeNudgeId
+      )
+    case 'restarting':
+      return (
+        right.state === 'restarting' &&
+        left.version === right.version &&
+        left.activeNudgeId === right.activeNudgeId
+      )
+    case 'recovery':
+      return (
+        right.state === 'recovery' &&
+        left.currentVersion === right.currentVersion &&
+        left.targetVersion === right.targetVersion &&
+        left.message === right.message &&
+        left.releaseUrl === right.releaseUrl &&
+        left.activeNudgeId === right.activeNudgeId
+      )
     case 'error':
       return (
         right.state === 'error' &&

@@ -16,7 +16,15 @@ export function UpdateStatusSegment({
   const collapsed = useAppStore((s) => s.updateCardCollapsed)
   const setCollapsed = useAppStore((s) => s.setUpdateCardCollapsed)
 
-  if (status.state !== 'downloading' && status.state !== 'downloaded' && status.state !== 'error') {
+  if (
+    status.state !== 'downloading' &&
+    status.state !== 'downloaded' &&
+    status.state !== 'preparing' &&
+    status.state !== 'installing' &&
+    status.state !== 'restarting' &&
+    status.state !== 'recovery' &&
+    status.state !== 'error'
+  ) {
     return null
   }
 
@@ -36,6 +44,28 @@ export function UpdateStatusSegment({
         label: 'Update ready',
         tooltip: `Orca v${status.version} ready to install`,
         ariaLabel: 'Update ready to install. Click to expand.'
+      }
+    }
+    if (
+      status.state === 'preparing' ||
+      status.state === 'installing' ||
+      status.state === 'restarting'
+    ) {
+      return {
+        icon: <Download className="size-3 text-muted-foreground" />,
+        label: 'Installing',
+        tooltip: `Orca v${status.version} installing`,
+        ariaLabel: 'Update installing. Click to expand.'
+      }
+    }
+    if (status.state === 'recovery') {
+      return {
+        icon: <AlertCircle className="size-3 text-yellow-500" />,
+        label: 'Update retry',
+        tooltip: status.targetVersion
+          ? `Orca v${status.targetVersion} update did not complete`
+          : 'Previous update metadata was unreadable',
+        ariaLabel: 'Update recovery. Click to expand.'
       }
     }
     return {

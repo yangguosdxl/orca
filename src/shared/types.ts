@@ -1195,6 +1195,17 @@ export type UpdateStatus =
   | { state: 'not-available'; userInitiated?: boolean }
   | { state: 'downloading'; percent: number; version: string; activeNudgeId?: string }
   | { state: 'downloaded'; version: string; releaseUrl?: string; activeNudgeId?: string }
+  | { state: 'preparing'; version: string; activeNudgeId?: string }
+  | { state: 'installing'; version: string; activeNudgeId?: string }
+  | { state: 'restarting'; version: string; activeNudgeId?: string }
+  | {
+      state: 'recovery'
+      currentVersion: string
+      targetVersion: string | null
+      message: string
+      releaseUrl?: string
+      activeNudgeId?: string
+    }
   | { state: 'error'; message: string; userInitiated?: boolean; activeNudgeId?: string }
 
 // ─── Settings ────────────────────────────────────────────────────────

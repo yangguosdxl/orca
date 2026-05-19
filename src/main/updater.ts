@@ -20,6 +20,24 @@ import {
 } from './updater-fallback'
 import { fetchNewerReleaseTags, getReleaseDownloadUrl } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
+import {
+  clearUpdateInstallMarker,
+  createUpdateInstallMarker,
+  evaluateUpdateInstallMarker,
+  getUpdateInstallMarkerPath,
+  readUpdateInstallMarkerResult,
+  updateInstallMarkerObservation,
+  updateInstallMarkerState,
+  writeUpdateInstallMarker,
+  type UpdateInstallMarker,
+  type UpdateStagedIdentity
+} from './update-install-marker'
+import {
+  getCurrentMacShipItInstallIdentity,
+  getMacAppBundlePath,
+  listShipItProcesses,
+  observeMacShipItInstall
+} from './mac-update-relaunch-guard'
 
 type CheckFailureSource = 'event' | 'promise' | 'fallback-promise'
 type MissingManifestPrereleaseFallbackResult = { userInitiated: boolean }
@@ -42,11 +60,13 @@ let autoUpdaterInitialized = false
 let includePrereleaseActive = false
 let availableVersion: string | null = null
 let availableReleaseUrl: string | null = null
+let availableUpdateChecksum: string | null = null
 let pendingCheckFailureKey: string | null = null
 let pendingCheckFailurePromise: Promise<void> | null = null
 let autoUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeCheckTimer: ReturnType<typeof setTimeout> | null = null
 let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
+let pendingInstallMarker: UpdateInstallMarker | null = null
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
 let _getLastUpdateCheckAt: (() => number | null) | null = null
 let backgroundCheckLaunchPending = false
@@ -92,6 +112,7 @@ function getAutoUpdater(): ElectronAutoUpdater {
 function clearAvailableUpdateContext(): void {
   availableVersion = null
   availableReleaseUrl = null
+  availableUpdateChecksum = null
 }
 
 function clearPrereleaseFallbackContext(): void {
@@ -150,7 +171,8 @@ function sendStatus(status: UpdateStatus): void {
   if (
     decoratedStatus.state === 'downloading' ||
     decoratedStatus.state === 'error' ||
-    decoratedStatus.state === 'idle'
+    decoratedStatus.state === 'idle' ||
+    decoratedStatus.state === 'recovery'
   ) {
     downloadInFlight = false
   }
@@ -191,7 +213,212 @@ function getPendingInstallVersion(): string {
   if (currentStatus.state === 'downloading' || currentStatus.state === 'downloaded') {
     return currentStatus.version
   }
+  if (currentStatus.state === 'recovery') {
+    return currentStatus.targetVersion ?? ''
+  }
   return ''
+}
+
+function getMarkerPath(): string | null {
+  try {
+    return getUpdateInstallMarkerPath(app.getPath('userData'))
+  } catch (error) {
+    console.warn('[updater] install marker path unavailable:', String(error))
+    return null
+  }
+}
+
+function getStagedUpdateIdentity(targetVersion: string): UpdateStagedIdentity | null {
+  if (process.platform === 'darwin') {
+    const nativeIdentity = getCurrentMacShipItInstallIdentity()
+    return {
+      kind: 'mac-squirrel',
+      targetVersion,
+      targetBundleURL: nativeIdentity?.targetBundleURL ?? null,
+      updateBundleURL: nativeIdentity?.updateBundleURL ?? null,
+      updateBundleVersion: nativeIdentity?.updateBundleVersion ?? null,
+      updateChecksum: availableUpdateChecksum,
+      releaseUrl: getKnownReleaseUrl() ?? null
+    }
+  }
+  return null
+}
+
+function logInstallMarkerTransition(marker: UpdateInstallMarker, state: string): void {
+  console.info(
+    `[updater] install marker ${state}: attempt=${marker.attemptId} platform=${marker.platform} from=${marker.currentVersion} to=${marker.targetVersion}`
+  )
+}
+
+function getReusablePendingInstallMarker(targetVersion: string): UpdateInstallMarker | null {
+  if (
+    pendingInstallMarker?.currentVersion === app.getVersion() &&
+    pendingInstallMarker.targetVersion === targetVersion &&
+    pendingInstallMarker.platform === process.platform
+  ) {
+    return pendingInstallMarker
+  }
+  return null
+}
+
+function persistUpdateInstallAttemptMarker(
+  targetVersion: string,
+  options: { reusePendingAttempt: boolean }
+): UpdateInstallMarker | null {
+  const marker = options.reusePendingAttempt ? getReusablePendingInstallMarker(targetVersion) : null
+  const attemptMarker =
+    marker ??
+    createUpdateInstallMarker({
+      currentVersion: app.getVersion(),
+      targetVersion,
+      platform: process.platform,
+      stagedUpdateIdentity: getStagedUpdateIdentity(targetVersion)
+    })
+
+  const markerPath = getMarkerPath()
+  if (!markerPath) {
+    sendRecoveryStatus(attemptMarker, 'marker-path-unavailable')
+    return null
+  }
+
+  try {
+    // Why: recovery retries are new attempts, but the later quit must keep the
+    // same attempt id so startup can distinguish this retry from the failed one.
+    writeUpdateInstallMarker(markerPath, attemptMarker)
+    pendingInstallMarker = attemptMarker
+    logInstallMarkerTransition(attemptMarker, 'preparing')
+    sendStatus({ state: 'preparing', version: targetVersion })
+    return attemptMarker
+  } catch (error) {
+    console.error(
+      `[updater] failed to persist install marker: attempt=${attemptMarker.attemptId} platform=${attemptMarker.platform} from=${attemptMarker.currentVersion} to=${attemptMarker.targetVersion} error=${String(error)}`
+    )
+    sendRecoveryStatus(attemptMarker, 'marker-preparing-write-failed')
+    return null
+  }
+}
+
+function sendRecoveryStatus(marker: UpdateInstallMarker, reason: string): void {
+  availableVersion = marker.targetVersion
+  pendingInstallMarker = null
+  sendStatus({
+    state: 'recovery',
+    currentVersion: app.getVersion(),
+    targetVersion: marker.targetVersion,
+    message: 'Update did not complete. Retry install.',
+    releaseUrl: getKnownReleaseUrl() ?? undefined
+  })
+  console.warn(
+    `[updater] install recovery: attempt=${marker.attemptId} platform=${marker.platform} from=${marker.currentVersion} to=${marker.targetVersion} reason=${reason}`
+  )
+}
+
+function getReleaseTagForVersion(version: string): string {
+  return `v${version}`
+}
+
+function pinReleaseFeedToVersion(version: string): void {
+  const url = getReleaseDownloadUrl(getReleaseTagForVersion(version))
+  console.info(`[updater] release feed pinned to recovery target: version=${version} → ${url}`)
+  getAutoUpdater().setFeedURL({ provider: 'generic', url })
+}
+
+function sendInvalidMarkerRecoveryStatus(reason: string): void {
+  pendingInstallMarker = null
+  sendStatus({
+    state: 'recovery',
+    currentVersion: app.getVersion(),
+    targetVersion: null,
+    message: 'Update metadata was unreadable. Check for updates again.'
+  })
+  console.warn(`[updater] install recovery: reason=invalid-marker detail=${reason}`)
+}
+
+function observeActiveInstaller(marker: UpdateInstallMarker): {
+  active: boolean
+  shipItPid?: number
+  reason: string
+} {
+  if (process.platform !== 'darwin') {
+    return { active: false, reason: 'non-macos' }
+  }
+  const appBundlePath = getMacAppBundlePath(process.execPath)
+  const nativeIdentity = getCurrentMacShipItInstallIdentity()
+  if (!appBundlePath || !nativeIdentity) {
+    return { active: false, reason: 'missing-native-identity' }
+  }
+  const observation = observeMacShipItInstall({
+    appBundlePath,
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    shipItProcesses: listShipItProcesses(),
+    shipItState: {
+      targetBundleURL: nativeIdentity.targetBundleURL,
+      updateBundleURL: nativeIdentity.updateBundleURL
+    },
+    updateBundleVersion: nativeIdentity.updateBundleVersion,
+    marker
+  })
+  return {
+    active: observation.confidence === 'high',
+    shipItPid: observation.shipItPid,
+    reason: observation.reason
+  }
+}
+
+function initializeInstallRecoveryState(): void {
+  const markerPath = getMarkerPath()
+  if (!markerPath) {
+    return
+  }
+
+  const markerRead = readUpdateInstallMarkerResult(markerPath)
+  if (markerRead.status === 'invalid') {
+    sendInvalidMarkerRecoveryStatus(markerRead.reason)
+    clearUpdateInstallMarker(markerPath)
+    return
+  }
+  const marker = markerRead.status === 'valid' ? markerRead.marker : null
+  const installer = marker ? observeActiveInstaller(marker) : { active: false, reason: 'no-marker' }
+  const decision = evaluateUpdateInstallMarker({
+    marker,
+    runningVersion: app.getVersion(),
+    platform: process.platform,
+    installerActive: installer.active
+  })
+  if (decision.action === 'none') {
+    return
+  }
+  if (decision.action === 'installer-active') {
+    try {
+      const next = updateInstallMarkerObservation(markerPath, decision.marker, {
+        shipItPid: installer.shipItPid
+      })
+      console.info(
+        `[updater] install still active: attempt=${next.attemptId} platform=${next.platform} from=${next.currentVersion} to=${next.targetVersion} shipItPid=${next.shipItPid ?? 'unknown'} reason=${installer.reason}`
+      )
+    } catch (error) {
+      console.warn(
+        `[updater] failed to update active install marker before self-quit: attempt=${decision.marker.attemptId} error=${String(error)}`
+      )
+    }
+    // Why: if this process reached normal updater startup while ShipIt is
+    // still active, keeping the old target app open can abort the native
+    // replacement. Quit even after the early stale-relaunch guard as a backup.
+    quittingForUpdate = true
+    app.quit()
+    return
+  }
+  if (decision.action === 'clear') {
+    clearUpdateInstallMarker(markerPath)
+    console.info(`[updater] cleared install marker after ${decision.reason}`)
+    return
+  }
+
+  sendRecoveryStatus(decision.marker, decision.reason)
+  if (decision.shouldClearMarker) {
+    clearUpdateInstallMarker(markerPath)
+  }
 }
 
 function getCheckFailureKey(message: string, userInitiated?: boolean): string {
@@ -210,20 +437,62 @@ function clearPrereleaseFallbackContextIfSettled(): void {
   }
 }
 
-function performQuitAndInstall(): void {
+function getInstallMarkerForQuit(marker = pendingInstallMarker): UpdateInstallMarker | null {
+  if (marker) {
+    return marker
+  }
+  const targetVersion = getPendingInstallVersion()
+  if (!targetVersion || compareVersions(targetVersion, app.getVersion()) <= 0) {
+    sendErrorStatus('No staged update is ready to install.')
+    return null
+  }
+  // Why: macOS can resume a deferred app quit directly from Squirrel's native
+  // ready signal, bypassing the renderer IPC path that normally prepares this.
+  return persistUpdateInstallAttemptMarker(targetVersion, { reusePendingAttempt: true })
+}
+
+function performQuitAndInstall(marker = pendingInstallMarker): boolean {
   if (pendingQuitAndInstallTimer) {
     clearTimeout(pendingQuitAndInstallTimer)
     pendingQuitAndInstallTimer = null
   }
 
-  markMacQuitAndInstallInFlight()
+  const installMarker = getInstallMarkerForQuit(marker)
+  if (!installMarker) {
+    return false
+  }
 
-  // Set this BEFORE anything else so the `activate` handler in index.ts
+  const markerPath = getMarkerPath()
+  if (markerPath) {
+    try {
+      pendingInstallMarker = updateInstallMarkerState(markerPath, installMarker, 'installing')
+      logInstallMarkerTransition(pendingInstallMarker, 'installing')
+      sendStatus({ state: 'installing', version: pendingInstallMarker.targetVersion })
+    } catch (error) {
+      sendRecoveryStatus(installMarker, `marker-installing-write-failed:${String(error)}`)
+      return false
+    }
+  }
+
+  if (pendingInstallMarker && markerPath) {
+    try {
+      pendingInstallMarker = updateInstallMarkerState(
+        markerPath,
+        pendingInstallMarker,
+        'restarting'
+      )
+      logInstallMarkerTransition(pendingInstallMarker, 'restarting')
+      sendStatus({ state: 'restarting', version: pendingInstallMarker.targetVersion })
+    } catch (error) {
+      sendRecoveryStatus(pendingInstallMarker, `marker-restarting-write-failed:${String(error)}`)
+      return false
+    }
+  }
+
+  // Set this before window teardown so the `activate` handler in index.ts
   // won't re-open the old version while Squirrel's ShipIt is replacing
-  // the .app bundle.  Without this guard the quit triggers window
-  // destruction → BrowserWindow.getAllWindows().length === 0 → activate
-  // fires → openMainWindow() resurrects the old process and ShipIt
-  // either can't replace it or the user ends up on the old version.
+  // the .app bundle. Without this guard the quit can resurrect the old
+  // process and leave ShipIt unable to replace it.
   quittingForUpdate = true
 
   killAllPty()
@@ -233,7 +502,9 @@ function performQuitAndInstall(): void {
     win.removeAllListeners('close')
   }
 
+  markMacQuitAndInstallInFlight()
   getAutoUpdater().quitAndInstall(false, true)
+  return true
 }
 
 async function sendCheckFailureStatus(
@@ -605,7 +876,12 @@ export function isQuittingForUpdate(): boolean {
 }
 
 export function quitAndInstall(): void {
-  if (pendingQuitAndInstallTimer) {
+  if (
+    pendingQuitAndInstallTimer ||
+    currentStatus.state === 'preparing' ||
+    currentStatus.state === 'installing' ||
+    currentStatus.state === 'restarting'
+  ) {
     return
   }
 
@@ -620,12 +896,23 @@ export function quitAndInstall(): void {
     return
   }
 
+  const targetVersion = getPendingInstallVersion()
+  if (!targetVersion || compareVersions(targetVersion, app.getVersion()) <= 0) {
+    sendErrorStatus('No staged update is ready to install.')
+    return
+  }
+
+  const marker = persistUpdateInstallAttemptMarker(targetVersion, { reusePendingAttempt: true })
+  if (!marker) {
+    return
+  }
+
   // Why: every renderer entrypoint reaches this IPC handler from an in-flight
   // click or toast callback. Deferring the actual quit here gives the renderer
   // a moment to flush dismissals/state updates before windows start closing,
   // and centralizing it avoids drift between the toast flow and settings UI.
   pendingQuitAndInstallTimer = setTimeout(() => {
-    performQuitAndInstall()
+    performQuitAndInstall(marker)
   }, QUIT_AND_INSTALL_DELAY_MS)
 }
 
@@ -715,6 +1002,8 @@ export function setupAutoUpdater(
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
   _setDismissedUpdateNudgeId = opts?.setDismissedUpdateNudgeId ?? null
 
+  initializeInstallRecoveryState()
+
   if (!app.isPackaged && !is.dev) {
     return
   }
@@ -785,6 +1074,7 @@ export function setupAutoUpdater(
     getPendingInstallVersion,
     getUserInitiatedCheck: () => userInitiatedCheck,
     hasNewerDownloadedVersion,
+    hasPendingQuitAndInstall: () => pendingQuitAndInstallTimer !== null,
     performQuitAndInstall,
     sendCheckFailureStatus,
     sendErrorStatus,
@@ -798,6 +1088,9 @@ export function setupAutoUpdater(
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl
     },
+    setAvailableUpdateChecksum: (checksum) => {
+      availableUpdateChecksum = checksum
+    },
     setAvailableVersion: (version) => {
       availableVersion = version
     },
@@ -808,6 +1101,10 @@ export function setupAutoUpdater(
 
   void checkForUpdateNudge()
   scheduleUpdateNudgeCheck()
+
+  if (currentStatus.state === 'recovery') {
+    return
+  }
 
   const checkDailyOnWake = () => {
     void checkForUpdateNudge()
@@ -851,14 +1148,41 @@ export function downloadUpdate(): void {
   // download. Without this, the button would appear to do nothing.
   const canStart =
     currentStatus.state === 'available' ||
+    (currentStatus.state === 'recovery' && currentStatus.targetVersion !== null) ||
     (currentStatus.state === 'error' && hasNewerDownloadedVersion())
   if (!canStart) {
     return
   }
+  const recoveryRetryVersion =
+    currentStatus.state === 'recovery' && currentStatus.targetVersion !== null
+      ? currentStatus.targetVersion
+      : null
+  if (
+    recoveryRetryVersion &&
+    !persistUpdateInstallAttemptMarker(recoveryRetryVersion, { reusePendingAttempt: false })
+  ) {
+    return
+  }
   downloadInFlight = true
   beginMacUpdateDownload()
-  getAutoUpdater()
-    .downloadUpdate()
+  const autoUpdater = getAutoUpdater()
+  const prepareDownload = recoveryRetryVersion
+    ? Promise.resolve()
+        .then(() => {
+          // Why: after a relaunch recovery is reconstructed from disk, but
+          // electron-updater's in-memory update info is empty. Re-check the
+          // exact failed target before downloading so the provider is hydrated.
+          pinReleaseFeedToVersion(recoveryRetryVersion)
+          return autoUpdater.checkForUpdates()
+        })
+        .then(() => {
+          // Why: the check event clears availableVersion, and the async
+          // changelog path may not restore it before download progress starts.
+          availableVersion = recoveryRetryVersion
+        })
+    : Promise.resolve()
+  prepareDownload
+    .then(() => autoUpdater.downloadUpdate())
     .catch((err) => {
       downloadInFlight = false
       sendErrorStatus(String(err?.message ?? err))

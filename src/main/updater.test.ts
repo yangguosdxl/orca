@@ -1,5 +1,14 @@
 /* eslint-disable max-lines */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import {
+  createUpdateInstallMarker,
+  getUpdateInstallMarkerPath,
+  readUpdateInstallMarker,
+  writeUpdateInstallMarker
+} from './update-install-marker'
 
 const {
   appMock,
@@ -71,6 +80,7 @@ const {
     appMock: {
       isPackaged: true,
       getVersion: vi.fn(() => '1.0.51'),
+      getPath: vi.fn((_name?: string) => '/tmp/orca-updater-test'),
       on: appOn,
       emit: appEmit,
       quit: vi.fn()
@@ -137,6 +147,17 @@ vi.mock('./updater-prerelease-feed', () => ({
 }))
 
 describe('updater', () => {
+  async function stageDownloadedUpdate(version: string): Promise<void> {
+    autoUpdaterMock.emit('update-available', { version })
+    await Promise.resolve()
+    await Promise.resolve()
+    autoUpdaterMock.emit('update-downloaded', { version })
+    const nativeDownloadedHandler = nativeUpdaterMock.on.mock.calls.find(
+      ([eventName]) => eventName === 'update-downloaded'
+    )?.[1] as (() => void) | undefined
+    nativeDownloadedHandler?.()
+  }
+
   beforeEach(() => {
     vi.resetModules()
     autoUpdaterMock.reset()
@@ -145,6 +166,8 @@ describe('updater', () => {
     browserWindowMock.getAllWindows.mockReturnValue([])
     appMock.getVersion.mockReset()
     appMock.getVersion.mockReturnValue('1.0.51')
+    appMock.getPath.mockReset()
+    appMock.getPath.mockReturnValue(mkdtempSync(join(tmpdir(), 'orca-updater-test-')))
     appMock.quit.mockReset()
     appMock.isPackaged = true
     isMock.dev = false
@@ -299,6 +322,7 @@ describe('updater', () => {
     const { setupAutoUpdater, quitAndInstall } = await import('./updater')
 
     setupAutoUpdater(mainWindow as never)
+    await stageDownloadedUpdate('1.0.61')
     quitAndInstall()
 
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
@@ -318,12 +342,292 @@ describe('updater', () => {
     const { setupAutoUpdater, quitAndInstall } = await import('./updater')
 
     setupAutoUpdater(mainWindow as never)
+    await stageDownloadedUpdate('1.0.61')
     quitAndInstall()
     quitAndInstall()
 
     await vi.advanceTimersByTimeAsync(100)
 
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists an install marker before calling quitAndInstall', async () => {
+    vi.useFakeTimers()
+
+    const sendMock = vi.fn()
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never)
+    await stageDownloadedUpdate('1.0.61')
+    quitAndInstall()
+
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'preparing'
+    })
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'restarting'
+    })
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(sendMock.mock.calls.map(([, status]) => status)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: 'preparing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'installing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'restarting', version: '1.0.61' })
+      ])
+    )
+  })
+
+  it('does not quit when the install marker cannot be persisted', async () => {
+    vi.useFakeTimers()
+
+    const blockedUserDataPath = join(
+      mkdtempSync(join(tmpdir(), 'orca-updater-blocked-user-data-')),
+      'not-a-directory'
+    )
+    writeFileSync(blockedUserDataPath, 'blocked')
+    appMock.getPath.mockReturnValue(blockedUserDataPath)
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never)
+    await stageDownloadedUpdate('1.0.61')
+    quitAndInstall()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+    expect(sendMock.mock.calls.map(([, status]) => status)).toContainEqual(
+      expect.objectContaining({
+        state: 'recovery',
+        currentVersion: '1.0.51',
+        targetVersion: '1.0.61'
+      })
+    )
+  })
+
+  it('starts a recovery retry as a new install marker attempt and reuses it at quit', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-18T12:00:00Z'))
+    autoUpdaterMock.downloadUpdate.mockResolvedValue(undefined)
+    autoUpdaterMock.checkForUpdates.mockImplementation(() => {
+      autoUpdaterMock.emit('checking-for-update')
+      return Promise.resolve(undefined)
+    })
+
+    const sendMock = vi.fn()
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const failedMarker = createUpdateInstallMarker({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      platform: process.platform,
+      stagedUpdateIdentity: null,
+      now: Date.now() - 11 * 60 * 1000
+    })
+    writeUpdateInstallMarker(markerPath, failedMarker)
+
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater, downloadUpdate } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+
+    expect(sendMock.mock.calls.map(([, status]) => status)).toContainEqual(
+      expect.objectContaining({
+        state: 'recovery',
+        targetVersion: '1.0.61'
+      })
+    )
+
+    downloadUpdate()
+
+    const retryMarker = readUpdateInstallMarker(markerPath)
+    expect(retryMarker).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'preparing'
+    })
+    expect(retryMarker?.attemptId).not.toBe(failedMarker.attemptId)
+    expect(retryMarker?.startedAt).toBe(Date.now())
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.downloadUpdate).toHaveBeenCalledTimes(1)
+    })
+    expect(autoUpdaterMock.setFeedURL).toHaveBeenLastCalledWith({
+      provider: 'generic',
+      url: 'https://github.com/stablyai/orca/releases/download/v1.0.61'
+    })
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+
+    autoUpdaterMock.emit('update-downloaded', { version: '1.0.61' })
+    const preventDefault = vi.fn()
+    appMock.emit('before-quit', { preventDefault })
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    const nativeDownloadedHandler = nativeUpdaterMock.on.mock.calls.find(
+      ([eventName]) => eventName === 'update-downloaded'
+    )?.[1] as (() => void) | undefined
+    nativeDownloadedHandler?.()
+
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(readUpdateInstallMarker(markerPath)?.attemptId).toBe(retryMarker?.attemptId)
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      attemptId: retryMarker?.attemptId,
+      installState: 'restarting'
+    })
+  })
+
+  it('persists a marker when macOS resumes a deferred quit after Squirrel is ready', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' })
+
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const preventDefault = vi.fn()
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    autoUpdaterMock.emit('update-available', { version: '1.0.61' })
+    await Promise.resolve()
+    await Promise.resolve()
+    autoUpdaterMock.emit('update-downloaded', { version: '1.0.61' })
+
+    appMock.emit('before-quit', { preventDefault })
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+
+    const nativeDownloadedHandler = nativeUpdaterMock.on.mock.calls.find(
+      ([eventName]) => eventName === 'update-downloaded'
+    )?.[1] as (() => void) | undefined
+    nativeDownloadedHandler?.()
+
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'restarting'
+    })
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(sendMock.mock.calls.map(([, status]) => status)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: 'preparing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'installing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'restarting', version: '1.0.61' })
+      ])
+    )
+  })
+
+  it('routes ordinary app quit after a ready update through marker-backed install', async () => {
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const preventDefault = vi.fn()
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    await stageDownloadedUpdate('1.0.61')
+
+    appMock.emit('before-quit', { preventDefault })
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'restarting'
+    })
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(sendMock.mock.calls.map(([, status]) => status)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: 'preparing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'installing', version: '1.0.61' }),
+        expect.objectContaining({ state: 'restarting', version: '1.0.61' })
+      ])
+    )
+  })
+
+  it('does not block ordinary quit when ready-update marker persistence fails', async () => {
+    const blockedUserDataPath = join(
+      mkdtempSync(join(tmpdir(), 'orca-updater-blocked-user-data-')),
+      'not-a-directory'
+    )
+    writeFileSync(blockedUserDataPath, 'blocked')
+    appMock.getPath.mockReturnValue(blockedUserDataPath)
+    const preventDefault = vi.fn()
+    const sendMock = vi.fn()
+    const mainWindow = { webContents: { send: sendMock } }
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    await stageDownloadedUpdate('1.0.61')
+
+    appMock.emit('before-quit', { preventDefault })
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+    expect(sendMock.mock.calls.map(([, status]) => status)).toContainEqual(
+      expect.objectContaining({
+        state: 'recovery',
+        currentVersion: '1.0.51',
+        targetVersion: '1.0.61'
+      })
+    )
+  })
+
+  it('routes app quit during the explicit install delay through marker-backed install', async () => {
+    vi.useFakeTimers()
+
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const preventDefault = vi.fn()
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+    await stageDownloadedUpdate('1.0.61')
+    quitAndInstall()
+
+    appMock.emit('before-quit', { preventDefault })
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(readUpdateInstallMarker(markerPath)).toMatchObject({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      installState: 'restarting'
+    })
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears a previous install marker after relaunching on the target version', async () => {
+    const userDataPath = appMock.getPath('userData')
+    const markerPath = getUpdateInstallMarkerPath(userDataPath)
+    const marker = createUpdateInstallMarker({
+      currentVersion: '1.0.51',
+      targetVersion: '1.0.61',
+      platform: process.platform,
+      stagedUpdateIdentity: null,
+      now: 1_000
+    })
+    writeUpdateInstallMarker(markerPath, marker)
+    appMock.getVersion.mockReturnValue('1.0.61')
+    const mainWindow = { webContents: { send: vi.fn() } }
+    const { setupAutoUpdater } = await import('./updater')
+
+    setupAutoUpdater(mainWindow as never, { getLastUpdateCheckAt: () => Date.now() })
+
+    expect(readUpdateInstallMarker(markerPath)).toBeNull()
   })
 
   it('runs a startup check immediately when the last background check is stale', async () => {

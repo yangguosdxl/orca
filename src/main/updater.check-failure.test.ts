@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const { appMock, browserWindowMock, nativeUpdaterMock, autoUpdaterMock, isMock, killAllPtyMock } =
   vi.hoisted(() => {
@@ -52,6 +55,7 @@ const { appMock, browserWindowMock, nativeUpdaterMock, autoUpdaterMock, isMock, 
       appMock: {
         isPackaged: true,
         getVersion: vi.fn(() => '1.0.51'),
+        getPath: vi.fn(() => '/tmp/orca-updater-check-failure-test'),
         on: appOn,
         quit: vi.fn()
       },
@@ -119,6 +123,8 @@ describe('updater check failure handling', () => {
     browserWindowMock.getAllWindows.mockReturnValue([])
     appMock.getVersion.mockReset()
     appMock.getVersion.mockReturnValue('1.0.51')
+    appMock.getPath.mockReset()
+    appMock.getPath.mockReturnValue(mkdtempSync(join(tmpdir(), 'orca-updater-check-failure-test-')))
     appMock.quit.mockReset()
     appMock.isPackaged = true
     isMock.dev = false
