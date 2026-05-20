@@ -640,16 +640,29 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     })),
   selectedAutomationId: null,
   setSelectedAutomationId: (id) => set({ selectedAutomationId: id }),
-  openAutomationsPage: () =>
+  openAutomationsPage: () => {
+    get().recordViewVisit('automations')
     set((state) => ({
       activeView: 'automations',
       previousViewBeforeAutomations:
         state.activeView === 'automations' ? state.previousViewBeforeAutomations : state.activeView
-    })),
+    }))
+  },
   closeAutomationsPage: () =>
-    set((state) => ({
-      activeView: state.previousViewBeforeAutomations
-    })),
+    set((state) => {
+      const currentEntry = state.worktreeNavHistory[state.worktreeNavHistoryIndex]
+      let nextHistoryIndex = state.worktreeNavHistoryIndex
+      if (currentEntry === 'automations') {
+        const prev = findPrevLiveWorktreeHistoryIndex(state)
+        if (prev !== null) {
+          nextHistoryIndex = prev
+        }
+      }
+      return {
+        activeView: state.previousViewBeforeAutomations,
+        worktreeNavHistoryIndex: nextHistoryIndex
+      }
+    }),
   openSpacePage: () =>
     set((state) => ({
       activeView: 'space',

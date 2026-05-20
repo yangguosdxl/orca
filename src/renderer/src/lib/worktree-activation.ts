@@ -289,10 +289,9 @@ export function ensureWorktreeHasInitialTerminal(
 // at module init here lets the slice call back without importing this file.
 setWorktreeNavActivator(activateAndRevealWorktree)
 
-// Why: Tasks entries in the nav history dispatch via setActiveView('tasks')
-// (not openTaskPage) — see the 'tasks' branch in navigateToIndex. Going this
-// route avoids mutating previousViewBeforeTasks and skips the SWR prefetch
-// (an accepted residual from the design doc; see "Known residual quirks").
+// Why: page entries in nav history replay through setActiveView(...)
+// (not open*Page) so back/forward does not mutate previousViewBefore* or
+// append duplicate history. See navigateToIndex for the replay branch.
 setWorktreeNavViewActivator((entry) => {
   useAppStore.getState().setActiveView(entry)
 })

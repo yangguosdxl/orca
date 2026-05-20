@@ -2,7 +2,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getDefaultUIState } from '../../../../shared/constants'
-import type { PersistedUIState } from '../../../../shared/types'
+import type { PersistedUIState, Worktree } from '../../../../shared/types'
 import { createUISlice } from './ui'
 import { createWorktreeNavHistorySlice } from './worktree-nav-history'
 import type { AppState } from '../types'
@@ -13,16 +13,21 @@ afterEach(() => {
 })
 
 function createUIStore(): StoreApi<AppState> {
-  // Only the UI slice, repo ids, and right sidebar width fallback are needed
-  // for persisted UI hydration tests. The worktree-nav-history slice is also
-  // included because openTaskPage records a Tasks visit via recordViewVisit.
+  // Only the UI slice, repo/worktree ids, and right sidebar width fallback are
+  // needed for these tests. The worktree-nav-history slice is also included
+  // because page opens record view visits.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return createStore<any>()((...args: any[]) => ({
     repos: [],
+    worktreesByRepo: {},
     rightSidebarWidth: 280,
     ...createWorktreeNavHistorySlice(...(args as Parameters<typeof createWorktreeNavHistorySlice>)),
     ...createUISlice(...(args as Parameters<typeof createUISlice>))
   })) as unknown as StoreApi<AppState>
+}
+
+function makeWorktree(id: string): Worktree {
+  return { id } as unknown as Worktree
 }
 
 function makePersistedUI(overrides: Partial<PersistedUIState> = {}): PersistedUIState {
@@ -479,6 +484,76 @@ describe('createUISlice settings navigation', () => {
     store.getState().closeSettingsPage()
 
     expect(store.getState().activeView).toBe('tasks')
+  })
+})
+
+describe('createUISlice page navigation history', () => {
+  it('records and rewinds Tasks visits on close', () => {
+    const store = createUIStore()
+    store.setState({ worktreesByRepo: { 'repo-1': [makeWorktree('a')] } })
+
+    store.getState().recordWorktreeVisit('a')
+    store.getState().openTaskPage()
+    expect(store.getState().worktreeNavHistory).toEqual(['a', 'tasks'])
+    expect(store.getState().worktreeNavHistoryIndex).toBe(1)
+
+    store.getState().closeTaskPage()
+    expect(store.getState().activeView).toBe('terminal')
+    expect(store.getState().worktreeNavHistoryIndex).toBe(0)
+  })
+
+  it('records and rewinds Automations visits on close', () => {
+    const store = createUIStore()
+    store.setState({ worktreesByRepo: { 'repo-1': [makeWorktree('a')] } })
+
+    store.getState().recordWorktreeVisit('a')
+    store.getState().openAutomationsPage()
+    expect(store.getState().worktreeNavHistory).toEqual(['a', 'automations'])
+    expect(store.getState().worktreeNavHistoryIndex).toBe(1)
+
+    store.getState().closeAutomationsPage()
+    expect(store.getState().activeView).toBe('terminal')
+    expect(store.getState().worktreeNavHistoryIndex).toBe(0)
+  })
+
+  it('dedupes repeated Automations opens against the current history entry', () => {
+    const store = createUIStore()
+    store.setState({ worktreesByRepo: { 'repo-1': [makeWorktree('a')] } })
+
+    store.getState().recordWorktreeVisit('a')
+    store.getState().openAutomationsPage()
+    store.getState().openAutomationsPage()
+
+    expect(store.getState().activeView).toBe('automations')
+    expect(store.getState().worktreeNavHistory).toEqual(['a', 'automations'])
+    expect(store.getState().worktreeNavHistoryIndex).toBe(1)
+  })
+
+  it('keeps the Automations history index when Automations is the only entry', () => {
+    const store = createUIStore()
+
+    store.getState().openAutomationsPage()
+    expect(store.getState().worktreeNavHistory).toEqual(['automations'])
+    expect(store.getState().worktreeNavHistoryIndex).toBe(0)
+
+    store.getState().closeAutomationsPage()
+    expect(store.getState().activeView).toBe('terminal')
+    expect(store.getState().worktreeNavHistoryIndex).toBe(0)
+  })
+
+  it('skips deleted prior worktrees when closing Automations', () => {
+    const store = createUIStore()
+    store.setState({
+      activeView: 'automations',
+      previousViewBeforeAutomations: 'terminal',
+      worktreesByRepo: { 'repo-1': [makeWorktree('c')] },
+      worktreeNavHistory: ['c', 'a', 'automations'],
+      worktreeNavHistoryIndex: 2
+    })
+
+    store.getState().closeAutomationsPage()
+    expect(store.getState().activeView).toBe('terminal')
+    expect(store.getState().worktreeNavHistoryIndex).toBe(0)
   })
 })
 

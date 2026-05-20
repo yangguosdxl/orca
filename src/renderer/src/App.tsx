@@ -91,6 +91,7 @@ import {
 import { applyDocumentTheme } from './lib/document-theme'
 import { isEditableTarget } from './lib/editable-target'
 import { getSelectedTextForFileSearch } from './lib/file-search-selection'
+import { shouldShowWorktreeHistoryControls } from './lib/titlebar-worktree-history-controls'
 import {
   canGoBackWorktreeHistory,
   canGoForwardWorktreeHistory
@@ -1048,10 +1049,10 @@ function App(): React.JSX.Element {
         (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) &&
         (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
       ) {
-        // Why: Back/Forward traverse mixed worktree + Tasks visits, so the
+        // Why: Back/Forward traverse mixed worktree + page visits, so the
         // shortcut is active wherever the titlebar button cluster is (terminal
-        // or tasks). Still suppressed in Settings to keep that view modal-ish.
-        if (activeView !== 'terminal' && activeView !== 'tasks' && activeView !== 'automations') {
+        // or stack-backed pages). Still suppressed in Settings.
+        if (!shouldShowWorktreeHistoryControls(activeView)) {
           return
         }
         e.preventDefault()
@@ -1264,12 +1265,10 @@ function App(): React.JSX.Element {
           </Tooltip>
         )}
       </div>
-      {/* Why: Back/Forward traverse mixed worktree + Tasks history, so the
-          cluster is shown wherever the history shortcut is live (terminal or
-          tasks). Hidden in Settings to keep that view modal-ish, and in
-          Activity since that page owns its own back-out via the Close button
-          in ActivityTitlebarControls. */}
-      {(activeView === 'terminal' || activeView === 'tasks') && (
+      {/* Why: Back/Forward traverse mixed worktree + page history, so the
+          cluster is shown wherever the history shortcut is live. Hidden in
+          Settings and non-stack page views. */}
+      {shouldShowWorktreeHistoryControls(activeView) && (
         // Why: when the workspace sidebar is collapsed, this header shrink-wraps
         // and ml-auto has no spare width; keep a fixed gutter before Back.
         <div className="ml-auto mr-3 flex items-center pl-2">
