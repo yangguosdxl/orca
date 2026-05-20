@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { EyeOff, ListCollapse, Loader2, RefreshCw } from 'lucide-react'
+import { Ellipsis, ListCollapse, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
+import { WorktreeOpenInMenuItems } from '@/components/sidebar/WorktreeOpenInMenu'
 import { FileExplorerToolbar } from './FileExplorerToolbar'
 import { FileExplorerRow, shouldShowCollapseFolderAction } from './FileExplorerRow'
 import { FileExplorerVirtualRows } from './FileExplorerVirtualRows'
@@ -52,26 +54,68 @@ function findCollapseAllButton(node: unknown): ReactElementLike {
   return found
 }
 
-function findGitIgnoredButton(node: unknown): ReactElementLike {
+function findMoreActionsButton(node: unknown): ReactElementLike {
   let found: ReactElementLike | null = null
   visit(node, (entry) => {
-    if (entry.type === Button && entry.props['aria-label'] === 'Hide Git Ignored Files') {
+    if (entry.type === Button && entry.props['aria-label'] === 'More Explorer Actions') {
       found = entry
     }
   })
   if (!found) {
-    throw new Error('git ignored button not found')
+    throw new Error('more explorer actions button not found')
   }
   return found
 }
 
-function queryGitIgnoredButton(node: unknown): ReactElementLike | null {
+function queryMoreActionsButton(node: unknown): ReactElementLike | null {
   let found: ReactElementLike | null = null
   visit(node, (entry) => {
-    if (entry.type === Button && entry.props['aria-label'] === 'Hide Git Ignored Files') {
+    if (entry.type === Button && entry.props['aria-label'] === 'More Explorer Actions') {
       found = entry
     }
   })
+  return found
+}
+
+function findGitIgnoredMenuItem(node: unknown): ReactElementLike {
+  let found: ReactElementLike | null = null
+  visit(node, (entry) => {
+    if (
+      entry.type === DropdownMenuCheckboxItem &&
+      entry.props.children === 'Show Git Ignored Files'
+    ) {
+      found = entry
+    }
+  })
+  if (!found) {
+    throw new Error('git ignored menu item not found')
+  }
+  return found
+}
+
+function queryGitIgnoredMenuItem(node: unknown): ReactElementLike | null {
+  let found: ReactElementLike | null = null
+  visit(node, (entry) => {
+    if (
+      entry.type === DropdownMenuCheckboxItem &&
+      entry.props.children === 'Show Git Ignored Files'
+    ) {
+      found = entry
+    }
+  })
+  return found
+}
+
+function findOpenInMenuItems(node: unknown): ReactElementLike {
+  let found: ReactElementLike | null = null
+  visit(node, (entry) => {
+    if (entry.type === WorktreeOpenInMenuItems) {
+      found = entry
+    }
+  })
+  if (!found) {
+    throw new Error('open in menu items not found')
+  }
   return found
 }
 
@@ -99,6 +143,16 @@ function findRepoNameLabel(node: unknown, repoName: string): ReactElementLike {
     throw new Error('repo name label not found')
   }
   return found
+}
+
+function getToolbarButtonLabels(node: unknown): unknown[] {
+  const labels: unknown[] = []
+  visit(node, (entry) => {
+    if (entry.type === Button) {
+      labels.push(entry.props['aria-label'])
+    }
+  })
+  return labels
 }
 
 function hasIcon(node: unknown, icon: unknown): boolean {
@@ -129,6 +183,8 @@ function makeRefreshState(
 function makeToolbar(overrides: Partial<Parameters<typeof FileExplorerToolbar>[0]> = {}) {
   return FileExplorerToolbar({
     repoName: 'orca',
+    worktreePath: '/tmp/orca',
+    connectionId: null,
     refresh: makeRefreshState(),
     canCollapseAll: false,
     onCollapseAll: vi.fn(),
@@ -200,21 +256,44 @@ describe('FileExplorerToolbar', () => {
     expect(hasIcon(button, ListCollapse)).toBe(true)
   })
 
-  it('fires the git ignored visibility toggle from the icon button', () => {
+  it('puts the git ignored visibility toggle in the overflow menu', () => {
     const onToggleGitIgnoredFiles = vi.fn()
     const element = makeToolbar({ onToggleGitIgnoredFiles })
 
-    const button = findGitIgnoredButton(element)
-    ;(button.props.onClick as () => void)()
+    const button = findMoreActionsButton(element)
+    const menuItem = findGitIgnoredMenuItem(element)
+    ;(menuItem.props.onCheckedChange as () => void)()
 
     expect(onToggleGitIgnoredFiles).toHaveBeenCalledTimes(1)
-    expect(hasIcon(button, EyeOff)).toBe(true)
+    expect(hasIcon(button, Ellipsis)).toBe(true)
+    expect(menuItem.props.checked).toBe(true)
   })
 
-  it('hides the git ignored visibility toggle for non-git folders', () => {
+  it('adds open-in launchers to the overflow menu', () => {
+    const element = makeToolbar({ connectionId: 'ssh-1' })
+
+    const openInItems = findOpenInMenuItems(element)
+    expect(openInItems.props.worktreePath).toBe('/tmp/orca')
+    expect(openInItems.props.connectionId).toBe('ssh-1')
+    expect(openInItems.props.labelPrefix).toBe('Open in ')
+  })
+
+  it('keeps the overflow menu as the last toolbar button', () => {
+    const element = makeToolbar()
+
+    expect(getToolbarButtonLabels(element)).toEqual([
+      'Collapse All',
+      'Refresh Explorer',
+      'More Explorer Actions'
+    ])
+  })
+
+  it('keeps open-in actions but hides the git ignored toggle for non-git folders', () => {
     const element = makeToolbar({ showGitIgnoredFilesToggle: false })
 
-    expect(queryGitIgnoredButton(element)).toBeNull()
+    expect(queryMoreActionsButton(element)).not.toBeNull()
+    expect(queryGitIgnoredMenuItem(element)).toBeNull()
+    expect(findOpenInMenuItems(element).props.labelPrefix).toBe('Open in ')
   })
 })
 

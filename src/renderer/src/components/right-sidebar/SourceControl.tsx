@@ -4019,7 +4019,7 @@ function ConflictSummaryCard({
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 text-xs w-full"
+          className="h-7 w-full justify-start text-left text-xs"
           onClick={onReview}
         >
           <GitMerge className="size-3.5" />

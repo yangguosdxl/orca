@@ -340,6 +340,8 @@ function FileExplorerInner(): React.JSX.Element {
       <div ref={explorerShellRef} data-orca-explorer-shell className="flex h-full min-h-0 flex-col">
         <FileExplorerToolbar
           repoName={repoName}
+          worktreePath={worktreePath}
+          connectionId={activeRepo?.connectionId ?? null}
           refresh={manualRefresh}
           canCollapseAll={canCollapseAll}
           onCollapseAll={handleCollapseAll}
