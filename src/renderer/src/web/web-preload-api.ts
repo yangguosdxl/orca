@@ -623,7 +623,9 @@ function createReposApi(): NonNullable<Partial<PreloadApi>['repos']> {
     create: async ({ parentPath, name, kind }) =>
       callRuntimeResult('repo.create', { parentPath, name, kind }),
     onCloneProgress: () => noopUnsubscribe,
-    getGitUsername: () => Promise.resolve(''),
+    getGitUsername: async ({ repoId }) =>
+      (await callRuntimeResult<{ username: string }>('repo.gitUsername', { repo: repoId }))
+        .username,
     getBaseRefDefault: async ({ repoId }) =>
       callRuntimeResult('repo.baseRefDefault', { repo: repoId }),
     searchBaseRefs: async ({ repoId, query, limit }) =>
