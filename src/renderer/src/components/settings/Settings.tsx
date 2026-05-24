@@ -276,6 +276,7 @@ function Settings(): React.JSX.Element {
   const [hiddenExperimentalUnlocked, setHiddenExperimentalUnlocked] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const settingsSearchAutofocusConsumedRef = useRef(false)
   const terminalFontsLoadedRef = useRef(false)
   const pendingNavSectionRef = useRef<string | null>(null)
   const pendingScrollTargetRef = useRef<string | null>(null)
@@ -355,6 +356,24 @@ function Settings(): React.JSX.Element {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [closeSettingsPageWithPromptGuard])
+
+  useEffect(() => {
+    if (!settings || settingsSearchAutofocusConsumedRef.current) {
+      return
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      const input = searchInputRef.current
+      if (!input) {
+        return
+      }
+
+      settingsSearchAutofocusConsumedRef.current = true
+      input.focus({ preventScroll: true })
+    })
+
+    return () => cancelAnimationFrame(frameId)
+  }, [settings])
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
