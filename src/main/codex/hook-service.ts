@@ -1,8 +1,10 @@
 /* eslint-disable max-lines -- Why: getStatus + install + remove all share the managed-command and trust-key derivation. Splitting would hide that the three operations must agree on group index, event label, and command bytes. */
+import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { SFTPWrapper } from 'ssh2'
 import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
+import { ORCA_CODEX_AGENT_STATUS_PROFILE } from '../../shared/codex-profile'
 import {
   createManagedCommandMatcher,
   buildWindowsAgentHookPostCommand,
@@ -29,6 +31,8 @@ import {
   removeHookTrustEntries,
   upsertHookTrustEntriesInContent,
   upsertHookTrustEntries,
+  escapeTomlString,
+  writeConfigAtomically,
   type CodexEventLabel,
   type CodexHookTrustState,
   type CodexTrustEntry
@@ -56,6 +60,10 @@ function getCodexConfigTomlPath(): string {
   return join(homedir(), '.codex', 'config.toml')
 }
 
+function getCodexProfileTomlPath(): string {
+  return join(homedir(), '.codex', `${ORCA_CODEX_AGENT_STATUS_PROFILE}.config.toml`)
+}
+
 // Why: Codex's hash key uses the snake_case event label (see
 // codex-rs/hooks/src/lib.rs::hook_event_key_label). Our hooks.json uses the
 // PascalCase serde-rename. Map between them at one place so the trust-write
@@ -68,6 +76,9 @@ const CODEX_EVENT_LABEL: Record<(typeof CODEX_EVENTS)[number], CodexEventLabel> 
   PostToolUse: 'post_tool_use',
   Stop: 'stop'
 }
+
+const ORCA_PROFILE_BLOCK_START = '# BEGIN ORCA AGENT STATUS HOOKS'
+const ORCA_PROFILE_BLOCK_END = '# END ORCA AGENT STATUS HOOKS'
 
 function getManagedScriptFileName(): string {
   return process.platform === 'win32' ? 'codex-hook.cmd' : 'codex-hook.sh'
@@ -132,7 +143,198 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
   ].join('\n')
 }
 
+function findManagedProfileBlock(content: string): string | null {
+  const start = content.indexOf(ORCA_PROFILE_BLOCK_START)
+  if (start === -1) {
+    return null
+  }
+  const endMarker = content.indexOf(ORCA_PROFILE_BLOCK_END, start)
+  const end = endMarker === -1 ? content.length : endMarker + ORCA_PROFILE_BLOCK_END.length
+  return content.slice(start, end)
+}
+
+function stripManagedProfileBlock(content: string): string {
+  const start = content.indexOf(ORCA_PROFILE_BLOCK_START)
+  if (start === -1) {
+    return content
+  }
+  const endMarker = content.indexOf(ORCA_PROFILE_BLOCK_END, start)
+  const end = endMarker === -1 ? content.length : endMarker + ORCA_PROFILE_BLOCK_END.length
+  const before = content.slice(0, start).replace(/[ \t]*(?:\r?\n)*$/, '')
+  const after = content.slice(end).replace(/^(?:\r?\n)+/, '')
+  if (!before) {
+    return after
+  }
+  if (!after) {
+    return before.endsWith('\n') ? before : `${before}\n`
+  }
+  return `${before}\n\n${after}`
+}
+
+function appendManagedProfileBlock(existing: string, block: string): string {
+  const trimmedExisting = stripManagedProfileBlock(existing).replace(/[ \t]*(?:\r?\n)*$/, '')
+  if (!trimmedExisting) {
+    return `${block}\n`
+  }
+  return `${trimmedExisting}\n\n${block}\n`
+}
+
+function buildProfileTrustEntry(
+  profilePath: string,
+  eventName: (typeof CODEX_EVENTS)[number],
+  command: string
+): CodexTrustEntry {
+  return {
+    sourcePath: profilePath,
+    eventLabel: CODEX_EVENT_LABEL[eventName],
+    groupIndex: 0,
+    handlerIndex: 0,
+    command
+  }
+}
+
+function buildManagedProfileBlock(profilePath: string, command: string): string {
+  const lines = [
+    ORCA_PROFILE_BLOCK_START,
+    '# Managed by Orca so only Codex sessions launched from Orca load agent-status hooks.'
+  ]
+  for (const eventName of CODEX_EVENTS) {
+    const entry = buildProfileTrustEntry(profilePath, eventName, command)
+    lines.push(
+      `[hooks.state."${escapeTomlString(computeTrustKey(entry))}"]`,
+      'enabled = true',
+      `trusted_hash = "${escapeTomlString(computeTrustedHash(entry))}"`,
+      '',
+      `[[hooks.${eventName}]]`,
+      `[[hooks.${eventName}.hooks]]`,
+      'type = "command"',
+      `command = "${escapeTomlString(command)}"`,
+      ''
+    )
+  }
+  lines.push(ORCA_PROFILE_BLOCK_END)
+  return lines.join('\n')
+}
+
 export class CodexHookService {
+  getProfileStatus(): AgentHookInstallStatus {
+    const configPath = getCodexProfileTomlPath()
+    if (!existsSync(configPath)) {
+      return {
+        agent: 'codex',
+        state: 'not_installed',
+        configPath,
+        managedHooksPresent: false,
+        detail: null
+      }
+    }
+
+    const scriptPath = getManagedScriptPath()
+    const command = getManagedCommand(scriptPath)
+    const content = readFileSync(configPath, 'utf-8')
+    const block = findManagedProfileBlock(content)
+    if (!block) {
+      return {
+        agent: 'codex',
+        state: 'not_installed',
+        configPath,
+        managedHooksPresent: false,
+        detail: null
+      }
+    }
+
+    const escapedCommandLine = `command = "${escapeTomlString(command)}"`
+    const missing = CODEX_EVENTS.filter(
+      (eventName) =>
+        !block.includes(`[[hooks.${eventName}]]`) || !block.includes(escapedCommandLine)
+    )
+
+    let trustEntries: Map<string, CodexHookTrustState>
+    let trustReadError: string | null = null
+    try {
+      trustEntries = readHookTrustEntries(configPath)
+    } catch (error) {
+      trustEntries = new Map()
+      trustReadError = error instanceof Error ? error.message : String(error)
+    }
+
+    const trustMissing: string[] = []
+    const disabled: string[] = []
+    for (const eventName of CODEX_EVENTS) {
+      const entry = buildProfileTrustEntry(configPath, eventName, command)
+      const actualState = trustEntries.get(computeTrustKey(entry))
+      if (actualState?.trustedHash !== computeTrustedHash(entry)) {
+        trustMissing.push(eventName)
+      } else if (actualState.enabled === false) {
+        disabled.push(eventName)
+      }
+    }
+
+    if (
+      missing.length === 0 &&
+      trustMissing.length === 0 &&
+      disabled.length === 0 &&
+      !trustReadError
+    ) {
+      return {
+        agent: 'codex',
+        state: 'installed',
+        configPath,
+        managedHooksPresent: true,
+        detail: null
+      }
+    }
+
+    const parts: string[] = []
+    if (missing.length > 0) {
+      parts.push(`Profile hook missing for events: ${missing.join(', ')}`)
+    }
+    if (trustReadError) {
+      parts.push(`Trust entries unverifiable: ${trustReadError}`)
+    } else if (trustMissing.length > 0) {
+      parts.push(`Trust entry missing or stale for events: ${trustMissing.join(', ')}`)
+    }
+    if (disabled.length > 0) {
+      parts.push(`Managed hook disabled for events: ${disabled.join(', ')}`)
+    }
+    return {
+      agent: 'codex',
+      state: 'partial',
+      configPath,
+      managedHooksPresent: true,
+      detail: parts.join('; ')
+    }
+  }
+
+  installProfile(): AgentHookInstallStatus {
+    const configPath = getCodexProfileTomlPath()
+    const scriptPath = getManagedScriptPath()
+    const command = getManagedCommand(scriptPath)
+    const existing = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
+    const next = appendManagedProfileBlock(existing, buildManagedProfileBlock(configPath, command))
+    writeManagedScript(scriptPath, getManagedScript())
+    writeConfigAtomically(configPath, next)
+    return this.getProfileStatus()
+  }
+
+  removeProfile(): AgentHookInstallStatus {
+    const configPath = getCodexProfileTomlPath()
+    if (!existsSync(configPath)) {
+      return this.getProfileStatus()
+    }
+    const existing = readFileSync(configPath, 'utf-8')
+    const next = stripManagedProfileBlock(existing)
+    if (next === existing) {
+      return this.getProfileStatus()
+    }
+    if (next.trim().length === 0) {
+      unlinkSync(configPath)
+    } else {
+      writeConfigAtomically(configPath, next)
+    }
+    return this.getProfileStatus()
+  }
+
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath()
     const scriptPath = getManagedScriptPath()
@@ -432,8 +634,79 @@ export class CodexHookService {
     }
   }
 
+  async installRemoteProfile(
+    sftp: SFTPWrapper,
+    remoteHome: string
+  ): Promise<AgentHookInstallStatus> {
+    const normalizedHome = remoteHome.replace(/\/$/, '')
+    const remoteProfilePath = `${normalizedHome}/.codex/${ORCA_CODEX_AGENT_STATUS_PROFILE}.config.toml`
+    const remoteScriptPath = `${normalizedHome}/.orca/agent-hooks/codex-hook.sh`
+    const remoteGlobalConfigPath = `${normalizedHome}/.codex/hooks.json`
+    try {
+      const command = wrapPosixHookCommand(remoteScriptPath)
+      const existingProfile = (await readTextFileRemote(sftp, remoteProfilePath)) ?? ''
+      const nextProfile = appendManagedProfileBlock(
+        existingProfile,
+        buildManagedProfileBlock(remoteProfilePath, command)
+      )
+
+      await writeManagedScriptRemote(sftp, remoteScriptPath, getManagedScript('posix'))
+      if (nextProfile !== existingProfile) {
+        await writeTextFileRemoteAtomic(sftp, remoteProfilePath, nextProfile)
+      }
+
+      // Why: profile-scoped Codex hooks keep Orca out of external remote
+      // `codex` sessions. Sweep legacy global Orca entries left by older
+      // remote installers so the profile is the only active Codex hook source.
+      const existingGlobalConfig = await readTextFileRemote(sftp, remoteGlobalConfigPath)
+      if (existingGlobalConfig !== null) {
+        const globalConfig = await readHooksJsonRemote(sftp, remoteGlobalConfigPath)
+        if (globalConfig) {
+          let removedGlobalHooks = false
+          const nextHooks = { ...globalConfig.hooks }
+          const isManagedCommand = createManagedCommandMatcher('codex-hook.sh')
+          for (const [eventName, definitions] of Object.entries(nextHooks)) {
+            if (!Array.isArray(definitions)) {
+              continue
+            }
+            const cleaned = removeManagedCommands(definitions, isManagedCommand)
+            if (JSON.stringify(cleaned) !== JSON.stringify(definitions)) {
+              removedGlobalHooks = true
+            }
+            if (cleaned.length === 0) {
+              delete nextHooks[eventName]
+            } else {
+              nextHooks[eventName] = cleaned
+            }
+          }
+          if (removedGlobalHooks) {
+            globalConfig.hooks = nextHooks
+            await writeHooksJsonRemote(sftp, remoteGlobalConfigPath, globalConfig)
+          }
+        }
+      }
+
+      return {
+        agent: 'codex',
+        state: 'installed',
+        configPath: remoteProfilePath,
+        managedHooksPresent: true,
+        detail: null
+      }
+    } catch (err) {
+      return {
+        agent: 'codex',
+        state: 'error',
+        configPath: remoteProfilePath,
+        managedHooksPresent: false,
+        detail: err instanceof Error ? err.message : String(err)
+      }
+    }
+  }
+
   remove(): AgentHookInstallStatus {
     const configPath = getConfigPath()
+    const configExists = existsSync(configPath)
     const config = readHooksJson(configPath)
     if (!config) {
       return {
@@ -446,6 +719,7 @@ export class CodexHookService {
     }
 
     const nextHooks = { ...config.hooks }
+    let removedManagedHooks = false
     // Why: same broad matcher as install(), so remove() also cleans up stale
     // entries from older builds even if the current scriptPath has moved.
     const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
@@ -457,14 +731,19 @@ export class CodexHookService {
         continue
       }
       const cleaned = removeManagedCommands(definitions, isManagedCommand)
+      if (JSON.stringify(cleaned) !== JSON.stringify(definitions)) {
+        removedManagedHooks = true
+      }
       if (cleaned.length === 0) {
         delete nextHooks[eventName]
       } else {
         nextHooks[eventName] = cleaned
       }
     }
-    config.hooks = nextHooks
-    writeHooksJson(configPath, config)
+    if (configExists && removedManagedHooks) {
+      config.hooks = nextHooks
+      writeHooksJson(configPath, config)
+    }
 
     // Why: also drop our trust entries so config.toml doesn't accumulate dead
     // [hooks.state."..."] blocks across install/remove cycles. Best-effort —

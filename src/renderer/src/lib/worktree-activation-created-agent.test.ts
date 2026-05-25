@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { appendOrcaCodexAgentStatusProfile } from '../../../shared/codex-profile'
 import type { Worktree } from '../../../shared/types'
 import { useAppStore } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
@@ -81,7 +82,7 @@ describe('activateAndRevealWorktree created agent reopen', () => {
     expect(result).toEqual({ primaryTabId: reopenedTab?.id })
     expect(reopenedTab).toBeDefined()
     expect(state.pendingStartupByTabId[reopenedTab!.id]).toEqual({
-      command: 'codex',
+      command: appendOrcaCodexAgentStatusProfile('codex'),
       telemetry: {
         agent_kind: 'codex',
         launch_source: 'sidebar',

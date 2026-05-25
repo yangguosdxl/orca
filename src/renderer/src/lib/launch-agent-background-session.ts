@@ -63,6 +63,7 @@ export async function launchAgentBackgroundSession(
     }
   }
   const cmdOverrides = store.settings?.agentCmdOverrides ?? {}
+  const useOrcaAgentStatusHooks = store.settings?.agentStatusHooksEnabled !== false
   const trimmedPrompt = prompt?.trim() ?? ''
   const hasPrompt = trimmedPrompt.length > 0
   const isFollowupPath = TUI_AGENT_CONFIG[agent].promptInjectionMode === 'stdin-after-start'
@@ -75,7 +76,9 @@ export async function launchAgentBackgroundSession(
       prompt: '',
       cmdOverrides,
       platform: CLIENT_PLATFORM,
-      allowEmptyPromptLaunch: true
+      allowEmptyPromptLaunch: true,
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
+      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
     })
     pasteDraftAfterLaunch = trimmedPrompt
   } else {
@@ -84,7 +87,9 @@ export async function launchAgentBackgroundSession(
       prompt: hasPrompt ? trimmedPrompt : '',
       cmdOverrides,
       platform: CLIENT_PLATFORM,
-      allowEmptyPromptLaunch: !hasPrompt
+      allowEmptyPromptLaunch: !hasPrompt,
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
+      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
     })
   }
   if (!startupPlan) {

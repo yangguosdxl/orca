@@ -10,8 +10,11 @@ export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-rea
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { Store } from '../persistence'
 import type { GlobalSettings } from '../../shared/types'
+import { ORCA_CLAUDE_AGENT_STATUS_SETTINGS_ENV } from '../../shared/claude-settings'
+import { claudeHookService } from '../claude/hook-service'
 import { openCodeHookService } from '../opencode/hook-service'
 import { agentHookServer } from '../agent-hooks/server'
+import { isAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
 import { piTitlebarExtensionService } from '../pi/titlebar-extension-service'
 import { isPwshAvailable } from '../pwsh'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
@@ -87,7 +90,8 @@ const AGENT_HOOK_RUNTIME_ENV_KEYS = [
   'ORCA_AGENT_HOOK_TOKEN',
   'ORCA_AGENT_HOOK_ENV',
   'ORCA_AGENT_HOOK_VERSION',
-  'ORCA_AGENT_HOOK_ENDPOINT'
+  'ORCA_AGENT_HOOK_ENDPOINT',
+  ORCA_CLAUDE_AGENT_STATUS_SETTINGS_ENV
 ] as const
 
 export function getPtyIdForPaneKey(paneKey: string): string | undefined {
@@ -250,10 +254,33 @@ export type BuildPtyHostEnvOptions = {
   userDataPath: string
   selectedCodexHomePath: string | null
   githubAttributionEnabled: boolean
+  agentStatusHooksEnabled: boolean
 }
 
 function readInheritedPath(baseEnv: Record<string, string>): string {
   return baseEnv.PATH ?? process.env.PATH ?? process.env.Path ?? ''
+}
+
+// Why: when agent status is disabled, a nested Orca terminal can still pass
+// through a prior PTY's OpenCode/Pi overlay env. Restore the user's original
+// source dir when Orca recorded one, otherwise strip only values known to be ours.
+function restoreOrStripOverlayEnv(
+  baseEnv: Record<string, string>,
+  keys: {
+    primary: string
+    overlay: string
+    source: string
+  }
+): void {
+  const sourceValue = baseEnv[keys.source] ?? process.env[keys.source]
+  const overlayValue = baseEnv[keys.overlay] ?? process.env[keys.overlay]
+  if (sourceValue) {
+    baseEnv[keys.primary] = sourceValue
+  } else if (overlayValue && baseEnv[keys.primary] === overlayValue) {
+    delete baseEnv[keys.primary]
+  }
+  delete baseEnv[keys.overlay]
+  delete baseEnv[keys.source]
 }
 
 /**
@@ -300,23 +327,31 @@ export function buildPtyHostEnv(
       baseEnv.SHELL ?? process.env.SHELL
     )
 
-  // Why: OPENCODE_CONFIG_DIR is a singular path, not a colon-list, so a user
-  // value cannot coexist with an Orca-only injection. Hand the user's value
-  // (when present) to the hook service and let it materialize a per-PTY
-  // mirror overlay that lets the user's plugins and Orca's status plugin
-  // load together — same pattern Pi uses below for PI_CODING_AGENT_DIR. See
-  // docs/opencode-config-dir-collision.md.
-  Object.assign(baseEnv, openCodeHookService.buildPtyEnv(id, preexistingOpenCodeConfigDir))
-  if (baseEnv.OPENCODE_CONFIG_DIR) {
-    // Why: ~/.zshrc can re-export the user's default after spawn; shell-ready
-    // wrappers restore this PTY-scoped value after user startup files run.
-    baseEnv.ORCA_OPENCODE_CONFIG_DIR = baseEnv.OPENCODE_CONFIG_DIR
-    if (preexistingOpenCodeConfigDir) {
-      // Why: terminals launched from another Orca terminal inherit the overlay
-      // as OPENCODE_CONFIG_DIR; keep the original source so overlays do not
-      // mirror overlays and drop the user's real config.
-      baseEnv.ORCA_OPENCODE_SOURCE_CONFIG_DIR = preexistingOpenCodeConfigDir
+  if (opts.agentStatusHooksEnabled) {
+    // Why: OPENCODE_CONFIG_DIR is a singular path, not a colon-list, so a user
+    // value cannot coexist with an Orca-only injection. Hand the user's value
+    // (when present) to the hook service and let it materialize a per-PTY
+    // mirror overlay that lets the user's plugins and Orca's status plugin
+    // load together — same pattern Pi uses below for PI_CODING_AGENT_DIR. See
+    // docs/opencode-config-dir-collision.md.
+    Object.assign(baseEnv, openCodeHookService.buildPtyEnv(id, preexistingOpenCodeConfigDir))
+    if (baseEnv.OPENCODE_CONFIG_DIR) {
+      // Why: ~/.zshrc can re-export the user's default after spawn; shell-ready
+      // wrappers restore this PTY-scoped value after user startup files run.
+      baseEnv.ORCA_OPENCODE_CONFIG_DIR = baseEnv.OPENCODE_CONFIG_DIR
+      if (preexistingOpenCodeConfigDir) {
+        // Why: terminals launched from another Orca terminal inherit the overlay
+        // as OPENCODE_CONFIG_DIR; keep the original source so overlays do not
+        // mirror overlays and drop the user's real config.
+        baseEnv.ORCA_OPENCODE_SOURCE_CONFIG_DIR = preexistingOpenCodeConfigDir
+      }
     }
+  } else {
+    restoreOrStripOverlayEnv(baseEnv, {
+      primary: 'OPENCODE_CONFIG_DIR',
+      overlay: 'ORCA_OPENCODE_CONFIG_DIR',
+      source: 'ORCA_OPENCODE_SOURCE_CONFIG_DIR'
+    })
   }
 
   // Why: Claude/Codex native hooks run inside the shell process, so Orca
@@ -329,7 +364,10 @@ export function buildPtyHostEnv(
   for (const key of AGENT_HOOK_RUNTIME_ENV_KEYS) {
     delete baseEnv[key]
   }
-  Object.assign(baseEnv, agentHookServer.buildPtyEnv())
+  if (opts.agentStatusHooksEnabled) {
+    Object.assign(baseEnv, agentHookServer.buildPtyEnv())
+    Object.assign(baseEnv, claudeHookService.buildPtyEnv())
+  }
 
   // Why: PI_CODING_AGENT_DIR owns Pi's full config/session root. Build a
   // PTY-scoped overlay from the caller's chosen root so Pi sessions keep
@@ -339,16 +377,24 @@ export function buildPtyHostEnv(
   // restarts by design. A future reader should NOT "simplify" id allocation
   // back to a fresh UUID per spawn; that would discard user Pi state on
   // every daemon reconnect.
-  Object.assign(baseEnv, piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir))
-  if (baseEnv.PI_CODING_AGENT_DIR) {
-    // Why: ~/.zshrc can re-export the user's default after spawn; shell-ready
-    // wrappers restore this PTY-scoped value after user startup files run.
-    baseEnv.ORCA_PI_CODING_AGENT_DIR = baseEnv.PI_CODING_AGENT_DIR
-    if (preexistingPiAgentDir) {
-      // Why: preserve the original Pi root across nested Orca terminals; the
-      // public env var is intentionally restored to the current PTY overlay.
-      baseEnv.ORCA_PI_SOURCE_AGENT_DIR = preexistingPiAgentDir
+  if (opts.agentStatusHooksEnabled) {
+    Object.assign(baseEnv, piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir))
+    if (baseEnv.PI_CODING_AGENT_DIR) {
+      // Why: ~/.zshrc can re-export the user's default after spawn; shell-ready
+      // wrappers restore this PTY-scoped value after user startup files run.
+      baseEnv.ORCA_PI_CODING_AGENT_DIR = baseEnv.PI_CODING_AGENT_DIR
+      if (preexistingPiAgentDir) {
+        // Why: preserve the original Pi root across nested Orca terminals; the
+        // public env var is intentionally restored to the current PTY overlay.
+        baseEnv.ORCA_PI_SOURCE_AGENT_DIR = preexistingPiAgentDir
+      }
     }
+  } else {
+    restoreOrStripOverlayEnv(baseEnv, {
+      primary: 'PI_CODING_AGENT_DIR',
+      overlay: 'ORCA_PI_CODING_AGENT_DIR',
+      source: 'ORCA_PI_SOURCE_AGENT_DIR'
+    })
   }
 
   // Why: Codex account switching now materializes auth into one shared
@@ -625,7 +671,8 @@ export function registerPtyHandlers(
           isPackaged: app.isPackaged,
           userDataPath: app.getPath('userData'),
           selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
-          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
+          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
+          agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.())
         })
         // Why: agents need their own terminal handle at process start so they
         // can self-identify in orchestration messages without an extra RPC.
@@ -935,7 +982,8 @@ export function registerPtyHandlers(
           isPackaged: app.isPackaged,
           userDataPath: app.getPath('userData'),
           selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
-          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
+          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
+          agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.())
         })
       }
 
@@ -1309,7 +1357,8 @@ export function registerPtyHandlers(
             isPackaged: app.isPackaged,
             userDataPath: app.getPath('userData'),
             selectedCodexHomePath: getSelectedCodexHomePath?.() ?? null,
-            githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false
+            githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
+            agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.())
           })
         } catch (err) {
           // Why: buildPtyHostEnv has filesystem side-effects (Pi overlay

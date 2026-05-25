@@ -99,7 +99,7 @@ export function registerAgentHookHandlers(): void {
   })
   ipcMain.handle('agentHooks:codexStatus', (): AgentHookInstallStatus => {
     try {
-      return codexHookService.getStatus()
+      return codexHookService.getProfileStatus()
     } catch (err) {
       return {
         agent: 'codex',

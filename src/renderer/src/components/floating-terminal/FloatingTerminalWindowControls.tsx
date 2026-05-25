@@ -48,7 +48,9 @@ export function FloatingTerminalWindowControls({
       prompt: '',
       cmdOverrides: state.settings?.agentCmdOverrides ?? {},
       platform: CLIENT_PLATFORM,
-      allowEmptyPromptLaunch: true
+      allowEmptyPromptLaunch: true,
+      useOrcaClaudeAgentStatusSettings: state.settings?.agentStatusHooksEnabled !== false,
+      useOrcaCodexAgentStatusProfile: state.settings?.agentStatusHooksEnabled !== false
     })
     if (!startupPlan) {
       toast.error(`Could not build launch command for ${defaultAgentLabel ?? defaultAgent}.`)

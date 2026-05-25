@@ -281,7 +281,7 @@ function buildTrustBlock(key: string, hash: string, enabled: boolean): string {
 
 // Why: TOML basic strings forbid raw control chars; escape backslash first so
 // later substitutions don't double-escape the inserted backslashes.
-function escapeTomlString(value: string): string {
+export function escapeTomlString(value: string): string {
   return value
     .replaceAll('\\', '\\\\')
     .replaceAll('"', '\\"')
@@ -495,7 +495,7 @@ function isCompleteTableHeader(line: string): boolean {
 // half-written config.toml can brick a user's Codex install, so write to
 // tmp and rename. Random-suffix tmp name avoids cross-process races on
 // rapid reinstalls.
-function writeConfigAtomically(configPath: string, contents: string): void {
+export function writeConfigAtomically(configPath: string, contents: string): void {
   const dir = dirname(configPath)
   mkdirSync(dir, { recursive: true })
   const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`)

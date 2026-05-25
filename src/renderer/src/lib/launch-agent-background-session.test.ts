@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  createCompatibleRuntimeStatusResponseIfNeeded,
-  type RuntimeEnvironmentCallRequest
-} from '@/runtime/runtime-compatibility-test-fixture'
+import { createCompatibleRuntimeStatusResponseIfNeeded } from '@/runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '@/runtime/runtime-rpc-client'
 
 const mockSpawn = vi.fn()
@@ -21,6 +18,8 @@ const mockSubscribeToPtyExit = vi.fn()
 const mockPasteDraftWhenAgentReady = vi.fn()
 const mockMarkTrusted = vi.fn()
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const CLAUDE_SCOPED_SETTINGS =
+  'claude --settings "$HOME/.orca/agent-hooks/claude-agent-status-settings.json"'
 
 function expectStablePaneSpawn(): string {
   const spawnArgs = mockSpawn.mock.calls[0]?.[0]
@@ -74,11 +73,8 @@ describe('launchAgentBackgroundSession', () => {
     clearRuntimeCompatibilityCacheForTests()
     vi.clearAllMocks()
     mockRuntimeEnvironmentTransportCall.mockImplementation(
-      (args: RuntimeEnvironmentCallRequest) => {
-        return (
-          createCompatibleRuntimeStatusResponseIfNeeded(args) ?? mockRuntimeEnvironmentCall(args)
-        )
-      }
+      (args) =>
+        createCompatibleRuntimeStatusResponseIfNeeded(args) ?? mockRuntimeEnvironmentCall(args)
     )
     state.settings = { agentCmdOverrides: {}, activeRuntimeEnvironmentId: null }
     state.repos = [{ id: 'repo-1', connectionId: null }]
@@ -128,7 +124,7 @@ describe('launchAgentBackgroundSession', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: '/repo/worktree',
-        command: "claude 'run the automation'",
+        command: `${CLAUDE_SCOPED_SETTINGS} 'run the automation'`,
         env: expect.objectContaining({
           ORCA_TAB_ID: 'tab-1',
           ORCA_WORKTREE_ID: 'wt-1'
@@ -273,7 +269,10 @@ describe('launchAgentBackgroundSession', () => {
       dataSidecar('user@remote repo % ')
       vi.advanceTimersByTime(50)
 
-      expect(mockWrite).toHaveBeenCalledWith('pty-1', "claude 'run the automation'\r")
+      expect(mockWrite).toHaveBeenCalledWith(
+        'pty-1',
+        `${CLAUDE_SCOPED_SETTINGS} 'run the automation'\r`
+      )
     } finally {
       vi.useRealTimers()
     }
@@ -307,7 +306,7 @@ describe('launchAgentBackgroundSession', () => {
       method: 'terminal.create',
       params: expect.objectContaining({
         worktree: 'wt-1',
-        command: "claude 'run the automation'",
+        command: `${CLAUDE_SCOPED_SETTINGS} 'run the automation'`,
         env: expect.objectContaining({
           ORCA_PANE_KEY: `tab-1:${leafId}`,
           ORCA_TAB_ID: 'tab-1',

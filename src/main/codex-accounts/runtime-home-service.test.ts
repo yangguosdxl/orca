@@ -32,6 +32,7 @@ vi.mock('node:os', async () => {
 
 function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
   const appFontFamily = overrides.appFontFamily ?? 'Geist'
+  const agentStatusHooksEnabled = overrides.agentStatusHooksEnabled ?? true
   return {
     workspaceDir: testState.fakeHomeDir,
     nestWorkspaces: false,
@@ -116,7 +117,8 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalWindowsPowerShellImplementation: 'powershell.exe',
     enableGitHubAttribution: true,
     ...overrides,
-    appFontFamily
+    appFontFamily,
+    agentStatusHooksEnabled
   }
 }
 

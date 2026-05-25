@@ -16,6 +16,7 @@ import { BROWSER_STORAGE_HANDLERS } from './handlers/browser-storage'
 import { ORCHESTRATION_HANDLERS } from './handlers/orchestration'
 import { COMPUTER_HANDLERS } from './handlers/computer'
 import { ENVIRONMENT_HANDLERS } from './handlers/environment'
+import { AGENT_HOOK_HANDLERS } from './handlers/agent-hooks'
 
 export type HandlerContext = {
   flags: Map<string, string | boolean>
@@ -44,6 +45,7 @@ function buildHandlers(): Map<string, CommandHandler> {
     BROWSER_STORAGE_HANDLERS,
     ORCHESTRATION_HANDLERS,
     COMPUTER_HANDLERS,
+    AGENT_HOOK_HANDLERS,
     ENVIRONMENT_HANDLERS
   ]
   for (const group of groups) {

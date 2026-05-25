@@ -36,6 +36,79 @@ describe('tui agent startup plans', () => {
     expect(plan?.launchCommand).toBe('claude "fix ^"quoted^" ^& ^%PATH^%"')
   })
 
+  it('launches Codex with the Orca profile when agent status hooks are enabled', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'codex',
+      prompt: 'fix it',
+      cmdOverrides: {},
+      platform: 'linux',
+      useOrcaCodexAgentStatusProfile: true
+    })
+
+    expect(plan?.launchCommand).toBe("codex --profile-v2 orca-agent-status 'fix it'")
+  })
+
+  it('launches Claude with the Orca settings file when agent status hooks are enabled', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'claude',
+      prompt: 'fix it',
+      cmdOverrides: {},
+      platform: 'linux',
+      useOrcaClaudeAgentStatusSettings: true
+    })
+
+    expect(plan?.launchCommand).toBe(
+      'claude --settings "$HOME/.orca/agent-hooks/claude-agent-status-settings.json" \'fix it\''
+    )
+  })
+
+  it('uses the target shell syntax for Claude settings injection', () => {
+    expect(
+      buildAgentStartupPlan({
+        agent: 'claude',
+        prompt: 'fix it',
+        cmdOverrides: {},
+        platform: 'win32',
+        useOrcaClaudeAgentStatusSettings: true
+      })?.launchCommand
+    ).toBe("claude --settings $Env:ORCA_CLAUDE_AGENT_STATUS_SETTINGS 'fix it'")
+
+    expect(
+      buildAgentStartupPlan({
+        agent: 'claude',
+        prompt: 'fix it',
+        cmdOverrides: {},
+        platform: 'win32',
+        shell: 'cmd',
+        useOrcaClaudeAgentStatusSettings: true
+      })?.launchCommand
+    ).toBe('claude --settings "%ORCA_CLAUDE_AGENT_STATUS_SETTINGS%" "fix it"')
+  })
+
+  it('leaves Claude command overrides untouched', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'claude',
+      prompt: 'fix it',
+      cmdOverrides: { claude: 'claude --dangerously-skip-permissions' },
+      platform: 'linux',
+      useOrcaClaudeAgentStatusSettings: true
+    })
+
+    expect(plan?.launchCommand).toBe("claude --dangerously-skip-permissions 'fix it'")
+  })
+
+  it('leaves Codex command overrides untouched', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'codex',
+      prompt: 'fix it',
+      cmdOverrides: { codex: 'codex --profile work' },
+      platform: 'linux',
+      useOrcaCodexAgentStatusProfile: true
+    })
+
+    expect(plan?.launchCommand).toBe("codex --profile work 'fix it'")
+  })
+
   it('clears draft environment variables with the target shell syntax', () => {
     expect(
       buildAgentDraftLaunchPlan({

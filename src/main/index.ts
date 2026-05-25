@@ -24,6 +24,11 @@ import { startSpan } from './observability/tracer'
 import { registerMobileHandlers } from './ipc/mobile'
 import { initTelemetry, shutdownTelemetry, trackAppOpenedOnce } from './telemetry/client'
 import { runManagedHookInstallers } from './agent-hooks/install-telemetry'
+import {
+  isAgentStatusHooksEnabled,
+  MANAGED_AGENT_HOOK_INSTALLERS,
+  removeManagedAgentHooks
+} from './agent-hooks/managed-agent-hook-controls'
 import { initCohortClassifier } from './telemetry/cohort-classifier'
 import { initOnboardingCohortClassifier } from './telemetry/onboarding-cohort-classifier'
 import { resolveConsent } from './telemetry/consent'
@@ -60,15 +65,6 @@ import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service
 import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
 import { setMigrationUnsupportedPtyListener } from './agent-hooks/migration-unsupported-pty-state'
-import { claudeHookService } from './claude/hook-service'
-import { codexHookService } from './codex/hook-service'
-import { geminiHookService } from './gemini/hook-service'
-import { antigravityHookService } from './antigravity/hook-service'
-import { cursorHookService } from './cursor/hook-service'
-import { droidHookService } from './droid/hook-service'
-import { grokHookService } from './grok/hook-service'
-import { copilotHookService } from './copilot/hook-service'
-import { hermesHookService } from './hermes/hook-service'
 import {
   getPtyIdForPaneKey,
   registerPaneKeyTeardownListener,
@@ -1015,23 +1011,13 @@ app.whenReady().then(async () => {
     })
   )
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
-  // Why: managed hook installation mutates user-global agent config. Each
-  // installer runs inside its own try/catch so a malformed local config
-  // (e.g. corrupted ~/.claude/settings.json) cannot brick Orca startup.
-  // The agent label travels with each installer so the catch can attribute
-  // the failure in the `agent_hook_install_failed` telemetry event.
-  const managedHookInstallers = [
-    ['claude', () => claudeHookService.install()],
-    ['codex', () => codexHookService.install()],
-    ['gemini', () => geminiHookService.install()],
-    ['antigravity', () => antigravityHookService.install()],
-    ['cursor', () => cursorHookService.install()],
-    ['droid', () => droidHookService.install()],
-    ['grok', () => grokHookService.install()],
-    ['copilot', () => copilotHookService.install()],
-    ['hermes', () => hermesHookService.install()]
-  ] as const
-  runManagedHookInstallers(managedHookInstallers)
+  // Why: the persisted off switch must run before any auto-install path so
+  // users who removed Orca-managed hooks do not see them silently reappear on launch.
+  if (isAgentStatusHooksEnabled(store.getSettings())) {
+    runManagedHookInstallers(MANAGED_AGENT_HOOK_INSTALLERS)
+  } else {
+    removeManagedAgentHooks()
+  }
 
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {

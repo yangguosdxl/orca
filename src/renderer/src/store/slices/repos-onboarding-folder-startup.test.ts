@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { appendOrcaCodexAgentStatusProfile } from '../../../../shared/codex-profile'
 import { getDefaultOnboardingState, getDefaultSettings } from '../../../../shared/constants'
 import { createTestStore, makeWorktree } from './store-test-helpers'
 
@@ -57,7 +58,7 @@ describe('repo slice skipped-onboarding folder startup', () => {
       'folder-1::/folder',
       {
         startup: {
-          command: 'codex',
+          command: appendOrcaCodexAgentStatusProfile('codex'),
           telemetry: {
             agent_kind: 'codex',
             launch_source: 'onboarding',
