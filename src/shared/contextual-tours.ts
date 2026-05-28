@@ -117,7 +117,7 @@ export const CONTEXTUAL_TOURS = [
     steps: [
       {
         title: 'Pick the code to work in',
-        body: 'Choose the project for this task so the workspace opens in the right codebase.',
+        body: 'Workspaces are how Orca isolates each task, so you can work on many in parallel. Choose the project this task belongs in.',
         targetSelector: '[data-contextual-tour-target="workspace-creation-project"]',
         requiredForStart: true
       },
