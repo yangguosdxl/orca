@@ -18,6 +18,7 @@ describe('feature tip modal state', () => {
       cliInstalled: false,
       modalData: { tipId: 'voice-dictation' },
       seenTipIds: ['voice-dictation'],
+      featureInteractions: {},
       settings: makeSettings()
     })
 
@@ -29,6 +30,7 @@ describe('feature tip modal state', () => {
       cliInstalled: false,
       modalData: {},
       seenTipIds: [],
+      featureInteractions: {},
       settings: makeSettings()
     })
 
@@ -40,6 +42,7 @@ describe('feature tip modal state', () => {
       cliInstalled: false,
       modalData: {},
       seenTipIds: ['voice-dictation'],
+      featureInteractions: {},
       settings: makeSettings()
     })
 
@@ -51,6 +54,7 @@ describe('feature tip modal state', () => {
       cliInstalled: false,
       modalData: {},
       seenTipIds: ['voice-dictation', 'orca-cli'],
+      featureInteractions: {},
       settings: makeSettings()
     })
 
@@ -62,6 +66,21 @@ describe('feature tip modal state', () => {
       cliInstalled: true,
       modalData: {},
       seenTipIds: ['voice-dictation'],
+      featureInteractions: {},
+      settings: makeSettings()
+    })
+
+    expect(tip).toBeNull()
+  })
+
+  it('returns no unpinned tip after the user already interacted with the feature', () => {
+    const tip = getFeatureTipForModal({
+      cliInstalled: true,
+      modalData: {},
+      seenTipIds: [],
+      featureInteractions: {
+        'voice-dictation': { firstInteractedAt: 100, interactionCount: 1 }
+      },
       settings: makeSettings()
     })
 

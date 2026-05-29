@@ -12,7 +12,7 @@ export function handleOscLink(
   rawText: string,
   event: TerminalLinkEvent | undefined,
   deps: Pick<LinkHandlerDeps, 'worktreeId' | 'worktreePath'> &
-    Partial<Pick<LinkHandlerDeps, 'runtimeEnvironmentId' | 'startupCwd'>>
+    Partial<Pick<LinkHandlerDeps, 'runtimeEnvironmentId' | 'startupCwd' | 'terminalHomePath'>>
 ): void {
   if (!isTerminalLinkActivation(event)) {
     return
@@ -33,7 +33,11 @@ export function handleOscLink(
   try {
     parsed = new URL(rawText)
   } catch {
-    const resolved = resolveTerminalFileLinkText(rawText, deps.startupCwd || deps.worktreePath)
+    const resolved = resolveTerminalFileLinkText(
+      rawText,
+      deps.startupCwd || deps.worktreePath,
+      deps.terminalHomePath
+    )
     if (resolved) {
       openDetectedFilePath(resolved.absolutePath, resolved.line, resolved.column, deps)
     }

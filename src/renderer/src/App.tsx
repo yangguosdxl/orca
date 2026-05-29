@@ -96,6 +96,7 @@ import {
   getStartupErrorFallbackUI,
   hydratePersistedUIAfterStartupRead
 } from './lib/startup-ui-hydration'
+import { shouldRenderPetOverlay } from './components/pet/pet-overlay-visibility'
 import { applyDocumentTheme } from './lib/document-theme'
 import { getSystemPrefersDark } from './lib/terminal-theme'
 import { isEditableTarget } from './lib/editable-target'
@@ -308,6 +309,7 @@ function App(): React.JSX.Element {
   const activeView = useAppStore((s) => s.activeView)
   const activeModal = useAppStore((s) => s.activeModal)
   const featureTipsSeenIds = useAppStore((s) => s.featureTipsSeenIds)
+  const featureInteractions = useAppStore((s) => s.featureInteractions)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   // Why: App swaps the sidebar between workspace and landing layouts when the
   // active workspace is slept/deleted. Keep virtualized scroll memory above
@@ -370,6 +372,7 @@ function App(): React.JSX.Element {
       setFloatingTerminalOpen((currentOpen) => {
         const resolvedOpen = typeof nextOpen === 'function' ? nextOpen(currentOpen) : nextOpen
         if (resolvedOpen && !currentOpen) {
+          useAppStore.getState().recordFeatureInteraction('floating-workspace')
           rememberFloatingTerminalReturnFocus()
         } else if (!resolvedOpen && currentOpen) {
           restoreFloatingTerminalReturnFocus()
@@ -415,6 +418,11 @@ function App(): React.JSX.Element {
   usePrimarySelectionPaste(primarySelectionMiddleClickPaste)
   const petEnabled = useAppStore((s) => s.settings?.experimentalPet === true)
   const petVisible = useAppStore((s) => s.petVisible)
+  const renderPetOverlay = shouldRenderPetOverlay({
+    persistedUIReady,
+    petEnabled,
+    petVisible
+  })
   const canGoBackWorktree = useAppStore(canGoBackWorktreeHistory)
   const canGoForwardWorktree = useAppStore(canGoForwardWorktreeHistory)
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
@@ -425,6 +433,14 @@ function App(): React.JSX.Element {
   const featureTipsSuppressedByOnboardingThisSessionRef = useRef(false)
   const [featureTipCliInstalled, setFeatureTipCliInstalled] = useState<boolean | null>(null)
   const [onboardingSettingsDetour, setOnboardingSettingsDetour] = useState(false)
+  const shouldRenderOnboarding = onboarding !== null && shouldShowOnboarding(onboarding)
+  const onboardingSettingsDetourActive =
+    onboardingSettingsDetour && activeView === 'settings' && shouldRenderOnboarding
+  if (onboardingSettingsDetour && !onboardingSettingsDetourActive) {
+    // Why: the settings detour is valid only while Settings is onscreen; clear
+    // it during render so onboarding can resume without a follow-up Effect pass.
+    setOnboardingSettingsDetour(false)
+  }
 
   // Subscribe to IPC push events
   useIpcEvents()
@@ -486,6 +502,7 @@ function App(): React.JSX.Element {
       activeModal,
       cliInstalled: featureTipCliInstalled,
       featureTipsSeenIds,
+      featureInteractions,
       onboarding,
       persistedUIReady,
       promptedThisSession: featureTipsPromptedThisSessionRef.current,
@@ -516,17 +533,12 @@ function App(): React.JSX.Element {
     activeModal,
     actions,
     featureTipCliInstalled,
+    featureInteractions,
     featureTipsSeenIds,
     onboarding,
     persistedUIReady,
     settings
   ])
-
-  useEffect(() => {
-    if (activeView !== 'settings' || !shouldShowOnboarding(onboarding)) {
-      setOnboardingSettingsDetour(false)
-    }
-  }, [activeView, onboarding])
 
   const beginOnboardingSettingsDetour = useCallback(() => {
     setOnboardingSettingsDetour(true)
@@ -1731,11 +1743,10 @@ function App(): React.JSX.Element {
             {mountedLazyModalIds.has('feature-wall') ? <FeatureWallModal /> : null}
             {mountedLazyModalIds.has('feature-tips') ? <FeatureTipsModal /> : null}
           </Suspense>
-          {/* Why: mount PetOverlay only when the experimental flag is on AND
-          the user hasn't hit "Hide pet" in the status-bar menu. Both
-          conditions must be true — see design doc (pet-overlay.md) on why
-          the two toggles are kept independent. */}
-          {petEnabled && petVisible ? (
+          {/* Why: mount PetOverlay only after persisted UI hydration, with
+          both independent pet toggles allowing it; otherwise a hidden pet
+          flashes while the store still has default visibility. */}
+          {renderPetOverlay ? (
             <Suspense fallback={null}>
               <PetOverlay />
             </Suspense>
@@ -1754,7 +1765,7 @@ function App(): React.JSX.Element {
           <SshPassphraseDialog />
           <DeleteWorktreeDialog />
           <CrashReportDialog />
-          {onboarding && shouldShowOnboarding(onboarding) && !onboardingSettingsDetour ? (
+          {onboarding && shouldRenderOnboarding && !onboardingSettingsDetourActive ? (
             <Suspense fallback={null}>
               <OnboardingFlow
                 onboarding={onboarding}

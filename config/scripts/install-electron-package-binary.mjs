@@ -3,6 +3,7 @@
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -10,6 +11,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { platform as osPlatform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -21,15 +23,18 @@ const electronPackageDir = resolve(projectDir, 'node_modules/electron')
 const electronRequire = createRequire(resolve(electronPackageDir, 'package.json'))
 const { version: electronVersion } = electronRequire('./package.json')
 const { downloadArtifact } = electronRequire('@electron/get')
-const extract = electronRequire('extract-zip')
 const platformPath = getElectronPlatformPath()
 
-main().catch((error) => {
+try {
+  // Why: Electron's own install.js can exit 0 while an async extract promise is
+  // still unsettled, leaving a partial dist/. Top-level await makes that fail.
+  await main()
+} catch (error) {
   console.error('[electron-package] Failed to install Electron package binary.')
   console.error(error)
   logElectronInstallDiagnostics()
   process.exit(1)
-})
+}
 
 async function main() {
   if (electronPackageIsUsable()) {
@@ -112,7 +117,7 @@ async function installElectronPackageBinary() {
 
     // Why: CI has observed partial extracts directly under node_modules/electron
     // that leave only dist/locales. Verify in temp before replacing package dist.
-    await extract(zipPath, { dir: extractDir })
+    extractElectronArchive(zipPath, extractDir)
     const extractedExecutable = resolve(extractDir, platformPath)
     if (!existsSync(extractedExecutable)) {
       console.error('[electron-package] Electron archive extract did not contain executable.')
@@ -122,8 +127,7 @@ async function installElectronPackageBinary() {
       process.exit(1)
     }
 
-    rmSync(electronDistDir, { recursive: true, force: true })
-    cpSync(extractDir, electronDistDir, { recursive: true })
+    moveExtractedElectronDist(extractDir, electronDistDir)
 
     const srcTypeDefPath = resolve(electronDistDir, 'electron.d.ts')
     if (existsSync(srcTypeDefPath)) {
@@ -132,6 +136,90 @@ async function installElectronPackageBinary() {
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }
+}
+
+function extractElectronArchive(zipPath, extractDir) {
+  mkdirSync(extractDir, { recursive: true })
+  // Why: extract-zip/Electron install.js can leave Node 24 with an unsettled
+  // promise and no active handles on CI. Host unzip tools fail synchronously.
+  const command = getExtractorCommand(zipPath, extractDir)
+  const result = spawnSync(command.file, command.args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status !== 0) {
+    throw new Error(formatExtractorFailure(command, result))
+  }
+}
+
+function moveExtractedElectronDist(extractDir, electronDistDir) {
+  rmSync(electronDistDir, { recursive: true, force: true })
+  try {
+    // Why: macOS Electron archives rely on framework symlinks. Moving the
+    // verified tree preserves them exactly; copying has broken them in CI.
+    renameSync(extractDir, electronDistDir)
+  } catch (/** @type {any} */ err) {
+    if (err?.code !== 'EXDEV') {
+      throw err
+    }
+    cpSync(extractDir, electronDistDir, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true
+    })
+  }
+}
+
+function getExtractorCommand(zipPath, extractDir) {
+  if (process.env.ORCA_ELECTRON_PACKAGE_EXTRACTOR) {
+    return {
+      file: process.execPath,
+      args: [process.env.ORCA_ELECTRON_PACKAGE_EXTRACTOR, zipPath, extractDir],
+      label: `node ${process.env.ORCA_ELECTRON_PACKAGE_EXTRACTOR}`
+    }
+  }
+
+  if (osPlatform() === 'win32') {
+    return {
+      file: process.env.ORCA_POWERSHELL_BIN || 'powershell',
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        [
+          "$ErrorActionPreference = 'Stop'",
+          `Expand-Archive -LiteralPath ${quotePowerShellLiteral(zipPath)} -DestinationPath ${quotePowerShellLiteral(extractDir)} -Force`
+        ].join('; ')
+      ],
+      label: 'powershell Expand-Archive'
+    }
+  }
+
+  return {
+    file: process.env.ORCA_UNZIP_BIN || 'unzip',
+    args: ['-q', zipPath, '-d', extractDir],
+    label: 'unzip'
+  }
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`
+}
+
+function formatExtractorFailure(command, result) {
+  return [
+    `[electron-package] ${command.label} failed with status ${result.status}.`,
+    result.stdout ? `stdout:\n${result.stdout.trim()}` : '',
+    result.stderr ? `stderr:\n${result.stderr.trim()}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function shouldUseRemoteChecksums() {

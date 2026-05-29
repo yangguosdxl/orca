@@ -1,5 +1,9 @@
 import type { IDisposable, ILink, ILinkProvider, Terminal } from '@xterm/xterm'
-import { extractTerminalFileLinks, resolveTerminalFileLink } from '@/lib/terminal-links'
+import {
+  extractTerminalFileLinkCandidates,
+  extractTerminalFileLinks,
+  resolveTerminalFileLink
+} from '@/lib/terminal-links'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import { isRemoteRuntimeFileOperation, runtimePathExists } from '@/runtime/runtime-file-client'
 import {
@@ -30,12 +34,40 @@ export type LinkHandlerDeps = {
   linkProviderDisposablesRef: React.RefObject<Map<number, IDisposable>>
   pathExistsCache: Map<string, boolean>
   runtimeEnvironmentId?: string | null
+  terminalHomePath?: string | null
   getRuntimeEnvironmentIdForPane?: (paneId: number) => string | null
 }
 
 type ProvidedFileLink = {
   link: ILink
   logicalLine: WrappedLogicalLine
+}
+
+function rangesOverlap(left: ILink['range'], right: ILink['range']): boolean {
+  const leftStartsAfterRightEnds =
+    left.start.y > right.end.y || (left.start.y === right.end.y && left.start.x > right.end.x)
+  const rightStartsAfterLeftEnds =
+    right.start.y > left.end.y || (right.start.y === left.end.y && right.start.x > left.end.x)
+  return !leftStartsAfterRightEnds && !rightStartsAfterLeftEnds
+}
+
+function preferLongestNonOverlappingLinks(links: ProvidedFileLink[]): ProvidedFileLink[] {
+  const selected: ProvidedFileLink[] = []
+  const byLengthDescending = [...links].sort(
+    (a, b) =>
+      b.link.text.length - a.link.text.length ||
+      a.link.range.start.y - b.link.range.start.y ||
+      a.link.range.start.x - b.link.range.start.x
+  )
+  for (const link of byLengthDescending) {
+    if (!selected.some((existing) => rangesOverlap(existing.link.range, link.link.range))) {
+      selected.push(link)
+    }
+  }
+  return selected.sort(
+    (a, b) =>
+      a.link.range.start.y - b.link.range.start.y || a.link.range.start.x - b.link.range.start.x
+  )
 }
 
 function isMacPlatform(): boolean {
@@ -95,9 +127,11 @@ export function createFilePathLinkProvider(
 
       void Promise.all(
         logicalLines.flatMap((logicalLine) =>
-          extractTerminalFileLinks(logicalLine.text).map(
+          extractTerminalFileLinkCandidates(logicalLine.text).map(
             async (parsed): Promise<ProvidedFileLink | null> => {
-              const resolved = startupCwd ? resolveTerminalFileLink(parsed, startupCwd) : null
+              const resolved = startupCwd
+                ? resolveTerminalFileLink(parsed, startupCwd, deps.terminalHomePath)
+                : null
               if (!resolved) {
                 return null
               }
@@ -169,7 +203,7 @@ export function createFilePathLinkProvider(
         const providedLinks = resolvedLinks.filter(
           (link): link is ProvidedFileLink => link !== null
         )
-        const links = providedLinks
+        const links = preferLongestNonOverlappingLinks(providedLinks)
           .filter(({ logicalLine }) => latestFingerprints.has(logicalLine.fingerprint))
           .map(({ link }) => link)
         if (providedLinks.length > 0 && links.length === 0) {
@@ -239,9 +273,11 @@ export function installFilePathLinkClickFallback(
       terminal.cols,
       {
         startupCwd: deps.startupCwd,
+        terminalHomePath: deps.terminalHomePath,
         worktreeId: deps.worktreeId,
         worktreePath: deps.worktreePath,
-        runtimeEnvironmentId
+        runtimeEnvironmentId,
+        pathExistsCache: deps.pathExistsCache
       }
     )
     if (opened) {

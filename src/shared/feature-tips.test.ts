@@ -46,6 +46,21 @@ describe('feature tips', () => {
     expect(tips.map((tip) => tip.id)).toEqual([])
   })
 
+  it('skips tips for features the user has already interacted with', () => {
+    const tips = getOrderedUnseenFeatureTips({
+      seenTipIds: new Set<FeatureTipId>(),
+      completedTipIds: getCompletedFeatureTipIds({
+        cliInstalled: false,
+        voiceDictationEnabled: false,
+        featureInteractions: {
+          'voice-dictation': { firstInteractedAt: 100, interactionCount: 1 }
+        }
+      })
+    })
+
+    expect(tips.map((tip) => tip.id)).toEqual(['orca-cli'])
+  })
+
   it('normalizes persisted tip ids', () => {
     expect(
       normalizeFeatureTipIds(['feature-tour', 'orca-cli', 'bogus', 'voice-dictation'])

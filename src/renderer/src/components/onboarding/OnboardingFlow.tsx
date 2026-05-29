@@ -287,7 +287,9 @@ export default function OnboardingFlow({
                     currentStep.id === 'agentSetup'
                       ? 'mt-4'
                       : currentStep.id === 'repo'
-                        ? 'mt-6'
+                        ? flow.nestedScan
+                          ? 'mt-6 overflow-hidden'
+                          : 'mt-6'
                         : 'mt-10'
                   )
             )}
@@ -365,7 +367,7 @@ export default function OnboardingFlow({
               busyLabel={busyLabel}
               onSkipToRepo={() => void flow.skipToRepo()}
               stepIndex={stepIndex}
-              onBack={flow.back}
+              onBack={flow.nestedScan ? flow.cancelNested : flow.back}
               showPrimary={currentStep.id !== 'repo' || flow.hasExistingProject}
               primaryBusy={shouldShowFooterBusy}
               primaryLabel={footerPrimaryLabel}

@@ -47,6 +47,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: [],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -62,6 +63,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: [],
+        featureInteractions: {},
         onboarding: firstTimeOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -77,6 +79,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: [],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -92,6 +95,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: ['voice-dictation'],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -107,6 +111,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: [],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -122,6 +127,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: false,
         featureTipsSeenIds: ['voice-dictation', 'orca-cli'],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -137,6 +143,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: true,
         featureTipsSeenIds: ['voice-dictation'],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -152,6 +159,7 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: null,
         featureTipsSeenIds: ['voice-dictation'],
+        featureInteractions: {},
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,
@@ -167,6 +175,25 @@ describe('feature tip startup gate', () => {
         activeModal: 'none',
         cliInstalled: null,
         featureTipsSeenIds: [],
+        featureInteractions: {},
+        onboarding: existingUserOnboarding,
+        persistedUIReady: true,
+        promptedThisSession: false,
+        settings: makeSettings(),
+        suppressedByOnboardingThisSession: false
+      })
+    ).toEqual({ kind: 'skip' })
+  })
+
+  it('does not open after the user already interacted with the feature', () => {
+    expect(
+      getFeatureTipsAppOpenDecision({
+        activeModal: 'none',
+        cliInstalled: true,
+        featureTipsSeenIds: [],
+        featureInteractions: {
+          'voice-dictation': { firstInteractedAt: 100, interactionCount: 1 }
+        },
         onboarding: existingUserOnboarding,
         persistedUIReady: true,
         promptedThisSession: false,

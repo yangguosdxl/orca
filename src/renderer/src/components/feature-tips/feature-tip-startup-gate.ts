@@ -4,6 +4,7 @@ import {
   getOrderedUnseenFeatureTips
 } from '../../../../shared/feature-tips'
 import type { CliInstallStatus } from '../../../../shared/cli-install-types'
+import type { FeatureInteractionState } from '../../../../shared/feature-interactions'
 import type { GlobalSettings, OnboardingState } from '../../../../shared/types'
 import { shouldShowOnboarding } from '../onboarding/should-show-onboarding'
 
@@ -22,6 +23,7 @@ export function getFeatureTipsAppOpenDecision(args: {
   activeModal: string
   cliInstalled: boolean | null
   featureTipsSeenIds: readonly FeatureTipId[]
+  featureInteractions: FeatureInteractionState
   onboarding: OnboardingState | null
   persistedUIReady: boolean
   promptedThisSession: boolean
@@ -49,7 +51,8 @@ export function getFeatureTipsAppOpenDecision(args: {
     seenTipIds: new Set<FeatureTipId>(args.featureTipsSeenIds),
     completedTipIds: getCompletedFeatureTipIds({
       cliInstalled: args.cliInstalled,
-      voiceDictationEnabled: args.settings.voice?.enabled === true
+      voiceDictationEnabled: args.settings.voice?.enabled === true,
+      featureInteractions: args.featureInteractions
     })
   })
 
