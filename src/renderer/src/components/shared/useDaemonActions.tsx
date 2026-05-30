@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { useMountedRef } from '@/hooks/useMountedRef'
 import { Button } from '../ui/button'
 import {
   Dialog,
@@ -39,14 +40,7 @@ export type DaemonActionsApi = {
 export function useDaemonActions(callbacks?: DaemonActionCallbacks): DaemonActionsApi {
   const [pending, setPending] = useState<PendingConfirm>(null)
   const [busyKind, setBusyKind] = useState<DaemonActionKind | null>(null)
-  const mountedRef = useRef(true)
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
+  const mountedRef = useMountedRef()
 
   const clearPendingAction = useCallback((): void => {
     if (!mountedRef.current) {
@@ -54,7 +48,7 @@ export function useDaemonActions(callbacks?: DaemonActionCallbacks): DaemonActio
     }
     setBusyKind(null)
     setPending(null)
-  }, [])
+  }, [mountedRef])
 
   const runRestart = useCallback(async () => {
     setBusyKind('restart')
@@ -75,7 +69,7 @@ export function useDaemonActions(callbacks?: DaemonActionCallbacks): DaemonActio
         callbacks?.onRestartSettled?.()
       }
     }
-  }, [callbacks, clearPendingAction])
+  }, [callbacks, clearPendingAction, mountedRef])
 
   const runKillAll = useCallback(async () => {
     setBusyKind('killAll')
@@ -106,7 +100,7 @@ export function useDaemonActions(callbacks?: DaemonActionCallbacks): DaemonActio
         callbacks?.onKillAllSettled?.()
       }
     }
-  }, [callbacks, clearPendingAction])
+  }, [callbacks, clearPendingAction, mountedRef])
 
   const runConfirmed = useCallback(() => {
     if (pending === 'restart') {

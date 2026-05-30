@@ -55,6 +55,7 @@ import {
 } from './markdown-preview-links'
 import {
   createMarkdownDocumentIndex,
+  getMarkdownDocLinkAnchor,
   parseMarkdownDocLinkHref,
   remarkMarkdownDocLinks,
   resolveMarkdownDocLink
@@ -76,6 +77,7 @@ import { isLocalPathOpenBlocked, showLocalPathOpenBlockedToast } from '@/lib/loc
 import { markdownPreviewUrlTransform } from './markdown-preview-url-transform'
 import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import { statRuntimePath } from '@/runtime/runtime-file-client'
+import { useMountedRef } from '@/hooks/useMountedRef'
 import { buildMarkdownTableOfContents } from './markdown-table-of-contents'
 import { MarkdownTableOfContentsPanel } from './MarkdownTableOfContentsPanel'
 import { isMarkdownComment } from '@/lib/diff-comment-compat'
@@ -103,7 +105,10 @@ type MarkdownPreviewProps = {
   showTableOfContents?: boolean
   onCloseTableOfContents?: () => void
   markdownDocuments?: MarkdownDocument[]
-  onOpenDocument?: (document: MarkdownDocument) => void | Promise<void>
+  onOpenDocument?: (
+    document: MarkdownDocument,
+    options?: { anchor?: string | null }
+  ) => void | Promise<void>
   markdownAnnotationsEnabled?: boolean
 }
 
@@ -193,11 +198,28 @@ export function findMarkdownPreviewOpenedEditFileId(
   )
 }
 
+export function getMarkdownPreviewAnchorScrollTop(
+  container: Pick<HTMLElement, 'getBoundingClientRect' | 'scrollTop'>,
+  target: Pick<HTMLElement, 'getBoundingClientRect'>
+): number {
+  const containerTop = container.getBoundingClientRect().top
+  const targetTop = target.getBoundingClientRect().top
+  return Math.max(0, targetTop - containerTop + container.scrollTop - 12)
+}
+
 function cancelMarkdownPreviewEditorRevealFrames(frameIds: MutableRefObject<number[]>): void {
   for (const frameId of frameIds.current) {
     cancelAnimationFrame(frameId)
   }
   frameIds.current = []
+}
+
+function clearMarkdownPreviewTimeout(timeoutRef: MutableRefObject<number | null>): void {
+  if (timeoutRef.current === null) {
+    return
+  }
+  window.clearTimeout(timeoutRef.current)
+  timeoutRef.current = null
 }
 
 function requestMarkdownPreviewEditorRevealFrame(
@@ -554,7 +576,13 @@ export default function MarkdownPreview({
   )
 
   useEffect(() => {
-    return () => cancelMarkdownPreviewEditorRevealFrames(pendingEditorRevealFrameIdsRef)
+    return () => {
+      // Why: review-note reveal/copy timers are event-owned, but the final
+      // cancellation belongs to the preview surface unmount.
+      cancelMarkdownPreviewEditorRevealFrames(pendingEditorRevealFrameIdsRef)
+      clearMarkdownPreviewTimeout(attentionReviewCommentTimeoutRef)
+      clearMarkdownPreviewTimeout(reviewNotesCopiedResetTimerRef)
+    }
   }, [])
 
   // Why: each split pane needs its own markdown preview viewport even when the
@@ -695,8 +723,7 @@ export default function MarkdownPreview({
       return false
     }
 
-    const targetTop = target.offsetTop
-    container.scrollTo({ top: Math.max(0, targetTop - 12) })
+    container.scrollTo({ top: getMarkdownPreviewAnchorScrollTop(container, target) })
     target.focus({ preventScroll: true })
     return true
   }, [])
@@ -824,14 +851,6 @@ export default function MarkdownPreview({
       // Best-effort clipboard action; failures usually mean the window is not focused.
     }
   }, [clearReviewNotesCopiedResetTimer, markdownReviewNotes.length, markdownReviewPrompt])
-
-  useEffect(() => {
-    return () => {
-      if (attentionReviewCommentTimeoutRef.current !== null) {
-        window.clearTimeout(attentionReviewCommentTimeoutRef.current)
-      }
-    }
-  }, [])
 
   const pulseRenderedMarkdownReviewNote = useCallback((commentId: string): void => {
     if (attentionReviewCommentTimeoutRef.current !== null) {
@@ -1068,7 +1087,9 @@ export default function MarkdownPreview({
           const handleDocLinkClick = (event: React.MouseEvent<HTMLAnchorElement>): void => {
             event.preventDefault()
             if (resolvedDocument && onOpenDocument) {
-              void onOpenDocument(resolvedDocument)
+              void onOpenDocument(resolvedDocument, {
+                anchor: getMarkdownDocLinkAnchor(docLinkTarget)
+              })
             }
           }
 
@@ -1713,14 +1734,7 @@ function MarkdownAnnotationComposer({
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const mountedRef = useRef(true)
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
+  const mountedRef = useMountedRef()
 
   useEffect(() => {
     textareaRef.current?.focus()

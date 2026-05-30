@@ -54,7 +54,8 @@ import type {
   ProjectGroupImportMode,
   ProjectGroupImportResult,
   TabGroupLayoutNode,
-  TuiAgent
+  TuiAgent,
+  WorkspaceCreateTelemetrySource
 } from '../../shared/types'
 import type { FeatureInteractionId } from '../../shared/feature-interactions'
 import { FOLDER_WORKSPACE_INSTANCE_SEPARATOR, splitWorktreeId } from '../../shared/worktree-id'
@@ -740,6 +741,7 @@ type MessageWaiter = {
   typeFilter: string[] | undefined
   resolve: (result: void) => void
   timeout: NodeJS.Timeout | null
+  abortCleanup: (() => void) | null
 }
 
 function omitUndefinedProperties<T extends Record<string, unknown>>(value: T): Partial<T> {
@@ -7405,6 +7407,7 @@ export class OrcaRuntimeService {
     linkedGitLabIssue?: number | null
     comment?: string
     displayName?: string
+    telemetrySource?: WorkspaceCreateTelemetrySource
     workspaceStatus?: string
     manualOrder?: number
     sparseCheckout?: { directories: string[]; presetId?: string }
@@ -9583,7 +9586,7 @@ export class OrcaRuntimeService {
   // Why: mobile clients may subscribe before the PTY spawns (the left pane
   // of a new workspace). Instead of bailing with a bare scrollback+end,
   // wait for the PTY to appear so the subscribe can proceed with phone-fit.
-  waitForLeafPtyId(handle: string, timeoutMs = 10_000): Promise<string> {
+  waitForLeafPtyId(handle: string, timeoutMs = 10_000, signal?: AbortSignal): Promise<string> {
     const leaf = this.resolveLeafForHandle(handle)
     if (leaf?.ptyId) {
       return Promise.resolve(leaf.ptyId)
@@ -9597,15 +9600,40 @@ export class OrcaRuntimeService {
     const savedLeafId = record?.leafId ?? null
 
     return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let check: () => void = () => {}
+      const cleanup = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
         const idx = this.graphSyncCallbacks.indexOf(check)
         if (idx !== -1) {
           this.graphSyncCallbacks.splice(idx, 1)
         }
-        reject(new Error('Timed out waiting for PTY to spawn'))
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const finish = (ptyId: string): void => {
+        cleanup()
+        resolve(ptyId)
+      }
+      const fail = (error: Error): void => {
+        cleanup()
+        reject(error)
+      }
+      const onAbort = (): void => {
+        fail(new Error('request_aborted'))
+      }
+      if (signal?.aborted) {
+        reject(new Error('request_aborted'))
+        return
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      timer = setTimeout(() => {
+        fail(new Error('Timed out waiting for PTY to spawn'))
       }, timeoutMs)
 
-      const check = (): void => {
+      check = (): void => {
         // Try the handle first (works if handle wasn't invalidated yet)
         let ptyId = this.resolveLeafForHandle(handle)?.ptyId
         // Why: when ptyId transitions null→real, issueHandle invalidates the
@@ -9615,12 +9643,7 @@ export class OrcaRuntimeService {
           ptyId = directLeaf?.ptyId ?? null
         }
         if (ptyId) {
-          clearTimeout(timer)
-          const idx = this.graphSyncCallbacks.indexOf(check)
-          if (idx !== -1) {
-            this.graphSyncCallbacks.splice(idx, 1)
-          }
-          resolve(ptyId)
+          finish(ptyId)
         }
       }
       this.graphSyncCallbacks.push(check)
@@ -11262,7 +11285,8 @@ export class OrcaRuntimeService {
         handle,
         typeFilter: options?.typeFilter,
         resolve,
-        timeout: null
+        timeout: null,
+        abortCleanup: null
       }
 
       // Why: if the caller aborts (socket closed on the RPC side — see design
@@ -11279,13 +11303,11 @@ export class OrcaRuntimeService {
           resolve()
           return
         }
+        waiter.abortCleanup = () => signal.removeEventListener('abort', onAbort)
         signal.addEventListener('abort', onAbort, { once: true })
       }
 
       waiter.timeout = setTimeout(() => {
-        if (signal) {
-          signal.removeEventListener('abort', onAbort)
-        }
         this.removeMessageWaiter(waiter)
         resolve()
       }, timeoutMs)
@@ -11308,6 +11330,10 @@ export class OrcaRuntimeService {
     if (waiter.timeout) {
       clearTimeout(waiter.timeout)
       waiter.timeout = null
+    }
+    if (waiter.abortCleanup) {
+      waiter.abortCleanup()
+      waiter.abortCleanup = null
     }
     const waiters = this.messageWaitersByHandle.get(waiter.handle)
     if (waiters) {

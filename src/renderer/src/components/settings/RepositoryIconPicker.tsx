@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Github, Image, Link2, RotateCcw } from 'lucide-react'
 import type { Repo } from '../../../../shared/types'
@@ -15,6 +15,7 @@ import { RepoIconGlyph, REPO_LUCIDE_ICON_OPTIONS } from '../repo/repo-icon'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { useMountedRef } from '@/hooks/useMountedRef'
 
 const EMOJI_OPTIONS = ['🚀', '✨', '💻', '🧠', '📦', '🔧', '🎨', '🌐', '📊', '🔒', '⚡', '✅']
 
@@ -27,7 +28,7 @@ export function RepositoryIconPicker({
 }): React.JSX.Element {
   const [website, setWebsite] = useState('')
   const [loadingGitHub, setLoadingGitHub] = useState(false)
-  const mountedRef = useRef(true)
+  const mountedRef = useMountedRef()
   const activeRuntimeEnvironmentId = useAppStore(
     (state) => state.settings?.activeRuntimeEnvironmentId ?? null
   )
@@ -58,13 +59,6 @@ export function RepositoryIconPicker({
 
   const setIcon = (repoIcon: RepoIcon | null) => updateRepo(repo.id, { repoIcon })
   const setBadgeColor = (badgeColor: string) => updateRepo(repo.id, { badgeColor })
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
 
   const handleUploadImage = async () => {
     try {

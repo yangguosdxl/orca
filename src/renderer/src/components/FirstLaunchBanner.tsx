@@ -33,11 +33,12 @@
 // off), the notice never returns, because the cohort condition
 // (`optedIn === null`) clears in all three resolving paths.
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { X } from 'lucide-react'
 
 import { Button } from './ui/button'
 import { acknowledgeBanner, PRIVACY_URL, setOptIn as telemetrySetOptIn } from '../lib/telemetry'
+import { useMountedRef } from '@/hooks/useMountedRef'
 
 type FirstLaunchBannerProps = {
   onResolve: () => void
@@ -57,14 +58,7 @@ export function FirstLaunchBanner({
   // wasted IPC round-trip, but the guard also blocks a Turn-off click
   // arriving mid-flight after an acknowledge (or vice versa).
   const [inFlight, setInFlight] = useState(false)
-  const mountedRef = useRef(true)
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
+  const mountedRef = useMountedRef()
 
   const handleAcknowledge = async (): Promise<void> => {
     if (inFlight) {

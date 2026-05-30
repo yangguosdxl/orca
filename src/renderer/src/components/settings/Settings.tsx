@@ -246,6 +246,18 @@ function Settings(): React.JSX.Element {
     [settings, updateSettings]
   )
 
+  const setSettingsRootNode = useCallback(
+    (node: HTMLDivElement | null): void => {
+      if (node) {
+        return
+      }
+      // Why: the settings search is a transient in-page filter. Leaving it behind makes the next
+      // visit look partially broken because whole sections stay hidden before the user types again.
+      setSettingsSearchQuery('')
+    },
+    [setSettingsSearchQuery]
+  )
+
   const confirmDiscardSourceControlAiPromptChanges = useCallback(async (): Promise<boolean> => {
     if (!hasUnsavedSourceControlAiPromptChanges) {
       return true
@@ -372,15 +384,6 @@ function Settings(): React.JSX.Element {
     document.addEventListener('keydown', handleFindShortcut)
     return () => document.removeEventListener('keydown', handleFindShortcut)
   }, [keybindings])
-
-  useEffect(
-    () => () => {
-      // Why: the settings search is a transient in-page filter. Leaving it behind makes the next
-      // visit look partially broken because whole sections stay hidden before the user types again.
-      setSettingsSearchQuery('')
-    },
-    [setSettingsSearchQuery]
-  )
 
   useEffect(() => {
     if (!settings || !settingsNavigationTarget) {
@@ -728,8 +731,13 @@ function Settings(): React.JSX.Element {
 
   if (!settings) {
     return (
-      <div className="flex flex-1 items-center justify-center text-muted-foreground">
-        Loading settings...
+      <div
+        ref={setSettingsRootNode}
+        className="settings-view-shell flex min-h-0 flex-1 overflow-hidden bg-background"
+      >
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">
+          Loading settings...
+        </div>
       </div>
     )
   }
@@ -755,7 +763,10 @@ function Settings(): React.JSX.Element {
     activeSectionId === 'shortcuts' && settingsSearchQuery.trim() === ''
 
   return (
-    <div className="settings-view-shell flex min-h-0 flex-1 overflow-hidden bg-background">
+    <div
+      ref={setSettingsRootNode}
+      className="settings-view-shell flex min-h-0 flex-1 overflow-hidden bg-background"
+    >
       <SettingsSidebar
         activeSectionId={activeSectionId}
         generalGroups={generalNavGroups}
