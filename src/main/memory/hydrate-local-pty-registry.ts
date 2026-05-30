@@ -146,7 +146,7 @@ async function collectSessionInfos(
   for (const adapter of adapters) {
     try {
       const sessions = await adapter.listSessions()
-      out.push(...sessions)
+      appendSessionInfos(out, sessions)
     } catch (err) {
       // Why: a single adapter failing should not abort hydration of the
       // others — the current adapter and any legacy daemons each have
@@ -158,4 +158,12 @@ async function collectSessionInfos(
     }
   }
   return out
+}
+
+function appendSessionInfos(target: SessionInfo[], source: readonly SessionInfo[]): void {
+  // Why: a daemon can return an unexpectedly large live-session list; spreading
+  // it into push would look like an adapter failure and drop every session.
+  for (const session of source) {
+    target.push(session)
+  }
 }

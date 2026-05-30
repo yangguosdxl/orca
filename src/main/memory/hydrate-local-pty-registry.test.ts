@@ -206,4 +206,24 @@ describe('hydrateLocalPtyRegistryAtBoot', () => {
     expect(entry!.pid).toBe(4242)
     expect(entry!.worktreeId).toBe('repo-a::/local/Triton')
   })
+
+  it('registers daemon session lists larger than the JavaScript argument limit', async () => {
+    const { hydrate, listRegisteredPtys } = await loadFresh()
+
+    const sessions = Array.from({ length: 130_000 }, (_, index) => {
+      const ptyId = `repo-a::/local/Triton@@session-${index}`
+      return { sessionId: ptyId, pid: index + 1, cwd: '/local/Triton' } as unknown as SessionInfo
+    })
+    const provider = makeProvider(sessions)
+    getDaemonProviderMock.mockReturnValue(provider)
+    listRepoWorktreesMock.mockResolvedValue([
+      { path: '/local/Triton', head: '', branch: '', isBare: false, isMainWorktree: true }
+    ])
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await hydrate(makeStore([{ id: 'repo-a', connectionId: null }]))
+    warnSpy.mockRestore()
+
+    expect(listRegisteredPtys()).toHaveLength(sessions.length)
+  })
 })
