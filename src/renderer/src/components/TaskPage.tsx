@@ -100,9 +100,9 @@ import {
 import PRFilterDropdowns, { type PRFilterChange } from '@/components/github/PRFilterDropdowns'
 import { buildGitHubRepoUrl, parseGitHubIssueOrPRLink } from '@/lib/github-links'
 import {
-  findGithubPrWorkspaceAttachment,
-  getGithubPrWorkspaceAttachmentLabel
-} from '@/lib/github-pr-workspace-attachment'
+  findGithubWorkItemWorkspaceAttachment,
+  getGithubWorkItemWorkspaceAttachmentLabel
+} from '@/lib/github-work-item-workspace-attachment'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
 import GitHubItemDialog, { type ItemDialogTab } from '@/components/GitHubItemDialog'
@@ -3792,11 +3792,12 @@ export default function TaskPage(): React.JSX.Element {
     [openComposerForItem]
   )
 
-  const handleOpenOrUseGitHubPR = useCallback(
+  const handleOpenOrUseGitHubWorkItem = useCallback(
     (item: GitHubWorkItem): void => {
-      const currentAttached = findGithubPrWorkspaceAttachment(
+      const currentAttached = findGithubWorkItemWorkspaceAttachment(
         useAppStore.getState().allWorktrees(),
         item.repoId,
+        item.type,
         item.number
       )
       if (!currentAttached) {
@@ -3806,7 +3807,11 @@ export default function TaskPage(): React.JSX.Element {
 
       const result = activateAndRevealWorktree(currentAttached.id)
       if (result === false) {
-        toast.error('Unable to open the workspace attached to this pull request.')
+        toast.error(
+          item.type === 'pr'
+            ? 'Unable to open the workspace attached to this pull request.'
+            : 'Unable to open the workspace attached to this issue.'
+        )
       }
     },
     [handleUseWorkItem]
@@ -5164,12 +5169,14 @@ export default function TaskPage(): React.JSX.Element {
                   {!showGitHubTaskSkeletons &&
                     filteredWorkItems.map((item) => {
                       const itemRepo = repoMap.get(item.repoId) ?? null
-                      const attachedWorkspace =
-                        item.type === 'pr'
-                          ? findGithubPrWorkspaceAttachment(allWorktrees, item.repoId, item.number)
-                          : null
+                      const attachedWorkspace = findGithubWorkItemWorkspaceAttachment(
+                        allWorktrees,
+                        item.repoId,
+                        item.type,
+                        item.number
+                      )
                       const attachedWorkspaceLabel = attachedWorkspace
-                        ? getGithubPrWorkspaceAttachmentLabel(attachedWorkspace)
+                        ? getGithubWorkItemWorkspaceAttachmentLabel(attachedWorkspace)
                         : null
                       return (
                         // Why: the row is a clickable container rather than a
@@ -5325,7 +5332,7 @@ export default function TaskPage(): React.JSX.Element {
                                     size="xs"
                                     onClick={(event) => {
                                       event.stopPropagation()
-                                      handleOpenOrUseGitHubPR(item)
+                                      handleOpenOrUseGitHubWorkItem(item)
                                     }}
                                     className="bg-background/80"
                                     aria-label={
@@ -5373,11 +5380,16 @@ export default function TaskPage(): React.JSX.Element {
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  handleUseWorkItem(item)
+                                  handleOpenOrUseGitHubWorkItem(item)
                                 }}
+                                aria-label={
+                                  attachedWorkspace
+                                    ? 'Open workspace attached to issue'
+                                    : 'Start workspace from issue'
+                                }
                                 className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/80 px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/60"
                               >
-                                Start
+                                {attachedWorkspace ? 'Open' : 'Start'}
                                 <ArrowRight className="size-3" />
                               </button>
                             )}
@@ -5397,6 +5409,12 @@ export default function TaskPage(): React.JSX.Element {
                                   align="end"
                                   onClick={(e) => e.stopPropagation()}
                                 >
+                                  {attachedWorkspace ? (
+                                    <DropdownMenuItem onSelect={() => handleUseWorkItem(item)}>
+                                      <Plus className="size-4" />
+                                      Start new workspace
+                                    </DropdownMenuItem>
+                                  ) : null}
                                   <DropdownMenuItem
                                     onSelect={() => window.api.shell.openUrl(item.url)}
                                   >
