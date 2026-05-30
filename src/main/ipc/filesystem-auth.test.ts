@@ -1,3 +1,4 @@
+import type * as NodePath from 'node:path'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Store } from '../persistence'
@@ -90,5 +91,35 @@ describe('filesystem-auth path containment', () => {
     expect(() => validateGitRelativeFilePath(root, '../other/file.ts')).toThrow(
       'Access denied: git file path escapes the selected worktree'
     )
+  })
+
+  it('accepts Windows descendants when drive and root casing differ', async () => {
+    vi.resetModules()
+    vi.doMock('../repo-worktrees', () => ({
+      isRepoRoot: vi.fn(),
+      listRepoWorktrees: vi.fn()
+    }))
+    vi.doMock('path', async () => {
+      const path = await vi.importActual<typeof NodePath>('node:path')
+      return {
+        ...path.win32,
+        default: path.win32
+      }
+    })
+
+    try {
+      const { isDescendantOrEqual: isDescendantOrEqualWithWinPath } = await import(
+        './filesystem-auth'
+      )
+
+      expect(isDescendantOrEqualWithWinPath(String.raw`c:\repo\src\app.ts`, String.raw`C:\Repo`))
+        .toBe(true)
+      expect(isDescendantOrEqualWithWinPath(String.raw`D:\repo\src\app.ts`, String.raw`C:\Repo`))
+        .toBe(false)
+    } finally {
+      vi.doUnmock('path')
+      vi.doUnmock('../repo-worktrees')
+      vi.resetModules()
+    }
   })
 })

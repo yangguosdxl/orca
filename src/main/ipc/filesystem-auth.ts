@@ -50,12 +50,9 @@ export function isDescendantOrEqual(resolvedTarget: string, resolvedBase: string
   // rel must not be ".."/"../..." or an absolute path (e.g. different drive on Windows)
   // [Security Fix]: Added !isAbsolute(rel) to prevent drive traversal bypasses on Windows
   // where relative('D:\\repo', 'C:\\etc\\passwd') returns absolute path 'C:\\etc\\passwd'
-  return (
-    rel !== '' &&
-    !(rel === '..' || rel.startsWith(`..${sep}`)) &&
-    !isAbsolute(rel) &&
-    resolve(resolvedBase, rel) === resolvedTarget
-  )
+  // Why: Windows path.relative() already treats drive/root casing as equivalent;
+  // rejoining and comparing strings would deny valid `c:\repo` descendants of `C:\Repo`.
+  return rel !== '' && !(rel === '..' || rel.startsWith(`..${sep}`)) && !isAbsolute(rel)
 }
 
 export function getAllowedRoots(store: Store): string[] {
