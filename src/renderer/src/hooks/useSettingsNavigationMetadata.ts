@@ -126,6 +126,36 @@ export function buildSettingsNavigationMetadata({
       group: 'setup'
     },
     {
+      id: 'orchestration',
+      title: 'Orchestration',
+      description: 'Coordinate multiple coding agents through Orca.',
+      icon: Network,
+      searchEntries: ORCHESTRATION_PANE_SEARCH_ENTRIES,
+      group: 'capabilities'
+    },
+    ...(showDesktopOnlySettings
+      ? [
+          {
+            id: 'computer-use',
+            title: 'Computer Use',
+            description: 'Enable agents to control any app on your computer.',
+            icon: MousePointerClick,
+            searchEntries: COMPUTER_USE_PANE_SEARCH_ENTRIES,
+            group: 'capabilities',
+            badge: 'Beta'
+          },
+          {
+            id: 'voice',
+            title: 'Voice',
+            description: 'Local speech-to-text dictation with on-device models.',
+            icon: Mic,
+            searchEntries: VOICE_PANE_SEARCH_ENTRIES,
+            group: 'capabilities',
+            badge: 'Beta'
+          }
+        ]
+      : []),
+    {
       id: 'git',
       title: 'Git & Source Control',
       description: 'Branch naming, base refs, attribution, and AI commit messages.',
@@ -204,14 +234,6 @@ export function buildSettingsNavigationMetadata({
         ]
       : []),
     {
-      id: 'orchestration',
-      title: 'Orchestration',
-      description: 'Coordinate multiple coding agents through Orca.',
-      icon: Network,
-      searchEntries: ORCHESTRATION_PANE_SEARCH_ENTRIES,
-      group: 'capabilities'
-    },
-    {
       id: 'servers',
       title: 'Remote Orca Servers',
       description: isWebClient
@@ -239,24 +261,6 @@ export function buildSettingsNavigationMetadata({
             icon: Smartphone,
             searchEntries: MOBILE_SETTINGS_PANE_SEARCH_ENTRIES,
             group: 'remote'
-          },
-          {
-            id: 'computer-use',
-            title: 'Computer Use',
-            description: 'Enable agents to control any app on your computer.',
-            icon: MousePointerClick,
-            searchEntries: COMPUTER_USE_PANE_SEARCH_ENTRIES,
-            group: 'capabilities',
-            badge: 'Beta'
-          },
-          {
-            id: 'voice',
-            title: 'Voice',
-            description: 'Local speech-to-text dictation with on-device models.',
-            icon: Mic,
-            searchEntries: VOICE_PANE_SEARCH_ENTRIES,
-            group: 'capabilities',
-            badge: 'Beta'
           }
         ]
       : []),
