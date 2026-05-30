@@ -80,7 +80,7 @@ export class RuntimeRpcCallQueuePool {
       // Invoke through the promise chain so sync validation errors free the
       // queue slot just like async transport failures.
       void Promise.resolve()
-        .then(call.run)
+        .then(() => call.run())
         .then(call.resolve, call.reject)
         .finally(() => {
           queue.active = Math.max(0, queue.active - 1)
