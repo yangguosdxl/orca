@@ -7413,7 +7413,9 @@ export class OrcaRuntimeService {
             }
             attempt += 1
             if (attempt >= 30) {
-              resolve(ptyId)
+              // Why: startup prompts can contain shell syntax; only send them
+              // after we positively identify the intended agent process.
+              resolve(null)
               return
             }
             setTimeout(poll, 150)
@@ -7421,7 +7423,7 @@ export class OrcaRuntimeService {
           .catch(() => {
             attempt += 1
             if (attempt >= 30) {
-              resolve(ptyId)
+              resolve(null)
               return
             }
             setTimeout(poll, 150)

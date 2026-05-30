@@ -7727,6 +7727,84 @@ describe('OrcaRuntimeService', () => {
     expect(metaById[result.worktree.id]).toMatchObject({ createdWithAgent: 'codex' })
   })
 
+  it('does not paste stdin startup prompts when the agent never becomes ready', async () => {
+    vi.useFakeTimers()
+    try {
+      detectInstalledAgentsMock.mockResolvedValue(['autohand'])
+      const metaById: Record<string, WorktreeMeta> = {}
+      const runtimeStore = {
+        ...store,
+        getSettings: () => ({
+          ...store.getSettings(),
+          defaultTuiAgent: 'autohand' as const,
+          agentCmdOverrides: {}
+        }),
+        getAllWorktreeMeta: () => metaById,
+        getWorktreeMeta: (worktreeId: string) => metaById[worktreeId],
+        setWorktreeMeta: (worktreeId: string, meta: Partial<WorktreeMeta>) => {
+          metaById[worktreeId] = { ...(metaById[worktreeId] ?? makeWorktreeMeta()), ...meta }
+          return metaById[worktreeId]
+        }
+      }
+      const runtime = new OrcaRuntimeService(runtimeStore as never)
+      const spawn = vi.fn().mockResolvedValue({ id: 'pty-startup-followup-timeout' })
+      const write = vi.fn().mockReturnValue(true)
+      const getForegroundProcess = vi.fn().mockResolvedValue('zsh')
+      const hasChildProcesses = vi.fn().mockResolvedValue(false)
+      runtime.setPtyController({
+        spawn,
+        write,
+        kill: () => true,
+        getForegroundProcess,
+        hasChildProcesses
+      })
+      runtime.setNotifier({
+        worktreesChanged: vi.fn(),
+        reposChanged: vi.fn(),
+        activateWorktree: vi.fn(),
+        createTerminal: vi.fn(),
+        revealTerminalSession: vi.fn().mockResolvedValue({ tabId: 'tab-startup-followup-timeout' }),
+        splitTerminal: vi.fn(),
+        renameTerminal: vi.fn(),
+        focusTerminal: vi.fn(),
+        closeTerminal: vi.fn(),
+        sleepWorktree: vi.fn(),
+        terminalFitOverrideChanged: vi.fn(),
+        terminalDriverChanged: vi.fn()
+      })
+      runtime.attachWindow(1)
+
+      computeWorktreePathMock.mockReturnValue('/tmp/workspaces/runtime-startup-followup-timeout')
+      ensurePathWithinWorkspaceMock.mockReturnValue(
+        '/tmp/workspaces/runtime-startup-followup-timeout'
+      )
+      vi.mocked(listWorktrees).mockResolvedValue([
+        {
+          path: '/tmp/workspaces/runtime-startup-followup-timeout',
+          head: 'def',
+          branch: 'runtime-startup-followup-timeout',
+          isBare: false,
+          isMainWorktree: false
+        }
+      ])
+
+      await runtime.createManagedWorktree({
+        repoSelector: 'id:repo-1',
+        name: 'runtime-startup-followup-timeout',
+        startupPrompt: 'echo should-not-run',
+        createdWithAgent: 'autohand',
+        activate: true
+      })
+
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(getForegroundProcess).toHaveBeenCalled()
+      expect(write).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects startup prompts before creating when the selected runtime agent is undetected', async () => {
     detectInstalledAgentsMock.mockResolvedValue(['claude'])
     const runtimeStore = {
