@@ -94,8 +94,9 @@ export class SshConnection {
     if (!this.client) {
       throw new Error('Not connected')
     }
-    return new Promise((res, rej) =>
-      this.client!.exec(wrapRemoteCommandForPosixShell(cmd), (e, ch) => (e ? rej(e) : res(ch)))
+    const client = this.client
+    return this.waitForSshCallback('SSH exec channel timed out', (callback) =>
+      client.exec(wrapRemoteCommandForPosixShell(cmd), callback)
     )
   }
 
@@ -106,7 +107,43 @@ export class SshConnection {
     if (!this.client) {
       throw new Error('Not connected')
     }
-    return new Promise((res, rej) => this.client!.sftp((e, s) => (e ? rej(e) : res(s))))
+    const client = this.client
+    return this.waitForSshCallback('SSH SFTP channel timed out', (callback) =>
+      client.sftp(callback)
+    )
+  }
+
+  private waitForSshCallback<T>(
+    timeoutMessage: string,
+    register: (callback: (error: Error | undefined, value: T) => void) => void
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const timer = setTimeout(() => {
+        settled = true
+        reject(new Error(timeoutMessage))
+      }, CONNECT_TIMEOUT_MS)
+      const finish = (error: Error | undefined, value?: T): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        clearTimeout(timer)
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(value as T)
+      }
+
+      try {
+        // Why: higher-level channel timers start only after ssh2 invokes its
+        // open callback. A stale SSH socket can otherwise keep exec/sftp stuck.
+        register(finish)
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
 
   async uploadDirectory(localDir: string, remoteDir: string): Promise<void> {
