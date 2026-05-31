@@ -182,6 +182,9 @@ export default function CombinedDiffViewer({
   const [isClearingNotes, setIsClearingNotes] = useState(false)
   const [notesCopied, setNotesCopied] = useState(false)
   const mountedRef = useRef(true)
+  // Why: copy feedback is created by the copy action, so the same handler owns
+  // its reset timer instead of repairing copied state after render.
+  const notesCopiedResetTimerRef = useRef<number | null>(null)
   // Why: clipboard IPC can resolve after the combined diff unmounts; skip
   // copied feedback instead of starting a reset timer on a stale viewer.
   const notesCopyMountedRef = useRef(false)
@@ -235,6 +238,14 @@ export default function CombinedDiffViewer({
       setFileTreeCollapsedState(settings.combinedDiffFileTreeVisibleByDefault === false)
     }
   }, [settings?.combinedDiffFileTreeVisibleByDefault])
+
+  useEffect(() => {
+    return () => {
+      if (notesCopiedResetTimerRef.current !== null) {
+        window.clearTimeout(notesCopiedResetTimerRef.current)
+      }
+    }
+  }, [])
 
   const setFileTreeCollapsed = useCallback((collapsed: boolean) => {
     combinedDiffFileTreeCollapsedPreference = collapsed
@@ -883,14 +894,6 @@ export default function CombinedDiffViewer({
     }
   }, [diffCommentCount, isClearingNotes])
 
-  useEffect(() => {
-    if (!notesCopied) {
-      return
-    }
-    const handle = window.setTimeout(() => setNotesCopied(false), 1500)
-    return () => window.clearTimeout(handle)
-  }, [notesCopied])
-
   const handleCopyNotes = useCallback(async (): Promise<void> => {
     if (diffCommentCount === 0) {
       return
@@ -900,7 +903,14 @@ export default function CombinedDiffViewer({
       if (!notesCopyMountedRef.current) {
         return
       }
+      if (notesCopiedResetTimerRef.current !== null) {
+        window.clearTimeout(notesCopiedResetTimerRef.current)
+      }
       setNotesCopied(true)
+      notesCopiedResetTimerRef.current = window.setTimeout(() => {
+        setNotesCopied(false)
+        notesCopiedResetTimerRef.current = null
+      }, 1500)
     } catch {
       // Why: clipboard writes can fail while the app is not focused; this
       // mirrors the sidebar notes action and keeps the popover non-blocking.

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
+const electronBuilderNativeRebuild = require('./electron-builder-native-rebuild.cjs')
 
 describe('electron-builder config', () => {
   it('uses the multi-size icon source for Linux packages', () => {
@@ -17,5 +18,10 @@ describe('electron-builder config', () => {
       packageName: 'orca-ide',
       artifactName: 'orca-ide-${version}.${arch}.${ext}'
     })
+  })
+
+  it('uses Orca native rebuild hook instead of electron-builder default rebuild', () => {
+    expect(electronBuilderConfig.beforeBuild).toBe(electronBuilderNativeRebuild)
+    expect(electronBuilderConfig.npmRebuild).toBe(true)
   })
 })

@@ -329,6 +329,14 @@ function parseLineTarget(hash: string): { line: number; column?: number } | null
   return { line: Number(match[1]), column: match[2] ? Number(match[2]) : undefined }
 }
 
+export function decodeMarkdownPreviewAnchor(rawAnchor: string): string {
+  try {
+    return decodeURIComponent(rawAnchor)
+  } catch {
+    return rawAnchor
+  }
+}
+
 function normalizeMarkdownPreviewAbsolutePath(absolutePath: string): string {
   return absolutePath.replaceAll('\\', '/')
 }
@@ -426,6 +434,16 @@ export default function MarkdownPreview({
   const rootRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const setSearchInputElement = useCallback((input: HTMLInputElement | null) => {
+    inputRef.current = input
+    if (!input) {
+      return
+    }
+    // Why: opening preview search should select the query once, while typing
+    // and match-count updates must not keep re-selecting the field.
+    input.focus()
+    input.select()
+  }, [])
   const matchesRef = useRef<HTMLElement[]>([])
   const lastAppliedInitialAnchorRef = useRef<string | null>(null)
   const pendingEditorRevealFrameIdsRef = useRef<number[]>([])
@@ -715,7 +733,7 @@ export default function MarkdownPreview({
       return false
     }
 
-    const decodedAnchor = decodeURIComponent(rawAnchor)
+    const decodedAnchor = decodeMarkdownPreviewAnchor(rawAnchor)
     let target: HTMLElement | null = null
     for (const candidate of body.querySelectorAll<HTMLElement>('[id]')) {
       if (candidate.id === decodedAnchor) {
@@ -738,13 +756,6 @@ export default function MarkdownPreview({
     },
     [scrollToAnchor]
   )
-
-  useEffect(() => {
-    if (isSearchOpen) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
-  }, [isSearchOpen])
 
   useEffect(() => {
     const body = bodyRef.current
@@ -1557,7 +1568,7 @@ export default function MarkdownPreview({
           <div className="markdown-preview-search" onKeyDown={(event) => event.stopPropagation()}>
             <div className="markdown-preview-search-field">
               <Input
-                ref={inputRef}
+                ref={setSearchInputElement}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
@@ -1766,11 +1777,12 @@ function MarkdownAnnotationComposer({
 }): React.JSX.Element {
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const mountedRef = useMountedRef()
 
-  useEffect(() => {
-    textareaRef.current?.focus()
+  const focusTextareaRef = useCallback((textarea: HTMLTextAreaElement | null): void => {
+    // Why: opening an annotation composer should focus the draft field on the
+    // mount edge; no external subscription is needed.
+    textarea?.focus()
   }, [])
 
   const trimmed = body.trim()
@@ -1799,7 +1811,7 @@ function MarkdownAnnotationComposer({
     <div className="markdown-annotation-composer" onClick={(event) => event.stopPropagation()}>
       <div className="orca-diff-comment-popover-label">Selected text</div>
       <textarea
-        ref={textareaRef}
+        ref={focusTextareaRef}
         className="orca-diff-comment-popover-textarea"
         placeholder="Add note for the AI"
         value={body}

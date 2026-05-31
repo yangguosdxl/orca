@@ -481,19 +481,11 @@ function Settings(): React.JSX.Element {
     windowsTerminalCapabilityOwnerKey
   )
 
-  useEffect(() => {
-    setMountedSectionIds((previous) => {
-      let changed = false
-      const next = new Set(previous)
-      for (const id of neededSectionIds) {
-        if (!next.has(id)) {
-          next.add(id)
-          changed = true
-        }
-      }
-      return changed ? next : previous
-    })
-  }, [neededSectionIds])
+  if ([...neededSectionIds].some((id) => !mountedSectionIds.has(id))) {
+    // Why: lazy Settings sections are remembered for the session; record newly
+    // needed sections during render so panes do not wait for a follow-up Effect.
+    setMountedSectionIds(neededSectionIds)
+  }
 
   useEffect(() => {
     if (!neededSectionIds.has('appearance') && !neededSectionIds.has('terminal')) {

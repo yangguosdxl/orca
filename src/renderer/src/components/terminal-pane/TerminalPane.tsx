@@ -90,6 +90,9 @@ import {
   applyTerminalPaneAttentionToManager,
   subscribeTerminalPaneAttention
 } from './terminal-pane-attention-subscriptions'
+import { getCachedTerminalTabForWorktree } from './terminal-tab-lookup'
+import { getCachedTerminalGroupIdForWorktree } from './terminal-unified-tab-lookup'
+import { useRepoById } from '@/store/selectors'
 
 type TerminalPaneProps = {
   tabId: string
@@ -105,6 +108,31 @@ type TerminalPaneProps = {
   isolatedPaneKey?: string | null
   onPtyExit: (ptyId: string) => void
   onCloseTab: () => void
+}
+
+type TerminalQuickCommandEditorDialogProps = {
+  command: TerminalQuickCommand
+  onOpenChange: (open: boolean) => void
+  onSave: (command: TerminalQuickCommand) => void
+}
+
+function TerminalQuickCommandEditorDialog({
+  command,
+  onOpenChange,
+  onSave
+}: TerminalQuickCommandEditorDialogProps): React.JSX.Element {
+  const repos = useAppStore((store) => store.repos)
+
+  return (
+    <TerminalQuickCommandDialog
+      open
+      mode="add"
+      command={command}
+      repos={repos}
+      onOpenChange={onOpenChange}
+      onSave={onSave}
+    />
+  )
 }
 
 function formatClipboardImagePasteError(error: unknown): string {
@@ -338,8 +366,8 @@ export default function TerminalPane({
   )
   const clearCodexRestartNotice = useAppStore((store) => store.clearCodexRestartNotice)
   const savedLayout = useAppStore((store) => store.terminalLayoutsByTabId[tabId] ?? EMPTY_LAYOUT)
-  const terminalTab = useAppStore(
-    (store) => (store.tabsByWorktree[worktreeId] ?? []).find((tab) => tab.id === tabId) ?? null
+  const terminalTab = useAppStore((store) =>
+    getCachedTerminalTabForWorktree(store.tabsByWorktree, worktreeId, tabId)
   )
   const setTabLayout = useAppStore((store) => store.setTabLayout)
   const restoredLayout = useMemo(
@@ -361,7 +389,6 @@ export default function TerminalPane({
   const openSpacePage = useAppStore((store) => store.openSpacePage)
   const refreshWorkspaceSpace = useAppStore((store) => store.refreshWorkspaceSpace)
   const settings = useAppStore((store) => store.settings)
-  const repos = useAppStore((store) => store.repos)
   const updateSettings = useAppStore((store) => store.updateSettings)
   const keybindings = useAppStore((store) => store.keybindings)
   // Why: Windows is the only platform where bare right-click is repurposed as
@@ -395,7 +422,7 @@ export default function TerminalPane({
 
   const quickCommandRepoId =
     worktreeId === FLOATING_TERMINAL_WORKTREE_ID ? null : getRepoIdFromWorktreeId(worktreeId)
-  const quickCommandRepo = repos.find((repo) => repo.id === quickCommandRepoId) ?? null
+  const quickCommandRepo = useRepoById(quickCommandRepoId)
   const quickCommandRepoLabel = quickCommandRepo
     ? quickCommandRepo.displayName || quickCommandRepo.path
     : quickCommandRepoId
@@ -414,9 +441,7 @@ export default function TerminalPane({
   const quickCommandGroupId =
     useAppStore(
       (s) =>
-        s.unifiedTabsByWorktree[worktreeId]?.find(
-          (tab) => tab.entityId === tabId && tab.contentType === 'terminal'
-        )?.groupId ??
+        getCachedTerminalGroupIdForWorktree(s.unifiedTabsByWorktree, worktreeId, tabId) ??
         s.activeGroupIdByWorktree[worktreeId] ??
         null
     ) ?? null
@@ -1050,6 +1075,9 @@ export default function TerminalPane({
     cwd,
     isActive,
     isVisible,
+    // Why: hidden startup probes are opacity-hidden but measurable; ordinary
+    // hidden tabs are display:none and refit on visibility resume instead.
+    isSyncFitEnabled: isVisible || shouldMeasureHiddenStartup,
     paneCount,
     managerRef,
     containerRef,
@@ -1748,6 +1776,7 @@ export default function TerminalPane({
         onPaste={() => void contextMenu.onPaste()}
         onSplitRight={contextMenu.onSplitRight}
         onSplitDown={contextMenu.onSplitDown}
+        keybindings={keybindings}
         onEqualizePaneSizes={contextMenu.onEqualizePaneSizes}
         onClosePane={contextMenu.onClosePane}
         onClearScreen={contextMenu.onClearScreen}
@@ -1765,14 +1794,14 @@ export default function TerminalPane({
         onSetTitle={contextMenu.onSetTitle}
         onCopyPaneId={contextMenu.onCopyPaneId}
       />
-      <TerminalQuickCommandDialog
-        open={quickCommandEditorOpen}
-        mode="add"
-        command={quickCommandDraft}
-        repos={repos}
-        onOpenChange={setQuickCommandEditorOpen}
-        onSave={saveQuickCommand}
-      />
+      {/* Why: repos is a broad store slice; only subscribe while the editor is visible. */}
+      {quickCommandEditorOpen ? (
+        <TerminalQuickCommandEditorDialog
+          command={quickCommandDraft}
+          onOpenChange={setQuickCommandEditorOpen}
+          onSave={saveQuickCommand}
+        />
+      ) : null}
       <TerminalAgentSessionForkDialog
         open={agentSessionFork !== null}
         fork={agentSessionFork}

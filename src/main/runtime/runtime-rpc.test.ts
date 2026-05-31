@@ -5,8 +5,8 @@ import { join } from 'path'
 import { createConnection, type Socket } from 'net'
 import { EventEmitter } from 'events'
 import { describe, expect, it, vi } from 'vitest'
-import Database from 'better-sqlite3'
 import WebSocket from 'ws'
+import Database from '../sqlite/sync-database'
 import { OrcaRuntimeService } from './orca-runtime'
 import { OrchestrationDb } from './orchestration/db'
 import * as runtimeMetadataModule from './runtime-metadata'
@@ -1749,7 +1749,7 @@ describe('OrcaRuntimeRpcServer', () => {
     })
     expect(listRepoLabels).toHaveBeenCalledWith('id:repo-1')
     expect(listRepoAssignableUsers).toHaveBeenCalledWith('id:repo-1')
-    expect(addRepoIssueComment).toHaveBeenCalledWith('id:repo-1', 123, 'done')
+    expect(addRepoIssueComment).toHaveBeenCalledWith('id:repo-1', 123, 'done', null)
     expect(addRepoPRReviewComment).toHaveBeenCalledWith('id:repo-1', {
       prNumber: 456,
       commitId: 'abc123',
@@ -1764,7 +1764,8 @@ describe('OrcaRuntimeRpcServer', () => {
       body: 'fixed',
       threadId: 'thread-1',
       path: 'src/app.ts',
-      line: 10
+      line: 10,
+      prRepo: null
     })
     expect(getRepoPRFileContents).toHaveBeenCalledWith('id:repo-1', {
       prNumber: 456,
@@ -2650,7 +2651,7 @@ describe('OrcaRuntimeRpcServer', () => {
     })
 
     it('hard-fails startup when the migration cannot be applied', () => {
-      // Simulate a migration error by monkey-patching better-sqlite3's exec.
+      // Simulate a migration error by monkey-patching the SQLite wrapper's exec.
       // If ALTER TABLE throws for any reason (e.g. disk full, permissions),
       // the constructor must propagate — not swallow and serve half-broken.
       //

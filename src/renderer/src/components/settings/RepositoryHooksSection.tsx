@@ -463,15 +463,7 @@ function ScriptEditor({
     }
   }, [value])
 
-  useEffect(() => {
-    // Why: when the repo or its persisted local script changes (e.g. switching repos),
-    // re-evaluate whether the local block should be visible by default.
-    if (value.length > 0) {
-      setShowLocal(true)
-    }
-  }, [value])
-
-  const showLocalEditor = showLocal || !hasShared
+  const showLocalEditor = showLocal || value.length > 0 || !hasShared
   const lineCount = value ? value.split('\n').length : 0
 
   return (

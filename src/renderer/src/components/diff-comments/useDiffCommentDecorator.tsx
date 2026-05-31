@@ -443,7 +443,16 @@ export function useDiffCommentDecorator({
       if (!entry) {
         return
       }
-      const measured = entry.domNode.scrollHeight
+      const child = entry.domNode.firstElementChild
+      const wrapperStyle = window.getComputedStyle(entry.domNode)
+      const verticalPadding =
+        Number.parseFloat(wrapperStyle.paddingTop) + Number.parseFloat(wrapperStyle.paddingBottom)
+      // Why: Monaco pins the view-zone node to the previous height, so its
+      // scrollHeight cannot shrink. Measure the rendered card and wrapper
+      // padding instead so cancel/save can collapse the zone after edit mode.
+      const measured = Math.ceil(
+        (child?.getBoundingClientRect().height ?? entry.domNode.scrollHeight) + verticalPadding
+      )
       if (measured <= 0) {
         return
       }

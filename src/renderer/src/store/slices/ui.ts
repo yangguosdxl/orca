@@ -155,7 +155,7 @@ function presetToQuery(presetId: TaskViewPresetId | null): string {
       return 'review-requested:@me is:pr is:open'
     case 'my-prs':
       return 'author:@me is:pr is:open'
-    default:
+    case null:
       return 'is:issue is:open'
   }
 }
@@ -218,6 +218,11 @@ const VALID_LINEAR_PRESETS = new Set<NonNullable<TaskResumeState['linearPreset']
   'created',
   'all',
   'completed'
+])
+const VALID_LINEAR_MODES = new Set<NonNullable<TaskResumeState['linearMode']>>([
+  'issues',
+  'projects',
+  'views'
 ])
 
 function filterTrustedOrcaHooksToValidRepos(
@@ -340,8 +345,32 @@ function sanitizeTaskResumeState(value: unknown): TaskResumeState | undefined {
   ) {
     next.linearPreset = input.linearPreset as NonNullable<TaskResumeState['linearPreset']>
   }
+  if (
+    typeof input.linearMode === 'string' &&
+    VALID_LINEAR_MODES.has(input.linearMode as NonNullable<TaskResumeState['linearMode']>)
+  ) {
+    next.linearMode = input.linearMode as NonNullable<TaskResumeState['linearMode']>
+  }
   if (typeof input.linearQuery === 'string') {
     next.linearQuery = input.linearQuery
+  }
+  if (input.linearContext && typeof input.linearContext === 'object') {
+    const context = input.linearContext as Record<string, unknown>
+    if (
+      (context.kind === 'project' || context.kind === 'view') &&
+      typeof context.id === 'string' &&
+      context.id.trim() &&
+      typeof context.workspaceId === 'string' &&
+      context.workspaceId.trim() &&
+      context.workspaceId !== 'all'
+    ) {
+      next.linearContext = {
+        kind: context.kind,
+        id: context.id,
+        workspaceId: context.workspaceId,
+        model: context.model === 'issue' || context.model === 'project' ? context.model : undefined
+      }
+    }
   }
 
   return Object.keys(next).length > 0 ? next : undefined
@@ -456,6 +485,12 @@ export type UISlice = {
       number: number
       title: string
       url: string
+      linearIdentifier?: string
+      linkedContext?: {
+        provider: TaskProvider
+        version: 1
+        renderedText: string
+      }
     } | null
     agent: TuiAgent
     linkedIssue: string

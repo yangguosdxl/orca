@@ -295,6 +295,10 @@ function CodeCell({
   const editorFontZoomLevel = useAppStore((s) => s.editorFontZoomLevel)
   const onDeactivateRef = useRef(onDeactivate)
   const onSaveRequestRef = useRef(onSaveRequest)
+  // Why: Monaco commands/listeners are installed once on mount and need the
+  // latest callbacks without rebuilding the embedded editor.
+  onDeactivateRef.current = onDeactivate
+  onSaveRequestRef.current = onSaveRequest
   const fontSize = computeEditorFontSize(settings?.terminalFontSize ?? 13, editorFontZoomLevel)
   const lineCount = Math.max(3, source.split('\n').length + 1)
   const editorHeight = Math.min(520, Math.max(96, lineCount * (fontSize + 8)))
@@ -324,11 +328,6 @@ function CodeCell({
       onDeactivateRef.current()
     })
   }, [])
-
-  useEffect(() => {
-    onDeactivateRef.current = onDeactivate
-    onSaveRequestRef.current = onSaveRequest
-  }, [onDeactivate, onSaveRequest])
 
   useEffect(() => {
     monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs')

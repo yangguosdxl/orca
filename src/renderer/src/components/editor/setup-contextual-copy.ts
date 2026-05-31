@@ -300,6 +300,13 @@ export function setupContextualCopy({
     scrollListener.dispose()
     focusListener.dispose()
     blurListener.dispose()
+    // Why: the confirmation toast timeout belongs to the Monaco editor that
+    // scheduled it, so editor disposal is the earliest reliable cleanup point.
+    if (copyToastTimeoutRef.current !== null) {
+      window.clearTimeout(copyToastTimeoutRef.current)
+      copyToastTimeoutRef.current = null
+      setCopyToast(null)
+    }
     if (primarySelectionTimer !== null) {
       window.clearTimeout(primarySelectionTimer)
       primarySelectionTimer = null

@@ -183,16 +183,14 @@ export default function DiffViewer({
   // added in this render pass. The didScroll guard makes this strictly
   // one-shot per mount.
   const didAutoScrollFirstDiffRef = useRef(false)
-  // Why: the one-shot above is intentionally per-modelKey. Today every call
-  // site uses `key={viewStateScopeId}` so the component remounts on model
-  // change and the ref is fresh, but the auto-scroll effect lists modelKey in
-  // its deps — make that contract honest by resetting the flag when modelKey
-  // flips, so a future call site without a remount key still gets a fresh
-  // first-diff scroll per file.
-  useLayoutEffect(() => {
-    didAutoScrollFirstDiffRef.current = false
-  }, [modelKey])
+  const didAutoScrollModelKeyRef = useRef(modelKey)
   useEffect(() => {
+    if (didAutoScrollModelKeyRef.current !== modelKey) {
+      didAutoScrollModelKeyRef.current = modelKey
+      // Why: the one-shot above is intentionally per-modelKey. Reset inside
+      // this Effect before its first-diff guard runs for the new file.
+      didAutoScrollFirstDiffRef.current = false
+    }
     const diffEditor = diffEditorRef.current
     if (!diffEditor || !modifiedEditor) {
       return
