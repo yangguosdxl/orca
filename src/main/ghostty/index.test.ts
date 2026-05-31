@@ -1,6 +1,6 @@
 import type { Store } from '../persistence'
 import type { GlobalSettings } from '../../shared/types'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { statMock, readFileMock } = vi.hoisted(() => ({
   statMock: vi.fn(),
@@ -18,6 +18,17 @@ vi.mock('os', () => ({
 }))
 
 import { previewGhosttyImport } from './index'
+
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME
+
+afterEach(() => {
+  vi.clearAllMocks()
+  if (originalXdgConfigHome !== undefined) {
+    process.env.XDG_CONFIG_HOME = originalXdgConfigHome
+  } else {
+    delete process.env.XDG_CONFIG_HOME
+  }
+})
 
 function createStore(settings: Record<string, unknown> = {}): Store {
   return {
@@ -67,6 +78,7 @@ background = #1a1a1a
   })
 
   it('imports every discovered config file in Ghostty load order', async () => {
+    delete process.env.XDG_CONFIG_HOME
     statMock.mockImplementation(async (p: string) => {
       if (
         p === '/Users/alice/.config/ghostty/config.ghostty' ||
