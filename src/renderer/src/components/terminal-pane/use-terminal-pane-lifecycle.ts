@@ -148,6 +148,7 @@ type UseTerminalPaneLifecycleDeps = {
   }) => void
   setCacheTimerStartedAt: (key: string, ts: number | null) => void
   syncPanePtyLayoutBinding: (paneId: number, ptyId: string | null) => void
+  syncPanePtyLayoutBindingByLeafId: (leafId: string, ptyId: string | null) => void
   setTabPaneExpanded: (tabId: string, expanded: boolean) => void
   setTabCanExpandPane: (tabId: string, canExpand: boolean) => void
   setExpandedPane: (paneId: number | null) => void
@@ -292,6 +293,7 @@ export function useTerminalPaneLifecycle({
   dispatchNotification,
   setCacheTimerStartedAt,
   syncPanePtyLayoutBinding,
+  syncPanePtyLayoutBindingByLeafId,
   setTabPaneExpanded,
   setTabCanExpandPane,
   setExpandedPane,
@@ -469,6 +471,7 @@ export function useTerminalPaneLifecycle({
       dispatchNotification,
       setCacheTimerStartedAt,
       syncPanePtyLayoutBinding,
+      syncPanePtyLayoutBindingByLeafId,
       restoredPtyIdByLeafId: initialLayoutRef.current.ptyIdsByLeafId ?? {}
     }
 

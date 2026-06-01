@@ -562,6 +562,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         // it would reset lastActivityAt and destroy the recency sort order.
         if (!spawnResult.isReattach && !spawnResult.coldRestore) {
           onPtySpawn?.(spawnResult.id)
+          if (destroyed) {
+            return
+          }
         }
 
         registerPtyDataHandler(spawnResult.id)

@@ -57,6 +57,15 @@ let mockFocusedAgentPaneKey: string | null = null
 let mockAgentActivityDisplayMode: 'compact' | 'full' | undefined
 let mockExperimentalAgentTerminalPopover = false
 let mockLiveTabIds = ['tab-1']
+let mockTerminalLayoutsByTabId: Record<string, unknown> = {}
+
+function mockLayoutForLeaf(leafId: string): unknown {
+  return {
+    root: { type: 'leaf', leafId },
+    activeLeafId: leafId,
+    expandedLeafId: null
+  }
+}
 
 vi.mock('@/store', () => ({
   useAppStore: (selector: (state: unknown) => unknown) =>
@@ -70,7 +79,7 @@ vi.mock('@/store', () => ({
       agentSendPopoverTargetMode: null,
       agentStatusByPaneKey: {},
       tabsByWorktree: { 'wt-1': mockLiveTabIds.map((id) => ({ id })) },
-      terminalLayoutsByTabId: {},
+      terminalLayoutsByTabId: mockTerminalLayoutsByTabId,
       sendPromptToSidebarAgentTarget: vi.fn()
     })
 }))
@@ -158,6 +167,7 @@ describe('WorktreeCardAgents', () => {
     mockAgentActivityDisplayMode = undefined
     mockExperimentalAgentTerminalPopover = false
     mockLiveTabIds = ['tab-1']
+    mockTerminalLayoutsByTabId = {}
   })
 
   it('renders ordinary rows in full mode without a child disclosure', async () => {
@@ -287,6 +297,9 @@ describe('WorktreeCardAgents', () => {
     mockAgentActivityDisplayMode = 'full'
     mockExperimentalAgentTerminalPopover = true
     mockLiveTabIds = ['tab-1', 'tab-other', 'legacy']
+    mockTerminalLayoutsByTabId = {
+      'tab-1': mockLayoutForLeaf(leafId)
+    }
     mockAgents = [
       mockAgent({ paneKey: `tab-1:${leafId}`, tabId: 'tab-1' }),
       mockAgent({ paneKey: 'tab-2:1', tabId: 'tab-other' }),
@@ -303,10 +316,38 @@ describe('WorktreeCardAgents', () => {
     expect(markup).toContain('data-pane-key="tab-stale:1" data-popover="false"')
   })
 
+  it('does not wire terminal popovers for missing split leaves in a live tab', async () => {
+    const liveLeafId = '55555555-5555-4555-8555-555555555555'
+    const removedLeafId = '66666666-6666-4666-8666-666666666666'
+    mockAgentActivityDisplayMode = 'full'
+    mockExperimentalAgentTerminalPopover = true
+    mockLiveTabIds = ['tab-1']
+    mockTerminalLayoutsByTabId = {
+      'tab-1': {
+        root: { type: 'leaf', leafId: liveLeafId },
+        activeLeafId: liveLeafId,
+        expandedLeafId: null
+      }
+    }
+    mockAgents = [
+      mockAgent({ paneKey: `tab-1:${liveLeafId}`, tabId: 'tab-1' }),
+      mockAgent({ paneKey: `tab-1:${removedLeafId}`, tabId: 'tab-1', state: 'done' })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+
+    expect(markup).toContain(`data-pane-key="tab-1:${liveLeafId}" data-popover="true"`)
+    expect(markup).toContain(`data-pane-key="tab-1:${removedLeafId}" data-popover="false"`)
+  })
+
   it('wires terminal popovers to compact agent rows when compact mode is active', async () => {
     const leafId = '55555555-5555-4555-8555-555555555555'
     mockAgentActivityDisplayMode = 'compact'
     mockExperimentalAgentTerminalPopover = true
+    mockTerminalLayoutsByTabId = {
+      'tab-1': mockLayoutForLeaf(leafId)
+    }
     mockAgents = [
       mockAgent({
         paneKey: `tab-1:${leafId}`,
@@ -327,6 +368,18 @@ describe('WorktreeCardAgents', () => {
   it('keeps compact rows visible instead of an aggregate summary when terminal popovers are enabled', async () => {
     mockAgentActivityDisplayMode = 'compact'
     mockExperimentalAgentTerminalPopover = true
+    mockTerminalLayoutsByTabId = {
+      'tab-1': {
+        root: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', leafId: '66666666-6666-4666-8666-666666666666' },
+          second: { type: 'leaf', leafId: '77777777-7777-4777-8777-777777777777' }
+        },
+        activeLeafId: '66666666-6666-4666-8666-666666666666',
+        expandedLeafId: null
+      }
+    }
     mockAgents = [
       mockAgent({
         paneKey: 'tab-1:66666666-6666-4666-8666-666666666666',

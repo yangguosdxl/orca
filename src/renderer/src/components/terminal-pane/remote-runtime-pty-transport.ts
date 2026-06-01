@@ -173,6 +173,9 @@ export function createRemoteRuntimePtyTransport(
       rows: options.rows ?? 24
     }
     onPtySpawn?.(remotePtyId)
+    if (destroyed || !connected || !remotePtyId) {
+      return undefined
+    }
 
     await subscribeToHandle()
     if (destroyed || !connected || !remotePtyId) {
@@ -395,6 +398,9 @@ export function createRemoteRuntimePtyTransport(
           rows: options.rows ?? 24
         }
         onPtySpawn?.(remotePtyId)
+        if (destroyed || !connected || !remotePtyId) {
+          return
+        }
 
         await subscribeToHandle()
         if (destroyed || !connected || !remotePtyId) {

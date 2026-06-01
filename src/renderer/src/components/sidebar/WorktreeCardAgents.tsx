@@ -21,6 +21,7 @@ import {
 } from './worktree-card-compact-agents'
 import { DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE } from '../../../../shared/constants'
 import { revealElementInScrollContainer } from './worktree-sidebar-reveal'
+import type { TerminalPaneLayoutNode } from '../../../../shared/types'
 
 export const SUPPRESS_WORKTREE_LIST_SCROLL_ADJUSTMENT_EVENT =
   'orca-suppress-worktree-list-scroll-adjustment'
@@ -36,6 +37,19 @@ function revealCompactAgentCard(agentListRoot: HTMLElement | null): void {
     return
   }
   revealElementInScrollContainer(sidebarElement, worktreeOptionElement, 'auto')
+}
+
+function layoutContainsLeaf(
+  node: TerminalPaneLayoutNode | null | undefined,
+  leafId: string
+): boolean {
+  if (!node) {
+    return false
+  }
+  if (node.type === 'leaf') {
+    return node.leafId === leafId
+  }
+  return layoutContainsLeaf(node.first, leafId) || layoutContainsLeaf(node.second, leafId)
 }
 
 // Why: the terminal popover is experimental and default-off. Keep its Radix /
@@ -347,11 +361,18 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
       return agentTerminalPopoverEnabled &&
         !isAgentSendTargetModeActive &&
         liveTerminalTabIdSet.has(agent.tab.id) &&
-        parsedPaneKey?.tabId === agent.tab.id
+        parsedPaneKey?.tabId === agent.tab.id &&
+        layoutContainsLeaf(terminalLayoutsByTabId[agent.tab.id]?.root, parsedPaneKey.leafId)
         ? `agent-popover:${worktreeId}:${agent.tab.id}:${agent.paneKey}`
         : null
     },
-    [agentTerminalPopoverEnabled, isAgentSendTargetModeActive, liveTerminalTabIdSet, worktreeId]
+    [
+      agentTerminalPopoverEnabled,
+      isAgentSendTargetModeActive,
+      liveTerminalTabIdSet,
+      terminalLayoutsByTabId,
+      worktreeId
+    ]
   )
 
   const renderTerminalPopoverForAgent = useCallback(

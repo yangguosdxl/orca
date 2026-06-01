@@ -850,8 +850,21 @@ export function connectPanePty(
   const observeTerminalGitHubPRLink = createTerminalGitHubPRLinkDetector()
 
   const onPtySpawn = (ptyId: string): void => {
+    const tabStillExists = (useAppStore.getState().tabsByWorktree[deps.worktreeId] ?? []).some(
+      (candidate) => candidate.id === deps.tabId
+    )
+    if (!tabStillExists) {
+      // Why: a detached pending spawn can resolve after its tab was closed.
+      // Tear down the fresh PTY before it can resurrect stale tab/layout state.
+      transport.destroy?.()
+      return
+    }
     setPanePtyFitBinding(ptyId)
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+    // Why: detached pending spawns can resolve after their old PaneManager is
+    // gone. Persist by stable leaf id too, so the remount can reattach the
+    // spawned PTY to the original split leaf instead of falling back to tab PTY.
+    deps.syncPanePtyLayoutBindingByLeafId(pane.leafId, ptyId)
     deps.updateTabPtyId(deps.tabId, ptyId)
     // Why: Command Code has no prompt-start hook. Seed the visible working row
     // once the PTY exists, then let real hook events refine or complete it.
@@ -2603,6 +2616,7 @@ export function connectPanePty(
             // Persist the binding here so tab-level PTY ownership stays correct
             // even if no later spawn event or layout snapshot runs.
             deps.syncPanePtyLayoutBinding(pane.id, spawnedPtyId)
+            deps.syncPanePtyLayoutBindingByLeafId(pane.leafId, spawnedPtyId)
             deps.updateTabPtyId(deps.tabId, spawnedPtyId)
             transport.attach({
               existingPtyId: spawnedPtyId,

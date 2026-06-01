@@ -100,6 +100,7 @@ type MockTransport = {
   sendInputAccepted?: ReturnType<typeof vi.fn>
   resize: ReturnType<typeof vi.fn>
   getPtyId: ReturnType<typeof vi.fn>
+  destroy: ReturnType<typeof vi.fn>
 }
 
 const scheduleRuntimeGraphSync = vi.fn()
@@ -214,6 +215,9 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
         return { id: opts.sessionId }
       }
       return ptyId
+    }),
+    destroy: vi.fn(() => {
+      ptyId = null
     }),
     sendInput: vi.fn(() => true),
     resize: vi.fn(() => true),
@@ -333,6 +337,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     dispatchNotification: vi.fn(),
     setCacheTimerStartedAt: vi.fn(),
     syncPanePtyLayoutBinding: vi.fn(),
+    syncPanePtyLayoutBindingByLeafId: vi.fn(),
     ...overrides
   }
 }
@@ -697,6 +702,52 @@ describe('connectPanePty', () => {
       },
       undefined
     )
+  })
+
+  it('persists fresh spawned PTYs by stable leaf id', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('pty-fresh')
+    transportFactoryQueue.push(transport)
+    const pane = createPane(2)
+    const manager = createManager(2)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks()
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    expect(onPtySpawn).toBeTypeOf('function')
+    onPtySpawn?.('pty-fresh')
+
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'pty-fresh')
+    expect(deps.syncPanePtyLayoutBindingByLeafId).toHaveBeenCalledWith(LEAF_2, 'pty-fresh')
+  })
+
+  it('tears down fresh spawned PTYs when the tab disappeared before spawn resolution', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('pty-late')
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [] }
+    }
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks()
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    expect(onPtySpawn).toBeTypeOf('function')
+    onPtySpawn?.('pty-late')
+
+    expect(transport.destroy).toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBindingByLeafId).not.toHaveBeenCalled()
+    expect(deps.updateTabPtyId).not.toHaveBeenCalled()
   })
 
   it('seeds a working status from Command Code thinking output without a startup prompt', async () => {

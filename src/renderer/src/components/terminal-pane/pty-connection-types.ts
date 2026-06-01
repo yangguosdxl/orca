@@ -50,4 +50,5 @@ export type PtyConnectionDeps = {
   }) => void
   setCacheTimerStartedAt: (key: string, ts: number | null) => void
   syncPanePtyLayoutBinding: (paneId: number, ptyId: string | null) => void
+  syncPanePtyLayoutBindingByLeafId: (leafId: string, ptyId: string | null) => void
 }

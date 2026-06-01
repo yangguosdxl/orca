@@ -614,16 +614,12 @@ export default function TerminalPane({
     persistLayoutSnapshot()
   }, [paneCount, paneTitles, persistLayoutSnapshot, terminalTab])
 
-  const syncPanePtyLayoutBinding = useCallback(
-    (paneId: number, ptyId: string | null): void => {
+  const syncPanePtyLayoutBindingByLeafId = useCallback(
+    (leafId: string, ptyId: string | null): void => {
       const existingLayout = useAppStore.getState().terminalLayoutsByTabId[tabId] ?? EMPTY_LAYOUT
       const { ptyIdsByLeafId: _existingPtyIdsByLeafId, ...layoutWithoutPtyBindings } =
         existingLayout
       const existingBindings = existingLayout.ptyIdsByLeafId ?? {}
-      const leafId = managerRef.current?.getLeafId(paneId)
-      if (!leafId) {
-        return
-      }
 
       if (ptyId) {
         setTabLayout(tabId, {
@@ -648,6 +644,17 @@ export default function TerminalPane({
       })
     },
     [setTabLayout, tabId]
+  )
+
+  const syncPanePtyLayoutBinding = useCallback(
+    (paneId: number, ptyId: string | null): void => {
+      const leafId = managerRef.current?.getLeafId(paneId)
+      if (!leafId) {
+        return
+      }
+      syncPanePtyLayoutBindingByLeafId(leafId, ptyId)
+    },
+    [managerRef, syncPanePtyLayoutBindingByLeafId]
   )
 
   const {
@@ -787,6 +794,7 @@ export default function TerminalPane({
     dispatchNotification,
     setCacheTimerStartedAt,
     syncPanePtyLayoutBinding,
+    syncPanePtyLayoutBindingByLeafId,
     setTabPaneExpanded,
     setTabCanExpandPane,
     setExpandedPane,
@@ -992,7 +1000,8 @@ export default function TerminalPane({
         clearTerminalPaneUnread,
         dispatchNotification,
         setCacheTimerStartedAt,
-        syncPanePtyLayoutBinding
+        syncPanePtyLayoutBinding,
+        syncPanePtyLayoutBindingByLeafId
       })
       panePtyBindingsRef.current.set(paneId, newPaneBinding)
       manager.setActivePane(paneId, { focus: true })
@@ -1014,6 +1023,7 @@ export default function TerminalPane({
       setRuntimePaneTitle,
       suppressPtyExit,
       syncPanePtyLayoutBinding,
+      syncPanePtyLayoutBindingByLeafId,
       tabId,
       updateTabPtyId,
       updateTabTitle,
