@@ -230,10 +230,6 @@ export function SetupWorkspacesVisual(props: { reducedMotion: boolean }): JSX.El
               <Prompt>&gt;</Prompt> draft release notes
             </TerminalLine>
             <TerminalLine muted>
-              <ClaudeIcon size={12} />
-              Read changelog.md
-            </TerminalLine>
-            <TerminalLine muted>
               <WorkingSpinner size="xs" reducedMotion={reducedMotion} />
               Edit release-notes.md
             </TerminalLine>
