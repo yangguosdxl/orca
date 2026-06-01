@@ -143,7 +143,7 @@ function AgentCapabilitySetupControls(props: {
             onClick={props.onStartFeatureSetup}
           >
             {props.setupBusyLabel ? <Loader2 className="size-4 animate-spin" /> : null}
-            {props.setupBusyLabel ?? 'Enable capabilities'}
+            {props.setupBusyLabel ?? 'Install CLI & Skills'}
           </Button>
         </div>
       ) : null}
@@ -174,7 +174,7 @@ function AgentCapabilitySetupChecklist(props: {
               aria-checked={selected}
               aria-label={`${selected ? 'Disable' : 'Enable'} ${row.title}`}
               className={cn(
-                'flex min-h-28 flex-col rounded-lg border px-4 py-3 text-left transition-colors',
+                'flex min-h-24 flex-col rounded-lg border px-4 py-3 text-left transition-colors',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                 selected
                   ? 'border-ring bg-accent text-foreground ring-2 ring-ring/25'
@@ -206,9 +206,6 @@ function AgentCapabilitySetupChecklist(props: {
                 </span>
               </span>
               <span className="mt-3 text-sm font-medium text-foreground">{row.title}</span>
-              <span className="mt-auto pt-3 text-[11px] font-medium text-muted-foreground">
-                {selected ? 'Included' : 'Skipped'}
-              </span>
             </button>
           )
         })}
