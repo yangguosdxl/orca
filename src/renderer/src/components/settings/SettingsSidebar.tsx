@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import { ArrowLeft, Search, Server, type LucideIcon, type LucideProps } from 'lucide-react'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import type { SettingsNavInstallStatus } from '@/lib/settings-navigation-types'
 import { useShortcutLabel } from '@/hooks/useShortcutLabel'
 import { cn } from '@/lib/utils'
 import { RepoIconGlyph } from '../repo/repo-icon'
@@ -12,6 +13,7 @@ type NavSection = {
   title: string
   icon: LucideIcon | ((props: LucideProps) => React.JSX.Element)
   badge?: string
+  installStatus?: SettingsNavInstallStatus
 }
 
 type NavGroup = {
@@ -64,6 +66,25 @@ export function SettingsSidebar({
       isActive
         ? 'bg-accent font-medium text-accent-foreground'
         : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+    )
+  const installStatusLabel = (status: SettingsNavInstallStatus): string => {
+    switch (status) {
+      case 'install':
+        return 'Not installed'
+      case 'installed':
+        return 'Installed'
+      case 'checking':
+        return 'Checking'
+    }
+  }
+  const installStatusClassName = (status: SettingsNavInstallStatus): string =>
+    cn(
+      'ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none',
+      status === 'installed'
+        ? 'border-status-success-border bg-status-success-background text-status-success'
+        : status === 'install'
+          ? 'border-foreground/15 bg-foreground/10 text-foreground'
+          : 'border-border/50 bg-muted/30 text-muted-foreground'
     )
 
   return (
@@ -127,7 +148,11 @@ export function SettingsSidebar({
                     >
                       <Icon className="size-4 shrink-0" />
                       <span className="truncate">{section.title}</span>
-                      {section.badge ? (
+                      {section.installStatus ? (
+                        <span className={installStatusClassName(section.installStatus)}>
+                          {installStatusLabel(section.installStatus)}
+                        </span>
+                      ) : section.badge ? (
                         <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground">
                           {section.badge}
                         </span>
