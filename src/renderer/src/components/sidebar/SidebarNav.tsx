@@ -200,7 +200,7 @@ const SidebarNav = React.memo(function SidebarNav() {
             type="button"
             onClick={() => openModal('setup-guide', { setupStepId: firstUnfinishedSetupStepId })}
             aria-current={setupActive ? 'page' : undefined}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 pr-7 text-left text-[13px] font-medium tracking-tight"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium tracking-tight"
           >
             <ListChecks
               className={cn(
@@ -225,7 +225,7 @@ const SidebarNav = React.memo(function SidebarNav() {
             type="button"
             aria-label="Hide Getting started with Orca"
             onClick={handleHideSetupGuide}
-            className="absolute right-1 top-1 rounded-sm p-0.5 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-foreground/8 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sidebar-ring"
+            className="absolute -left-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-sidebar-border bg-sidebar text-sidebar-foreground/60 shadow-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sidebar-ring"
           >
             <X className="size-3" aria-hidden />
           </button>
