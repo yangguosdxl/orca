@@ -151,6 +151,9 @@ const SidebarHeader = React.memo(function SidebarHeader() {
                 size={isRepoGrouping ? 'xs' : 'icon-xs'}
                 aria-label="Add to Orca"
                 className={isRepoGrouping ? 'gap-1 text-muted-foreground' : 'text-muted-foreground'}
+                data-contextual-tour-target={
+                  canCreateWorkspace ? 'workspace-create-control' : undefined
+                }
               >
                 <Plus className="size-3.5" strokeWidth={2.25} />
                 {isRepoGrouping ? <span className="text-[11px]">Add</span> : null}
@@ -168,9 +171,6 @@ const SidebarHeader = React.memo(function SidebarHeader() {
                 }}
                 aria-label="New workspace"
                 disabled={!canCreateWorkspace}
-                data-contextual-tour-target={
-                  canCreateWorkspace ? 'workspace-create-control' : undefined
-                }
               >
                 <Plus className="size-3.5" />
                 <span className="flex min-w-0 flex-col">
