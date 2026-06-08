@@ -111,6 +111,10 @@ describe('contextual tour definitions', () => {
       targetSelector: '[data-contextual-tour-target="browser-grab-control"]',
       preferredPlacement: 'bottom'
     })
+    expect(tour?.steps[1]).toMatchObject({
+      targetSelector: '[data-contextual-tour-target="browser-annotation-control"]',
+      preferredPlacement: 'bottom'
+    })
     expect(tour?.steps[2]).toMatchObject({
       body: 'Bring your existing logins into Orca to stay signed in immediately.',
       targetSelector: '[data-contextual-tour-target="browser-import-cookies-control"]',
