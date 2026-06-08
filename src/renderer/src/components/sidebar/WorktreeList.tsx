@@ -444,7 +444,7 @@ function SectionMetricsBadge({ count }: { count: number }): React.JSX.Element {
 
   return (
     <span
-      className="inline-flex h-4 shrink-0 overflow-hidden rounded-full border border-sidebar-border bg-sidebar-accent text-[9px] font-medium leading-none text-muted-foreground/90"
+      className="inline-flex h-4 shrink-0 overflow-hidden rounded-full border border-worktree-sidebar-border bg-worktree-sidebar-accent text-[9px] font-medium leading-none text-muted-foreground/90"
       aria-label={totalLabel}
     >
       <Tooltip>
@@ -2776,9 +2776,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               className="pointer-events-none absolute left-3 right-2 z-30 flex h-3 -translate-y-1/2 items-center"
               style={{ top: `${worktreeDragState.dropIndicatorY}px` }}
             >
-              <span className="size-1.5 shrink-0 rounded-full bg-sidebar-ring shadow-[0_0_0_2px_var(--sidebar)]" />
-              <span className="h-0.5 flex-1 rounded-full bg-sidebar-ring shadow-[0_0_0_2px_var(--sidebar)]" />
-              <span className="size-1.5 shrink-0 rounded-full bg-sidebar-ring shadow-[0_0_0_2px_var(--sidebar)]" />
+              <span className="size-1.5 shrink-0 rounded-full bg-worktree-sidebar-ring shadow-[0_0_0_2px_var(--worktree-sidebar)]" />
+              <span className="h-0.5 flex-1 rounded-full bg-worktree-sidebar-ring shadow-[0_0_0_2px_var(--worktree-sidebar)]" />
+              <span className="size-1.5 shrink-0 rounded-full bg-worktree-sidebar-ring shadow-[0_0_0_2px_var(--worktree-sidebar)]" />
             </div>
           ) : null}
           {virtualItems.map((vItem) => {
@@ -2846,7 +2846,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     // reaches the top (see getActiveStickyHeaderIndexForScroll),
                     // so the previous repo no longer stays pinned over it.
                     hasHeaderTopSpacing && !isActiveStickyHeader && 'pt-1',
-                    isActiveStickyHeader ? 'sticky -top-px z-20 bg-sidebar' : 'absolute top-0'
+                    isActiveStickyHeader
+                      ? 'sticky -top-px z-20 bg-worktree-sidebar'
+                      : 'absolute top-0'
                   )}
                   style={
                     isActiveStickyHeader
@@ -2868,10 +2870,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                         'bg-accent/80 ring-1 ring-ring/40 shadow-md rounded-md scale-[1.01]',
                       headerWorkspaceStatus &&
                         dragOverStatus === headerWorkspaceStatus &&
-                        'rounded-md bg-sidebar-accent ring-1 ring-sidebar-ring/40',
+                        'rounded-md bg-worktree-sidebar-accent ring-1 ring-worktree-sidebar-ring/40',
                       isPinnedHeader &&
                         pinDragOver &&
-                        'rounded-md bg-sidebar-accent ring-1 ring-sidebar-ring/40',
+                        'rounded-md bg-worktree-sidebar-accent ring-1 ring-worktree-sidebar-ring/40',
                       row.repo && 'overflow-hidden'
                     )}
                     style={{ paddingLeft: headerPaddingLeft }}
@@ -3426,7 +3428,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                                     type="button"
                                     variant="ghost"
                                     size="xs"
-                                    className="h-[18px] max-w-[8rem] gap-1 rounded-md border border-sidebar-border bg-sidebar px-1.5 text-[10px] font-medium leading-none text-muted-foreground shadow-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-sidebar-ring"
+                                    className="h-[18px] max-w-[8rem] gap-1 rounded-md border border-worktree-sidebar-border bg-worktree-sidebar px-1.5 text-[10px] font-medium leading-none text-muted-foreground shadow-none hover:bg-worktree-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring"
                                     aria-label={`${child.lineageCollapsed ? 'Show' : 'Hide'} ${
                                       child.lineageChildCount
                                     } child ${

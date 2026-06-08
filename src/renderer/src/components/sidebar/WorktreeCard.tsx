@@ -116,7 +116,7 @@ function RepoIdentityChip({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-sidebar-border bg-sidebar-accent/55"
+          className="inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-worktree-sidebar-border bg-worktree-sidebar-accent/55"
           aria-label={`Project ${repo.displayName}`}
         >
           {children}
@@ -761,9 +761,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
         isActiveSurface
           ? 'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] border border-black/[0.015] dark:bg-white/[0.10] dark:border-border/40 dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
           : isMultiSelected
-            ? 'border border-sidebar-ring/35 bg-sidebar-accent/70 ring-1 ring-sidebar-ring/30'
+            ? 'border border-worktree-sidebar-ring/35 bg-worktree-sidebar-accent/70 ring-1 ring-worktree-sidebar-ring/30'
             : 'border border-transparent worktree-sidebar-card-hover',
-        isActiveSurface && isMultiSelected && 'ring-1 ring-sidebar-ring/35',
+        isActiveSurface && isMultiSelected && 'ring-1 ring-worktree-sidebar-ring/35',
         revealHighlight && [
           'scroll-to-current-workspace-reveal-highlight',
           revealHighlightTone === 'ai' && 'scroll-to-current-workspace-reveal-highlight--ai'
@@ -876,7 +876,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
                     onPointerDown={stopQuickActionPointerPropagation}
                     onClick={handlePendingFirstAgentMessageRenameInfo}
                     onDoubleClick={handlePendingFirstAgentMessageRenameInfo}
-                    className="h-4 shrink-0 gap-0.5 rounded !px-0.5 text-[10px] font-medium leading-none text-muted-foreground border border-sidebar-border/60 bg-sidebar-accent/45 hover:bg-sidebar-accent hover:text-foreground has-[>svg]:!px-0.5"
+                    className="h-4 shrink-0 gap-0.5 rounded !px-0.5 text-[10px] font-medium leading-none text-muted-foreground border border-worktree-sidebar-border/60 bg-worktree-sidebar-accent/45 hover:bg-worktree-sidebar-accent hover:text-foreground has-[>svg]:!px-0.5"
                     aria-label="Will be renamed from first agent message"
                   >
                     <Sparkles className="size-2.5" />
@@ -1067,7 +1067,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
         {showLineageChildChip && (
           <div
             className="relative mt-1 flex min-w-0 justify-start"
-            style={{ color: 'color-mix(in srgb, var(--muted-foreground) 42%, var(--sidebar))' }}
+            style={{
+              color: 'color-mix(in srgb, var(--muted-foreground) 42%, var(--worktree-sidebar))'
+            }}
           >
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1075,7 +1077,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  className="relative z-10 h-[18px] max-w-[8rem] gap-1 rounded-md border border-sidebar-border bg-sidebar px-1.5 text-[10px] font-medium leading-none text-muted-foreground shadow-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-sidebar-ring"
+                  className="relative z-10 h-[18px] max-w-[8rem] gap-1 rounded-md border border-worktree-sidebar-border bg-worktree-sidebar px-1.5 text-[10px] font-medium leading-none text-muted-foreground shadow-none hover:bg-worktree-sidebar-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-worktree-sidebar-ring"
                   aria-label={`${lineageCollapsed ? 'Show' : 'Hide'} ${childWorkspaceLabel}`}
                   aria-expanded={!lineageCollapsed}
                   onClick={onLineageToggle}

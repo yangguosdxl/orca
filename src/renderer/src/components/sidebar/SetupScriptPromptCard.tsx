@@ -381,7 +381,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
 
   return (
     <div className="px-3 pb-2">
-      <div className="setup-script-prompt-card rounded-lg border border-sidebar-border p-3 text-sidebar-accent-foreground shadow-xs">
+      <div className="setup-script-prompt-card rounded-lg border border-worktree-sidebar-border p-3 text-worktree-sidebar-accent-foreground shadow-xs">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-semibold leading-snug">Add a setup script</p>
           <DismissButton onDismiss={handleDismiss} />
