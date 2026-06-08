@@ -11,6 +11,20 @@ type EnsureSimulatorTabOptions = {
   surfacePane?: boolean
 }
 
+type ExistingSimulatorTab = {
+  id: string
+  groupId: string
+  contentType: string
+}
+
+export function getSimulatorTabForWorktree(worktreeId: string): ExistingSimulatorTab | null {
+  return (
+    (useAppStore.getState().unifiedTabsByWorktree[worktreeId] ?? []).find(
+      (tab) => tab.contentType === 'simulator'
+    ) ?? null
+  )
+}
+
 /** One simulator tab per worktree; focuses existing tab instead of creating duplicates. */
 export function ensureSimulatorTab(
   worktreeId: string,
@@ -32,9 +46,7 @@ export function ensureSimulatorTab(
   }
   cancelPendingSimulatorPaneShutdown(worktreeId)
 
-  const existing = (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
-    (tab) => tab.contentType === 'simulator'
-  )
+  const existing = getSimulatorTabForWorktree(worktreeId)
   const shouldSurface = options?.surfacePane ?? true
   if (existing) {
     if (shouldSurface && store.activeWorktreeId === worktreeId) {

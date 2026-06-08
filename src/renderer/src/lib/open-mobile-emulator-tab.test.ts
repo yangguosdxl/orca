@@ -6,7 +6,7 @@ import {
   consumePrelaunchedSimulatorSession,
   isManualSimulatorLaunchPending
 } from './simulator-launch-coordination'
-import { ensureSimulatorTab } from './ensure-simulator-tab'
+import { ensureSimulatorTab, getSimulatorTabForWorktree } from './ensure-simulator-tab'
 
 const mockStoreState = vi.hoisted(() => ({
   activeGroupIdByWorktree: { 'wt-1': 'group-1' } as Record<string, string>,
@@ -32,6 +32,7 @@ vi.mock('sonner', () => ({
 
 vi.mock('./ensure-simulator-tab', () => ({
   ensureSimulatorTab: vi.fn(),
+  getSimulatorTabForWorktree: vi.fn(),
   isMacOsHost: true
 }))
 
@@ -51,6 +52,8 @@ describe('openMobileEmulatorTab', () => {
     mockStoreState.settings = { mobileEmulatorEnabled: true }
     vi.mocked(callRuntimeRpc).mockReset()
     vi.mocked(ensureSimulatorTab).mockReset()
+    vi.mocked(getSimulatorTabForWorktree).mockReset()
+    vi.mocked(getSimulatorTabForWorktree).mockReturnValue(null)
     vi.mocked(toast.error).mockReset()
     consumePrelaunchedSimulatorSession('wt-1')
   })
@@ -128,6 +131,22 @@ describe('openMobileEmulatorTab', () => {
     expect(callRuntimeRpc).toHaveBeenCalledTimes(1)
     resolveAttach(mockAttachResult)
     await firstLaunch
+  })
+
+  it('does nothing when the workspace already has an emulator tab', async () => {
+    vi.mocked(getSimulatorTabForWorktree).mockReturnValue({
+      id: 'sim-existing',
+      groupId: 'group-1',
+      contentType: 'simulator'
+    })
+
+    await expect(openMobileEmulatorTab('wt-1', { targetGroupId: 'group-1' })).resolves.toBe(
+      'sim-existing'
+    )
+
+    expect(ensureSimulatorTab).not.toHaveBeenCalled()
+    expect(callRuntimeRpc).not.toHaveBeenCalled()
+    expect(isManualSimulatorLaunchPending('wt-1')).toBe(false)
   })
 
   it('does not attach when the mobile emulator feature is disabled', async () => {

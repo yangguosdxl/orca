@@ -578,7 +578,7 @@ export function useTabGroupWorkspaceModel({
       newSimulatorTab: worktreeState.mobileEmulatorEnabled
         ? () => {
             // Why: mobile simulators are most useful beside the current tab group.
-            // Re-open focuses the existing worktree simulator instead of spawning duplicates.
+            // Re-open is guarded as a no-op once a worktree emulator tab exists.
             void openMobileEmulatorTab(worktreeId, {
               placement: 'rightSplit',
               targetGroupId: groupId

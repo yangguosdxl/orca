@@ -51,6 +51,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { TabCreateEntryArgs } from './tab-create-entry-action'
 import { buildTabAgentLaunchOptions, orderTabLaunchAgents } from './tab-agent-launch-options'
 
@@ -62,6 +63,7 @@ type GitStatusEntries = ReturnType<typeof useAppStore.getState>['gitStatusByWork
 const EMPTY_GIT_STATUS_ENTRIES: GitStatusEntries = []
 const EMPTY_AGENT_CMD_OVERRIDES: Partial<Record<TuiAgent, string>> = {}
 const EMPTY_UNIFIED_TABS: readonly Tab[] = []
+const EMULATOR_EXISTS_TOOLTIP = 'An emulator already exists in this workspace.'
 
 type TabBarProps = {
   tabs: (TerminalTab & { unifiedTabId?: string })[]
@@ -293,6 +295,10 @@ function TabBarInner({
     () => createUnifiedTabLookup(unifiedTabs, resolvedGroupId),
     [resolvedGroupId, unifiedTabs]
   )
+  const workspaceHasSimulatorTab = useMemo(
+    () => unifiedTabs.some((tab) => tab.contentType === 'simulator'),
+    [unifiedTabs]
+  )
 
   // Why: Electron <webview> elements run in a separate process, so clicking
   // inside one never dispatches a pointerdown on the renderer document.
@@ -489,14 +495,34 @@ function TabBarInner({
   ) : null
   const newSimulatorMenuItem =
     !terminalOnly && isMacOs && mobileEmulatorEnabled && onNewSimulatorTab ? (
-      <DropdownMenuItem
-        onSelect={onNewSimulatorTab}
-        className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
-      >
-        <Smartphone className="size-4 text-muted-foreground" />
-        New Mobile Emulator
-        <DropdownMenuShortcut>{newSimulatorShortcut}</DropdownMenuShortcut>
-      </DropdownMenuItem>
+      workspaceHasSimulatorTab ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block">
+              <DropdownMenuItem
+                disabled
+                className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
+              >
+                <Smartphone className="size-4 text-muted-foreground" />
+                New Mobile Emulator
+                <DropdownMenuShortcut>{newSimulatorShortcut}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8} className="z-[80]">
+            {EMULATOR_EXISTS_TOOLTIP}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <DropdownMenuItem
+          onSelect={onNewSimulatorTab}
+          className="gap-2 rounded-[7px] px-2 py-1.5 text-[12px] leading-5 font-medium"
+        >
+          <Smartphone className="size-4 text-muted-foreground" />
+          New Mobile Emulator
+          <DropdownMenuShortcut>{newSimulatorShortcut}</DropdownMenuShortcut>
+        </DropdownMenuItem>
+      )
     ) : null
   const newMarkdownMenuItem =
     !terminalOnly && onNewFileTab ? (

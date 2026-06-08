@@ -2,7 +2,7 @@ import { toast } from 'sonner'
 import type { EmulatorStreamInfo } from '@/components/emulator-pane/emulator-pane-types'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { useAppStore } from '@/store'
-import { ensureSimulatorTab, isMacOsHost } from './ensure-simulator-tab'
+import { ensureSimulatorTab, getSimulatorTabForWorktree, isMacOsHost } from './ensure-simulator-tab'
 import {
   beginManualSimulatorLaunch,
   dispatchManualSimulatorLaunchFailed,
@@ -53,6 +53,10 @@ export async function openMobileEmulatorTab(
   const store = useAppStore.getState()
   if (store.settings?.mobileEmulatorEnabled === false) {
     return null
+  }
+  const existingTab = getSimulatorTabForWorktree(worktreeId)
+  if (existingTab) {
+    return existingTab.id
   }
   const targetGroupId =
     options.targetGroupId ??

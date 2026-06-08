@@ -73,6 +73,9 @@ vi.mock('lucide-react', () => ({
   Plus: function Plus() {
     return null
   },
+  Smartphone: function Smartphone() {
+    return null
+  },
   TerminalSquare: function TerminalSquare() {
     return null
   }
@@ -418,6 +421,43 @@ describe('TabBar context menu wiring', () => {
     expect(menuLabels[1]).toBe('Open Markdown...')
     expect(menuLabels[2]).toContain('New Terminal')
     expect(menuLabels[3]).toContain('New Browser Tab')
+  })
+
+  it('disables New Mobile Emulator when the workspace already has one', async () => {
+    const onNewSimulatorTab = vi.fn()
+    appStoreSnapshot.unifiedTabsByWorktree = {
+      'wt-1': [
+        {
+          id: 'sim-1',
+          entityId: 'sim-1',
+          groupId: 'group-2',
+          worktreeId: 'wt-1',
+          contentType: 'simulator',
+          label: 'Mobile Emulator',
+          customLabel: null,
+          color: null,
+          sortOrder: 1,
+          createdAt: 0
+        }
+      ]
+    }
+
+    const element = await renderTabBar({
+      tabs: [TERMINAL_TAB],
+      groupId: 'group-1',
+      onNewSimulatorTab
+    })
+
+    const emulatorItem = findChildrenByType(element, 'DropdownMenuItem').find((item) =>
+      extractText(item.props.children).includes('New Mobile Emulator')
+    )
+    expect(emulatorItem?.props.disabled).toBe(true)
+    expect(emulatorItem?.props.onSelect).toBeUndefined()
+
+    const tooltip = findChildrenByType(element, 'TooltipContent').find((item) =>
+      extractText(item.props.children).includes('An emulator already exists in this workspace.')
+    )
+    expect(tooltip).toBeTruthy()
   })
 
   it('cancels delayed menu focus when the tab bar root unmounts', async () => {
