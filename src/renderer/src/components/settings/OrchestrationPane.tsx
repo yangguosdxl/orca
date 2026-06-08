@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { ArrowRightLeft, GitBranch, ListChecks, Workflow } from 'lucide-react'
-import type { CliInstallStatus } from '../../../../shared/cli-install-types'
 import { ORCHESTRATION_SKILL_NAME } from '@/lib/agent-feature-install-commands'
 import {
   AGENT_SKILL_CLI_PREREQUISITE_NOTICE,
@@ -29,93 +28,6 @@ const EXAMPLE_ICONS = {
   'child-worktrees': Workflow
 } as const
 
-const ORCHESTRATION_NO_SKILL_PREVIEW_KEY = 'orca-preview-orchestration-no-skill'
-const ORCHESTRATION_CLI_READY_PREVIEW_KEY = 'orca-preview-orchestration-cli-ready'
-
-function isDevPreviewFlagEnabled(key: string): boolean {
-  if (!import.meta.env.DEV || typeof window === 'undefined') {
-    return false
-  }
-  try {
-    return window.localStorage.getItem(key) === '1'
-  } catch {
-    // Why: localStorage can be unavailable in constrained renderer contexts;
-    // preview toggles should never break the real settings pane.
-    return false
-  }
-}
-
-function isOrchestrationNoSkillPreviewActive(): boolean {
-  return isDevPreviewFlagEnabled(ORCHESTRATION_NO_SKILL_PREVIEW_KEY)
-}
-
-function isOrchestrationCliReadyPreviewActive(): boolean {
-  return isDevPreviewFlagEnabled(ORCHESTRATION_CLI_READY_PREVIEW_KEY)
-}
-
-function orchestrationCliPreviewStatus(platform: NodeJS.Platform): CliInstallStatus {
-  return {
-    platform,
-    commandName: platform === 'linux' ? 'orca-ide' : 'orca',
-    commandPath: null,
-    pathDirectory: platform === 'darwin' ? '/usr/local/bin' : null,
-    pathConfigured: false,
-    launcherPath: null,
-    installMethod: null,
-    supported: true,
-    state: 'not_installed',
-    currentTarget: null,
-    unsupportedReason: null,
-    detail:
-      platform === 'darwin'
-        ? 'Register `orca` in /usr/local/bin.'
-        : platform === 'linux'
-          ? 'Register `orca-ide` in ~/.local/bin.'
-          : 'Register `orca` in your user PATH.'
-  }
-}
-
-function orchestrationCliReadyPreviewStatus(platform: NodeJS.Platform): CliInstallStatus {
-  const commandName = platform === 'linux' ? 'orca-ide' : 'orca'
-  const commandPath =
-    platform === 'darwin'
-      ? '/usr/local/bin/orca'
-      : platform === 'linux'
-        ? '~/.local/bin/orca-ide'
-        : 'C:\\Users\\you\\AppData\\Local\\Programs\\orca\\orca.exe'
-  return {
-    platform,
-    commandName,
-    commandPath,
-    pathDirectory: commandPath.replace(/[\\/][^\\/]+$/, ''),
-    pathConfigured: true,
-    launcherPath: commandPath,
-    installMethod: 'symlink',
-    supported: true,
-    state: 'installed',
-    currentTarget: null,
-    unsupportedReason: null,
-    detail: null
-  }
-}
-
-async function getOrchestrationCliPrerequisiteStatus(): Promise<CliInstallStatus> {
-  if (typeof window === 'undefined') {
-    throw new Error('CLI status is unavailable outside the desktop renderer.')
-  }
-  if (!import.meta.env.DEV) {
-    return window.api.cli.getInstallStatus()
-  }
-  const platform = window.api.platform.get().platform
-  if (isOrchestrationCliReadyPreviewActive()) {
-    return orchestrationCliReadyPreviewStatus(platform)
-  }
-  if (isOrchestrationNoSkillPreviewActive()) {
-    return orchestrationCliPreviewStatus(platform)
-  }
-  return window.api.cli.getInstallStatus()
-}
-
 export function OrchestrationPane(): React.JSX.Element {
   const searchQuery = useAppStore((s) => s.settingsSearchQuery)
   const showOrchestration = matchesSettingsSearch(searchQuery, ORCHESTRATION_PANE_SEARCH_ENTRIES)
@@ -131,11 +43,6 @@ export function OrchestrationPane(): React.JSX.Element {
   } = useInstalledAgentSkill(ORCHESTRATION_SKILL_NAME, {
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
-  const previewNoSkillInstalled = isOrchestrationNoSkillPreviewActive()
-  const orchestrationSkillInstalled = previewNoSkillInstalled ? false : orchestrationSkillDetected
-  const orchestrationSkillScanLoading = previewNoSkillInstalled ? false : orchestrationSkillLoading
-  const orchestrationSkillScanError = previewNoSkillInstalled ? null : orchestrationSkillError
-  const orchestrationDiscoveredSkills = previewNoSkillInstalled ? [] : discoveredSkills
 
   if (!showOrchestration) {
     return <div />
@@ -155,12 +62,11 @@ export function OrchestrationPane(): React.JSX.Element {
         terminalTitle="Orchestration setup"
         terminalAriaLabel="Orchestration skill install terminal"
         terminalWorktreeId="settings-orchestration-skill-terminal"
-        installed={orchestrationSkillInstalled}
-        loading={orchestrationSkillScanLoading}
-        error={orchestrationSkillScanError}
+        installed={orchestrationSkillDetected}
+        loading={orchestrationSkillLoading}
+        error={orchestrationSkillError}
         icon={<Workflow className="size-5" />}
         preInstallNotice={AGENT_SKILL_CLI_PREREQUISITE_NOTICE}
-        getPrerequisiteStatus={getOrchestrationCliPrerequisiteStatus}
         onBeforeOpenTerminal={async () => {
           useAppStore.getState().recordFeatureInteraction('agent-orchestration-setup')
           await ensureOrcaCliAvailableForAgentSkillTerminal()
@@ -180,8 +86,8 @@ export function OrchestrationPane(): React.JSX.Element {
         footer={
           <OrchestrationSkillAgentCoverage
             embedded
-            skills={orchestrationDiscoveredSkills}
-            loading={orchestrationSkillScanLoading}
+            skills={discoveredSkills}
+            loading={orchestrationSkillLoading}
           />
         }
         onRecheck={refreshOrchestrationSkill}
