@@ -27,6 +27,9 @@ const TERMINAL_STREAM_CHUNK_BYTES = 48 * 1024
 const TERMINAL_OUTPUT_FLUSH_MS = 5
 // Why: output batches become binary stream payloads; byte size is the transport cost.
 const TERMINAL_OUTPUT_BATCH_MAX_BYTES = 64 * 1024
+// Why: remote clients can apply output pressure without pausing runtime PTY ingestion.
+const TERMINAL_MULTIPLEX_ACK_STREAM_HIGH_WATER_BYTES = 512 * 1024
+const TERMINAL_MULTIPLEX_ACK_TOTAL_HIGH_WATER_BYTES = 2 * 1024 * 1024
 // Why: pending output is held for later binary frames, so cap the encoded
 // payload bytes rather than UTF-16 code units.
 const TERMINAL_MULTIPLEX_PENDING_MAX_BYTES = 256 * 1024
@@ -68,7 +71,10 @@ type TerminalMultiplexStream = {
   ptyId: string
   client: TerminalViewportClient | undefined
   isMobile: boolean
+  ackOutput: boolean
+  ackInFlightBytes: number
   buffering: boolean
+  ackPendingOutput: TerminalOutputFrameChunk[]
   pendingOutput: TerminalOutputChunk[]
   pendingOutputBytes: number
   pendingOutputOverflowed: boolean
@@ -538,7 +544,16 @@ const TerminalMultiplexSubscribeFrame = TerminalHandle.extend({
       type: z.enum(['mobile', 'desktop']).default('desktop')
     })
     .optional(),
-  viewport: TerminalViewport.optional()
+  viewport: TerminalViewport.optional(),
+  capabilities: z
+    .object({
+      ackOutput: z.literal(1).optional()
+    })
+    .optional()
+})
+
+const TerminalMultiplexAckFrame = z.object({
+  bytes: z.number().int().nonnegative()
 })
 
 const TerminalMultiplexSnapshotRequestFrame = z.object({
@@ -880,6 +895,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
       let closed = false
       let cursor = 0
       const streams = new Map<number, TerminalMultiplexStream>()
+      let ackTotalInFlightBytes = 0
       let resolveMultiplex = (): void => {}
       const multiplexClosed = new Promise<void>((resolve) => {
         resolveMultiplex = resolve
@@ -906,6 +922,63 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         sendFrame(streamId, TerminalStreamOpcode.Error, encodeTerminalStreamText(message))
         emit({ type: 'error', streamId, message })
       }
+      const canSendAckGatedOutput = (stream: TerminalMultiplexStream, bytes: number): boolean => {
+        if (!stream.ackOutput) {
+          return true
+        }
+        return (
+          stream.ackInFlightBytes + bytes <= TERMINAL_MULTIPLEX_ACK_STREAM_HIGH_WATER_BYTES &&
+          ackTotalInFlightBytes + bytes <= TERMINAL_MULTIPLEX_ACK_TOTAL_HIGH_WATER_BYTES
+        )
+      }
+      const sendAckGatedOutput = (
+        stream: TerminalMultiplexStream,
+        chunk: TerminalOutputFrameChunk
+      ): void => {
+        sendFrame(stream.streamId, TerminalStreamOpcode.Output, chunk.bytes, chunk.seq)
+        if (stream.ackOutput) {
+          stream.ackInFlightBytes += chunk.bytes.byteLength
+          ackTotalInFlightBytes += chunk.bytes.byteLength
+        }
+      }
+      const queueOrSendOutput = (
+        stream: TerminalMultiplexStream,
+        chunk: TerminalOutputFrameChunk
+      ): void => {
+        if (closed || streams.get(stream.streamId) !== stream) {
+          return
+        }
+        if (
+          stream.ackPendingOutput.length > 0 ||
+          !canSendAckGatedOutput(stream, chunk.bytes.byteLength)
+        ) {
+          stream.ackPendingOutput.push(chunk)
+          return
+        }
+        sendAckGatedOutput(stream, chunk)
+      }
+      const flushAckPendingOutput = (stream: TerminalMultiplexStream): void => {
+        let flushed = 0
+        while (
+          flushed < stream.ackPendingOutput.length &&
+          canSendAckGatedOutput(stream, stream.ackPendingOutput[flushed]!.bytes.byteLength)
+        ) {
+          sendAckGatedOutput(stream, stream.ackPendingOutput[flushed]!)
+          flushed += 1
+        }
+        if (flushed > 0) {
+          stream.ackPendingOutput.splice(0, flushed)
+        }
+      }
+      const acknowledgeOutput = (stream: TerminalMultiplexStream, bytes: number): void => {
+        if (!stream.ackOutput || bytes <= 0) {
+          return
+        }
+        const acknowledged = Math.min(stream.ackInFlightBytes, bytes)
+        stream.ackInFlightBytes -= acknowledged
+        ackTotalInFlightBytes = Math.max(0, ackTotalInFlightBytes - acknowledged)
+        flushAckPendingOutput(stream)
+      }
       const detachStream = (streamId: number, emitEnd: boolean): void => {
         const stream = streams.get(streamId)
         if (!stream) {
@@ -913,6 +986,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         stream.outputBatcher.flush()
         stream.outputBatcher.dispose()
+        ackTotalInFlightBytes = Math.max(0, ackTotalInFlightBytes - stream.ackInFlightBytes)
+        stream.ackInFlightBytes = 0
+        stream.ackPendingOutput = []
         stream.unsubscribeData()
         stream.unsubscribeResize()
         stream.unsubscribeFit()
@@ -946,6 +1022,15 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         if (frame.opcode === TerminalStreamOpcode.Unsubscribe) {
           detachStream(stream.streamId, false)
+          return
+        }
+        if (frame.opcode === TerminalStreamOpcode.Ack) {
+          const parsed = TerminalMultiplexAckFrame.safeParse(
+            decodeTerminalStreamJson<unknown>(frame.payload) ?? {}
+          )
+          if (parsed.success) {
+            acknowledgeOutput(stream, parsed.data.bytes)
+          }
           return
         }
         if (frame.opcode === TerminalStreamOpcode.Input) {
@@ -1110,13 +1195,16 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           ptyId,
           client: request.client,
           isMobile,
+          ackOutput: request.capabilities?.ackOutput === 1,
+          ackInFlightBytes: 0,
           buffering: true,
+          ackPendingOutput: [],
           pendingOutput: [],
           pendingOutputBytes: 0,
           pendingOutputOverflowed: false,
           outputBatcher: createTerminalOutputBatcher((data, meta) => {
             for (const chunk of splitTerminalOutputFrameChunks(data, meta)) {
-              sendFrame(request.streamId, TerminalStreamOpcode.Output, chunk.bytes, chunk.seq)
+              queueOrSendOutput(stream, chunk)
             }
           }),
           unsubscribeData: () => {},

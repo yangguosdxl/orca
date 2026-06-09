@@ -98,8 +98,12 @@ describe('remote runtime terminal data subscriptions', () => {
     const subscribeFrame = decodeTerminalStreamFrame(sendBinary.mock.calls[0][0])
     expect(subscribeFrame?.opcode).toBe(TerminalStreamOpcode.Subscribe)
     const subscribePayload =
-      subscribeFrame && decodeTerminalStreamJson<{ streamId: number }>(subscribeFrame.payload)
+      subscribeFrame &&
+      decodeTerminalStreamJson<{ streamId: number; capabilities?: { ackOutput?: 1 } }>(
+        subscribeFrame.payload
+      )
     expect(subscribePayload?.streamId).toEqual(expect.any(Number))
+    expect(subscribePayload?.capabilities).toEqual({ ackOutput: 1 })
 
     callbacks?.onBinary?.(
       encodeTerminalStreamFrame({
@@ -111,6 +115,12 @@ describe('remote runtime terminal data subscriptions', () => {
     )
 
     expect(watcher).toHaveBeenCalledWith('live')
+    const ackFrame = sendBinary.mock.calls
+      .slice(1)
+      .map((call) => decodeTerminalStreamFrame(call[0]))
+      .find((frame) => frame?.opcode === TerminalStreamOpcode.Ack)
+    expect(ackFrame?.streamId).toBe(subscribePayload!.streamId)
+    expect(ackFrame && decodeTerminalStreamJson(ackFrame.payload)).toEqual({ bytes: 4 })
     expect(_getRemoteRuntimeTerminalMultiplexerCountForTest()).toBe(1)
     dispose()
     expect(unsubscribe).toHaveBeenCalled()

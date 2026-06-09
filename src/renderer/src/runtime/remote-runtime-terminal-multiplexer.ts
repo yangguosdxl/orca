@@ -70,6 +70,7 @@ type RemoteRuntimeMultiplexedTerminalState = {
   streamId: number
   terminal: string
   callbacks: RemoteRuntimeMultiplexedTerminalCallbacks
+  acknowledgeOutput: boolean
   snapshotChunks: Uint8Array<ArrayBufferLike>[]
   snapshotBytes: number
   snapshotOverflowed: boolean
@@ -138,6 +139,7 @@ class RemoteRuntimeTerminalMultiplexer {
       streamId,
       terminal: args.terminal,
       callbacks: args.callbacks,
+      acknowledgeOutput: args.client.type === 'desktop',
       snapshotChunks: [],
       snapshotBytes: 0,
       snapshotOverflowed: false,
@@ -181,7 +183,8 @@ class RemoteRuntimeTerminalMultiplexer {
           streamId,
           terminal: args.terminal,
           client: args.client,
-          viewport: args.viewport
+          viewport: args.viewport,
+          capabilities: args.client.type === 'desktop' ? { ackOutput: 1 } : undefined
         })
       )
       if (!sent) {
@@ -329,10 +332,20 @@ class RemoteRuntimeTerminalMultiplexer {
     }
     if (frame.opcode === TerminalStreamOpcode.Output) {
       const data = decodeTerminalStreamText(frame.payload)
-      stream.callbacks.onData(data, {
-        seq: typeof frame.seq === 'number' && frame.seq > 0 ? frame.seq : undefined,
-        rawLength: data.length
-      })
+      try {
+        stream.callbacks.onData(data, {
+          seq: typeof frame.seq === 'number' && frame.seq > 0 ? frame.seq : undefined,
+          rawLength: data.length
+        })
+      } finally {
+        if (stream.acknowledgeOutput) {
+          this.sendFrame(
+            stream.streamId,
+            TerminalStreamOpcode.Ack,
+            encodeTerminalStreamJson({ bytes: frame.payload.byteLength })
+          )
+        }
+      }
       return
     }
     if (frame.opcode === TerminalStreamOpcode.SnapshotStart) {
