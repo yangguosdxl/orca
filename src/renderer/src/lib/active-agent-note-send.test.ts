@@ -180,6 +180,26 @@ describe('active agent note send', () => {
     expect(getActiveAgentNoteTarget(testState.appState, 'wt-1', NOW)).toBeNull()
   })
 
+  it('does not treat a lone background split-pane title as the focused pane', () => {
+    testState.appState.runtimePaneTitlesByTabId = {
+      'tab-1': { 2: 'Codex' }
+    }
+    testState.appState.terminalLayoutsByTabId = {
+      'tab-1': {
+        activeLeafId: LEAF_ID,
+        root: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', leafId: LEAF_ID },
+          second: { type: 'leaf', leafId: OTHER_LEAF_ID }
+        },
+        ptyIdsByLeafId: { [LEAF_ID]: 'pty-1' }
+      }
+    }
+
+    expect(getActiveAgentNoteTarget(testState.appState, 'wt-1', NOW)).toBeNull()
+  })
+
   it('offers the active terminal send target when the focused pane is a fresh agent session', () => {
     const paneKey = makePaneKey('tab-1', LEAF_ID)
     testState.appState.agentStatusByPaneKey = {

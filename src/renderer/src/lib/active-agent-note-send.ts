@@ -272,12 +272,23 @@ function getFocusedRuntimePaneTitle(
     return null
   }
 
+  const layout = state.terminalLayoutsByTabId[noteTarget.tabId]
   const titleEntries = Object.entries(paneTitles)
+  if (layout?.root) {
+    // Why: split-pane title maps can be sparse; a lone background title must not
+    // enable "send to active agent" for the focused shell pane.
+    for (const [runtimePaneId, title] of titleEntries) {
+      if (resolveRuntimePaneTitleLeafId(layout, runtimePaneId) === noteTarget.leafId) {
+        return title
+      }
+    }
+    return null
+  }
+
   if (titleEntries.length === 1) {
     return titleEntries[0][1]
   }
 
-  const layout = state.terminalLayoutsByTabId[noteTarget.tabId]
   for (const [runtimePaneId, title] of titleEntries) {
     if (resolveRuntimePaneTitleLeafId(layout, runtimePaneId) === noteTarget.leafId) {
       return title
