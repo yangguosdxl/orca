@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_REPORT_PATH = 'test-results/terminal-scale-perf-report.json'
+const DEFAULT_HTML_REPORT_PATH = 'test-results/terminal-perf-impact-report.html'
 
 export function parseReportGateArgs(argv, env = process.env) {
   const forwardedArgs = [...argv]
@@ -115,7 +116,20 @@ export function runTerminalScalePerfReportGate({
     spawnSyncImpl,
     env
   )
-  return exitCode(budgetResult)
+  const budgetExitCode = exitCode(budgetResult)
+  if (budgetExitCode !== 0) {
+    return budgetExitCode
+  }
+
+  const htmlReportPath = env.ORCA_E2E_TERMINAL_PERF_HTML_REPORT_PATH || DEFAULT_HTML_REPORT_PATH
+  const htmlResult = runNodeScript(
+    'config/scripts/generate-terminal-perf-html-report.mjs',
+    [reportPath, '--output', htmlReportPath],
+    'inherit',
+    spawnSyncImpl,
+    env
+  )
+  return exitCode(htmlResult)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
