@@ -993,6 +993,13 @@ export function connectPanePty(
   const onExit = (ptyId: string): void => {
     agentCompletionCoordinator.dispose()
     clearPanePtyFitBinding()
+    // Why: sleep and intentional pane-close/restart paths already record the
+    // desired lifecycle state before kill. Do not erase wake hints here.
+    if (deps.consumeSuppressedPtyExit(ptyId)) {
+      manager.setPaneGpuRendering(pane.id, true)
+      scheduleRuntimeGraphSync()
+      return
+    }
     deps.syncPanePtyLayoutBinding(pane.id, null)
     deps.clearRuntimePaneTitle(deps.tabId, pane.id)
     deps.clearTabPtyId(deps.tabId, ptyId)
@@ -1007,14 +1014,6 @@ export function connectPanePty(
     // we must republish when a pane loses its PTY instead of waiting for a
     // broader layout change that may never happen.
     scheduleRuntimeGraphSync()
-    // Why: intentional restarts suppress the PTY exit ahead of time so the
-    // pane stays mounted and can reconnect in place. Without consuming the
-    // suppression here, split-pane Codex restarts would still close the pane
-    // because this handler runs before the tab-level close logic sees the exit.
-    if (deps.consumeSuppressedPtyExit(ptyId)) {
-      manager.setPaneGpuRendering(pane.id, true)
-      return
-    }
     manager.setPaneGpuRendering(pane.id, true)
     const panes = manager.getPanes()
     if (panes.length <= 1) {
