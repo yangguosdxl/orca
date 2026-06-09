@@ -70,13 +70,8 @@ import type {
 import { getHostedReviewCacheKey, refreshHostedReviewCard } from '@/store/slices/hosted-review'
 import { toast } from 'sonner'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
-import {
-  classifyHostedReview,
-  type HostedReviewClassificationOptions
-} from '../../../../shared/hosted-review-queue'
-import { hostedReviewSummaryFromGitHubPRInfo } from '../../../../shared/hosted-review-github'
+
 import { type ChecksPanelReview, gitHubPRToChecksPanelReview } from './checks-panel-review'
-import { hostedReviewSummaryFromGitLabInfo } from '../../../../shared/hosted-review-gitlab'
 import {
   checksPanelAsyncResultKey,
   checksPanelHostedReviewAsyncResultKey,
@@ -165,7 +160,11 @@ export function ChecksPanelReviewHeader({
       <button
         type="button"
         className="rounded px-0.5 text-[12px] font-semibold text-foreground underline decoration-border underline-offset-2 hover:text-foreground hover:decoration-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        title={translate("auto.components.right.sidebar.ChecksPanel.5c88c6db07", "Open on {{value0}}", { value0: reviewHostLabel })}
+        title={translate(
+          'auto.components.right.sidebar.ChecksPanel.5c88c6db07',
+          'Open on {{value0}}',
+          { value0: reviewHostLabel }
+        )}
         onClick={onOpenReview}
       >
         {reviewNumberLabel}
@@ -181,7 +180,7 @@ export function ChecksPanelReviewHeader({
       <div className="flex-1" />
       <button
         className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-50"
-        title={translate("auto.components.right.sidebar.ChecksPanel.7f4489f370", "Refresh")}
+        title={translate('auto.components.right.sidebar.ChecksPanel.7f4489f370', 'Refresh')}
         onClick={onRefresh}
         disabled={isRefreshing}
       >
@@ -194,8 +193,14 @@ export function ChecksPanelReviewHeader({
               type="button"
               variant="ghost"
               size="icon-xs"
-              aria-label={translate("auto.components.right.sidebar.ChecksPanel.653c105ecc", "More PR actions")}
-              title={translate("auto.components.right.sidebar.ChecksPanel.653c105ecc", "More PR actions")}
+              aria-label={translate(
+                'auto.components.right.sidebar.ChecksPanel.653c105ecc',
+                'More PR actions'
+              )}
+              title={translate(
+                'auto.components.right.sidebar.ChecksPanel.653c105ecc',
+                'More PR actions'
+              )}
               className="text-muted-foreground hover:text-foreground"
             >
               <Ellipsis className="size-3.5" />
@@ -204,10 +209,12 @@ export function ChecksPanelReviewHeader({
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem disabled={!canUnlinkPullRequest} onSelect={onUnlinkPullRequest}>
               <Unlink className="size-3.5" />
-              {translate("auto.components.right.sidebar.ChecksPanel.7202f4a40a", "unlink PR")}</DropdownMenuItem>
+              {translate('auto.components.right.sidebar.ChecksPanel.7202f4a40a', 'unlink PR')}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onLinkAnotherPullRequest}>
               <Link className="size-3.5" />
-              {translate("auto.components.right.sidebar.ChecksPanel.07871c0589", "Link another PR")}</DropdownMenuItem>
+              {translate('auto.components.right.sidebar.ChecksPanel.07871c0589', 'Link another PR')}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -346,7 +353,6 @@ export default function ChecksPanel(): React.JSX.Element {
   const [checksLoading, setChecksLoading] = useState(false)
   const [comments, setComments] = useState<PRComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(false)
-  const [gitLabDetailsFetchedAt, setGitLabDetailsFetchedAt] = useState<number | null>(null)
   const [emptyRefreshing, setEmptyRefreshing] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [conflictDetailsRefreshing, setConflictDetailsRefreshing] = useState(false)
@@ -470,7 +476,6 @@ export default function ChecksPanel(): React.JSX.Element {
     setChecksLoading(false)
     setComments([])
     setCommentsLoading(false)
-    setGitLabDetailsFetchedAt(null)
     setIsRefreshing(false)
     setEmptyRefreshing(false)
     setConflictDetailsRefreshing(false)
@@ -1054,7 +1059,6 @@ export default function ChecksPanel(): React.JSX.Element {
         const result = gitLabPipelineJobsToPRChecks(details?.pipelineJobs ?? [])
         setChecks(result)
         setComments(gitLabMRCommentsToPRComments(details?.comments))
-        setGitLabDetailsFetchedAt(Date.now())
         const signature = JSON.stringify(result.map((c) => `${c.name}:${c.status}:${c.conclusion}`))
         pollIntervalRef.current =
           signature === prevChecksRef.current
@@ -1068,7 +1072,6 @@ export default function ChecksPanel(): React.JSX.Element {
         console.warn('Failed to fetch GitLab MR checks:', err)
         setChecks([])
         setComments([])
-        setGitLabDetailsFetchedAt(null)
       } finally {
         if (isCurrentAsyncResult(requestKey)) {
           setChecksLoading(false)
@@ -1721,7 +1724,12 @@ export default function ChecksPanel(): React.JSX.Element {
       }
       if (!ok) {
         setComments(previousComments)
-        toast.error(translate("auto.components.right.sidebar.ChecksPanel.5788d1059d", "Could not update review thread. Check the GitHub API budget."))
+        toast.error(
+          translate(
+            'auto.components.right.sidebar.ChecksPanel.5788d1059d',
+            'Could not update review thread. Check the GitHub API budget.'
+          )
+        )
       }
       return ok
     },
@@ -1826,9 +1834,12 @@ export default function ChecksPanel(): React.JSX.Element {
         return
       }
       const confirmed = await confirm({
-        title: translate("auto.components.right.sidebar.ChecksPanel.ea9b649ce3", "Delete comment?"),
-        description: translate("auto.components.right.sidebar.ChecksPanel.3b203c62f8", "This will permanently remove the comment from the PR."),
-        confirmLabel: translate("auto.components.right.sidebar.ChecksPanel.786e3c143f", "Delete"),
+        title: translate('auto.components.right.sidebar.ChecksPanel.ea9b649ce3', 'Delete comment?'),
+        description: translate(
+          'auto.components.right.sidebar.ChecksPanel.3b203c62f8',
+          'This will permanently remove the comment from the PR.'
+        ),
+        confirmLabel: translate('auto.components.right.sidebar.ChecksPanel.786e3c143f', 'Delete'),
         confirmVariant: 'destructive'
       })
       if (!confirmed) {
@@ -1907,8 +1918,14 @@ export default function ChecksPanel(): React.JSX.Element {
     const conflictFiles = activeConflictReview.conflictSummary?.files ?? []
     setAgentComposerState({
       actionId: 'resolveConflicts',
-      title: translate("auto.components.right.sidebar.ChecksPanel.4ede779461", "Resolve Review Conflicts With AI"),
-      description: translate("auto.components.right.sidebar.ChecksPanel.abf59262fb", "Review and edit the full command input before starting an agent."),
+      title: translate(
+        'auto.components.right.sidebar.ChecksPanel.4ede779461',
+        'Resolve Review Conflicts With AI'
+      ),
+      description: translate(
+        'auto.components.right.sidebar.ChecksPanel.abf59262fb',
+        'Review and edit the full command input before starting an agent.'
+      ),
       prompt: buildResolvePullRequestConflictsPrompt({
         reviewKind: activeConflictReview.provider === 'gitlab' ? 'MR' : 'PR',
         baseRef: activeConflictReview.conflictSummary?.baseRef,
@@ -1925,7 +1942,12 @@ export default function ChecksPanel(): React.JSX.Element {
     }
     const broken = getBrokenChecks(checks)
     if (broken.length === 0) {
-      toast.message(translate("auto.components.right.sidebar.ChecksPanel.5594400d73", "No broken checks to fix."))
+      toast.message(
+        translate(
+          'auto.components.right.sidebar.ChecksPanel.5594400d73',
+          'No broken checks to fix.'
+        )
+      )
       return
     }
     const requestKey = stateRequestKey
@@ -1978,7 +2000,12 @@ export default function ChecksPanel(): React.JSX.Element {
         launchSource: 'task_page'
       })
       if (started) {
-        toast.success(translate("auto.components.right.sidebar.ChecksPanel.2ef90c9819", "Started an AI agent for the broken checks."))
+        toast.success(
+          translate(
+            'auto.components.right.sidebar.ChecksPanel.2ef90c9819',
+            'Started an AI agent for the broken checks.'
+          )
+        )
       }
     } finally {
       setIsFixingChecksWithAI(false)
@@ -2301,97 +2328,37 @@ export default function ChecksPanel(): React.JSX.Element {
     ]
   )
 
-  const activeReviewClassification = React.useMemo(() => {
-    if (!repo) {
-      return null
-    }
-    const options: HostedReviewClassificationOptions = {
-      agentAuthorLogins: [],
-      viewer: null
-    }
-    if (activeGitLabReview) {
-      const commentsForClassification =
-        gitLabDetailsFetchedAt !== null && !commentsLoading ? comments : undefined
-      const summary = hostedReviewSummaryFromGitLabInfo({
-        review: activeGitLabReview,
-        comments: commentsForClassification,
-        checks
-      })
-      return classifyHostedReview(summary, options)
-    }
-    if (!pr) {
-      return null
-    }
-    let host = 'github.com'
-    let owner = 'unknown'
-    let repoName = 'unknown'
-    try {
-      const parsed = new URL(pr.url)
-      host = parsed.host || host
-      const segments = parsed.pathname.split('/').filter(Boolean)
-      if (segments.length >= 2) {
-        owner = segments[0]
-        repoName = segments[1]
-      }
-    } catch {
-      // Why: malformed URLs should not block queue-state classification.
-    }
-
-    // Why: unresolved thread data is paginated and fetched separately. Until
-    // comments have loaded for this PR, do not let queue badges imply a clean review.
-    const commentsForClassification =
-      commentsFetchedAt !== undefined && !commentsLoading ? comments : undefined
-    const summary = hostedReviewSummaryFromGitHubPRInfo({
-      pr,
-      owner,
-      repo: repoName,
-      host,
-      comments: commentsForClassification,
-      checks
-    })
-    return classifyHostedReview(summary, options)
-  }, [
-    activeGitLabReview,
-    repo,
-    gitLabDetailsFetchedAt,
-    commentsLoading,
-    comments,
-    checks,
-    pr,
-    commentsFetchedAt
-  ])
-
-  const queueBadges = React.useMemo(() => {
-    if (!activeReviewClassification) {
-      return [] as string[]
-    }
-    const badges: string[] = []
-    if (activeReviewClassification.needsResponse) {
-      badges.push('Needs response')
-    }
-    // Why: viewer/author/requestedReviewer signals are not wired into the
-    // ChecksPanel call site yet, so `state` and `requested` would mis-classify
-    // every PR (collapsing to 'teammate'). Suppress those badges until the
-    // inputs are available; needs-response works from PR metadata alone and
-    // remains accurate.
-    return badges
-  }, [activeReviewClassification])
-
   // ── Empty state ──
   if (!activeWorktree) {
     return (
       <div className="px-4 py-6">
-        <div className="text-sm font-medium text-foreground">{translate("auto.components.right.sidebar.ChecksPanel.a4ef4e0832", "No workspace selected")}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{translate("auto.components.right.sidebar.ChecksPanel.b5dd73a105", "Select a workspace to view checks")}</div>
+        <div className="text-sm font-medium text-foreground">
+          {translate(
+            'auto.components.right.sidebar.ChecksPanel.a4ef4e0832',
+            'No workspace selected'
+          )}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {translate(
+            'auto.components.right.sidebar.ChecksPanel.b5dd73a105',
+            'Select a workspace to view checks'
+          )}
+        </div>
       </div>
     )
   }
   if (isFolder) {
     return (
       <div className="px-4 py-6">
-        <div className="text-sm font-medium text-foreground">{translate("auto.components.right.sidebar.ChecksPanel.976cefd02f", "Checks unavailable")}</div>
+        <div className="text-sm font-medium text-foreground">
+          {translate('auto.components.right.sidebar.ChecksPanel.976cefd02f', 'Checks unavailable')}
+        </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {translate("auto.components.right.sidebar.ChecksPanel.dda5924a40", "Checks require a Git branch and hosted review context")}</div>
+          {translate(
+            'auto.components.right.sidebar.ChecksPanel.dda5924a40',
+            'Checks require a Git branch and hosted review context'
+          )}
+        </div>
       </div>
     )
   }
@@ -2468,7 +2435,15 @@ export default function ChecksPanel(): React.JSX.Element {
                   disabled={isPublishingBranch || isRemoteOperationActive}
                   onClick={handlePublishBranch}
                 >
-                  {isPublishingBranch ? translate("auto.components.right.sidebar.ChecksPanel.fdb27637f2", "Publishing…") : translate("auto.components.right.sidebar.ChecksPanel.6633c7a1fb", "Publish Branch")}
+                  {isPublishingBranch
+                    ? translate(
+                        'auto.components.right.sidebar.ChecksPanel.fdb27637f2',
+                        'Publishing…'
+                      )
+                    : translate(
+                        'auto.components.right.sidebar.ChecksPanel.6633c7a1fb',
+                        'Publish Branch'
+                      )}
                 </Button>
               )}
               {(canCreate || canPushCreate) && (
@@ -2480,8 +2455,16 @@ export default function ChecksPanel(): React.JSX.Element {
                   }}
                 >
                   {canPushCreate
-                    ? translate("auto.components.right.sidebar.ChecksPanel.98f4c37b33", "Push & Create {{value0}}", { value0: emptyReviewShortLabel })
-                    : translate("auto.components.right.sidebar.ChecksPanel.889cdfba04", "Create {{value0}}", { value0: emptyReviewShortLabel })}
+                    ? translate(
+                        'auto.components.right.sidebar.ChecksPanel.98f4c37b33',
+                        'Push & Create {{value0}}',
+                        { value0: emptyReviewShortLabel }
+                      )
+                    : translate(
+                        'auto.components.right.sidebar.ChecksPanel.889cdfba04',
+                        'Create {{value0}}',
+                        { value0: emptyReviewShortLabel }
+                      )}
                 </Button>
               )}
               <Button
@@ -2498,7 +2481,9 @@ export default function ChecksPanel(): React.JSX.Element {
                   })
                 }}
               >
-                {emptyRefreshing ? translate("auto.components.right.sidebar.ChecksPanel.71026ca2cb", "Refreshing…") : translate("auto.components.right.sidebar.ChecksPanel.7f4489f370", "Refresh")}
+                {emptyRefreshing
+                  ? translate('auto.components.right.sidebar.ChecksPanel.71026ca2cb', 'Refreshing…')
+                  : translate('auto.components.right.sidebar.ChecksPanel.7f4489f370', 'Refresh')}
               </Button>
             </div>
           )}
@@ -2540,7 +2525,7 @@ export default function ChecksPanel(): React.JSX.Element {
             />
             <button
               className="cursor-pointer rounded p-1 text-emerald-500 transition-colors hover:bg-accent hover:text-emerald-400 disabled:cursor-default disabled:opacity-50"
-              title={translate("auto.components.right.sidebar.ChecksPanel.2ab7fd4b6d", "Save")}
+              title={translate('auto.components.right.sidebar.ChecksPanel.2ab7fd4b6d', 'Save')}
               onClick={() => void handleSaveTitle()}
               disabled={titleSaving}
             >
@@ -2552,7 +2537,7 @@ export default function ChecksPanel(): React.JSX.Element {
             </button>
             <button
               className="cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-50"
-              title={translate("auto.components.right.sidebar.ChecksPanel.058039787c", "Cancel")}
+              title={translate('auto.components.right.sidebar.ChecksPanel.058039787c', 'Cancel')}
               onClick={handleCancelEdit}
               disabled={titleSaving}
             >
@@ -2574,21 +2559,11 @@ export default function ChecksPanel(): React.JSX.Element {
         {/* Updated at */}
         {activeReview.updatedAt && (
           <div className="text-[10px] text-muted-foreground/60">
-            {reviewShortLabel} {translate("auto.components.right.sidebar.ChecksPanel.34464d00b9", "updated")}{new Date(activeReview.updatedAt).toLocaleString()}
+            {reviewShortLabel}{' '}
+            {translate('auto.components.right.sidebar.ChecksPanel.34464d00b9', 'updated')}
+            {new Date(activeReview.updatedAt).toLocaleString()}
           </div>
         )}
-        {queueBadges.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {queueBadges.map((badge) => (
-              <span
-                key={badge}
-                className="rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-              >
-                {badge}
-              </span>
-            ))}
-          </div>
-        ) : null}
 
         {/* Merge / Delete Workspace actions */}
         {activeReview && activeWorktree && repo && (
@@ -2658,7 +2633,10 @@ export default function ChecksPanel(): React.JSX.Element {
           }
         }}
         actionId={agentComposerState?.actionId ?? 'fixChecks'}
-        title={agentComposerState?.title ?? translate("auto.components.right.sidebar.ChecksPanel.7fad8509fe", "Fix With AI")}
+        title={
+          agentComposerState?.title ??
+          translate('auto.components.right.sidebar.ChecksPanel.7fad8509fe', 'Fix With AI')
+        }
         description={agentComposerState?.description ?? ''}
         baseCommandInput={agentComposerState?.prompt ?? ''}
         worktreeId={activeWorktreeId}
@@ -2700,9 +2678,19 @@ export default function ChecksPanel(): React.JSX.Element {
         onSaveAgentDefault={saveLaunchActionDefault}
         onLaunched={() => {
           if (agentComposerState?.actionId === 'resolveConflicts') {
-            toast.success(translate("auto.components.right.sidebar.ChecksPanel.a0181a8d76", "Started an AI agent for the conflicts."))
+            toast.success(
+              translate(
+                'auto.components.right.sidebar.ChecksPanel.a0181a8d76',
+                'Started an AI agent for the conflicts.'
+              )
+            )
           } else {
-            toast.success(translate("auto.components.right.sidebar.ChecksPanel.2ef90c9819", "Started an AI agent for the broken checks."))
+            toast.success(
+              translate(
+                'auto.components.right.sidebar.ChecksPanel.2ef90c9819',
+                'Started an AI agent for the broken checks.'
+              )
+            )
           }
         }}
       />
