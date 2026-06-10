@@ -1,31 +1,18 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import {
+  budgetFailures,
+  collectTerminalPerfRows,
+  compareScenarios,
+  escapeHtml,
+  formatLargeValue,
+  formatMs,
+  readJsonReport,
+  scenarioTitle
+} from './terminal-perf-report-rows.mjs'
 import { basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_OUTPUT_PATH = 'test-results/terminal-perf-impact-report.html'
-
-const BUDGETS = {
-  medianMs: 75,
-  worstMs: 300,
-  revisitMs: 300,
-  maxTimerDriftMs: 150,
-  scrollMs: 150,
-  restoreMs: 1000,
-  rendererQueuedChars: 2 * 1024 * 1024,
-  rendererPeakQueuedChars: 2 * 1024 * 1024,
-  rendererDroppedBacklogs: 0
-}
-
-const SCENARIO_LABELS = [
-  ['opencode-scale-same-workspace', 'Same workspace panes'],
-  ['opencode-scale-cross-workspace', 'Cross-workspace hidden panes'],
-  ['opencode-scale-pressure', 'ACK-backpressured PTYs'],
-  ['opencode-scale-hidden-pressure', 'Hidden real PTYs'],
-  ['opencode-cross-workspace-typing', 'Cross-workspace typing'],
-  ['opencode-main-pressure', 'Main renderer pressure'],
-  ['opencode-hidden-pressure', 'Hidden pressure'],
-  ['opencode-revisit-pressure', 'Revisit under pressure']
-]
 
 // Why: every tracked metric is lower-is-better, so delta coloring and the
 // regression table share one direction rule.
@@ -54,7 +41,7 @@ const SERIES_COLORS = {
   revisitMs: '#0d9488'
 }
 
-const LABELED_INPUT_RE = /^([\w .#@+-]+)=(.+)$/
+const LABELED_INPUT_RE = /^([\w .#@()+-]+)=(.+)$/
 
 export function parseHtmlReportArgs(argv, env = process.env) {
   const args = [...argv]
@@ -93,173 +80,6 @@ export function parseHtmlReportArgs(argv, env = process.env) {
     )
   }
   return { inputs, outputPath }
-}
-
-function readJsonReport(path) {
-  const raw = readFileSync(path, 'utf8')
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start === -1 || end <= start) {
-    throw new Error(`${path}: no JSON object found`)
-  }
-  return JSON.parse(raw.slice(start, end + 1))
-}
-
-function parseAnnotationDescription(description) {
-  const values = {}
-  for (const part of description.split(/\s+/)) {
-    const index = part.indexOf('=')
-    if (index === -1) {
-      continue
-    }
-    values[part.slice(0, index)] = part.slice(index + 1)
-  }
-  return values
-}
-
-function collectTerminalPerfRows(report, source) {
-  const rows = []
-  const visitSuite = (suite) => {
-    for (const spec of suite.specs ?? []) {
-      for (const test of spec.tests ?? []) {
-        for (const annotation of test.annotations ?? []) {
-          if (!annotation.type.startsWith('opencode-')) {
-            continue
-          }
-          rows.push(
-            normalizeRow({
-              source,
-              scenario: annotation.type,
-              ...parseAnnotationDescription(annotation.description ?? '')
-            })
-          )
-        }
-      }
-    }
-    for (const child of suite.suites ?? []) {
-      visitSuite(child)
-    }
-  }
-  for (const suite of report.suites ?? []) {
-    visitSuite(suite)
-  }
-  return rows
-}
-
-function parseMs(value) {
-  const match = String(value ?? '').match(/^(-?\d+(?:\.\d+)?)ms$/)
-  return match ? Number(match[1]) : null
-}
-
-function parseCount(value) {
-  if (value == null || value === '') {
-    return null
-  }
-  const count = Number(value)
-  return Number.isFinite(count) ? count : null
-}
-
-function normalizeRow(row) {
-  return {
-    ...row,
-    group: scenarioGroup(row.scenario),
-    panes: parseCount(row.panes),
-    frames: parseCount(row.frames),
-    medianMs: parseMs(row.median),
-    worstMs: parseMs(row.worst),
-    revisitMs: parseMs(row.revisit),
-    maxTimerDriftMs: parseMs(row.maxTimerDrift),
-    scrollMs: parseMs(row.scroll),
-    restoreMs: parseMs(row.restore),
-    rendererQueuedChars: parseCount(row.rendererQueuedChars),
-    rendererPeakQueuedChars: parseCount(row.rendererPeakQueuedChars),
-    rendererDroppedBacklogs: parseCount(row.rendererDroppedBacklogs),
-    mainPeakPendingChars: parseCount(row.mainPeakPendingChars),
-    mainPeakInFlightChars: parseCount(row.mainPeakInFlightChars),
-    heldAckChars: parseCount(row.heldAckChars),
-    hiddenSkippedChars: parseCount(row.hiddenSkippedChars)
-  }
-}
-
-function scenarioGroup(scenario) {
-  for (const [prefix, label] of SCENARIO_LABELS) {
-    if (scenario.startsWith(prefix)) {
-      return label
-    }
-  }
-  return 'Other terminal scenarios'
-}
-
-function scenarioSortKey(scenario) {
-  const prefixIndex = SCENARIO_LABELS.findIndex(([prefix]) => scenario.startsWith(prefix))
-  const paneMatch = scenario.match(/-(\d+)$/)
-  return [
-    prefixIndex === -1 ? SCENARIO_LABELS.length : prefixIndex,
-    paneMatch ? Number(paneMatch[1]) : 0,
-    scenario
-  ]
-}
-
-function compareScenarios(a, b) {
-  const ka = scenarioSortKey(a)
-  const kb = scenarioSortKey(b)
-  if (ka[0] !== kb[0]) {
-    return ka[0] - kb[0]
-  }
-  if (ka[1] !== kb[1]) {
-    return ka[1] - kb[1]
-  }
-  return ka[2] < kb[2] ? -1 : ka[2] > kb[2] ? 1 : 0
-}
-
-function scenarioTitle(scenario, row) {
-  const group = scenarioGroup(scenario)
-  if (row?.panes != null) {
-    return `${group} — ${row.panes} panes`
-  }
-  return group
-}
-
-function budgetFailures(row) {
-  const failures = []
-  for (const [key, budget] of Object.entries(BUDGETS)) {
-    const value = row[key]
-    if (value == null) {
-      continue
-    }
-    if (value > budget) {
-      failures.push(`${key} ${value} > ${budget}`)
-    }
-  }
-  return failures
-}
-
-function formatMs(value) {
-  if (value == null) {
-    return '—'
-  }
-  return `${value.toFixed(1)}ms`
-}
-
-function formatLargeValue(value) {
-  if (value == null) {
-    return '—'
-  }
-  if (value >= 1024 * 1024) {
-    return `${(value / (1024 * 1024)).toFixed(2)}M`
-  }
-  if (value >= 1024) {
-    return `${Math.round(value / 1024)}k`
-  }
-  return String(value)
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
 }
 
 // ── Trend data ────────────────────────────────────────────────────────────
