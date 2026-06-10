@@ -4765,7 +4765,7 @@ type PullRequestComposerProps = {
   onDropdownAction: (kind: DropdownActionKind) => void
 }
 
-function PullRequestComposer({
+export function PullRequestComposer({
   provider,
   branch,
   base,
@@ -4827,6 +4827,48 @@ function PullRequestComposer({
   // the user can't race the request — the hook otherwise rejects the result
   // with "Fields changed while generating" and silently drops the draft.
   const fieldsLocked = generating
+  const generateDetailsLabel = translate(
+    'auto.components.right.sidebar.SourceControl.02d8c04339',
+    'Generate {{value0}} details with AI',
+    { value0: copy.reviewLabel }
+  )
+  const stopGeneratingDetailsLabel = translate(
+    'auto.components.right.sidebar.SourceControl.b355e740b2',
+    'Stop generating {{value0}} details',
+    { value0: copy.reviewLabel }
+  )
+  const generateTooltipLabel = generating
+    ? stopGeneratingDetailsLabel
+    : (generateDisabledReason ?? generateDetailsLabel)
+  const generateButton = generating ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="xs"
+      onClick={() => onCancelGenerate()}
+      className="text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      aria-label={stopGeneratingDetailsLabel}
+    >
+      <RefreshCw className="size-3 animate-spin" />
+      <span>
+        {translate('auto.components.right.sidebar.SourceControl.e868cec4e1', 'Generating…')}
+      </span>
+      <Square className="size-2.5 fill-current" />
+    </Button>
+  ) : (
+    <Button
+      type="button"
+      variant="outline"
+      size="xs"
+      disabled={generateDisabled}
+      onClick={() => onGenerate()}
+      className="text-[11px] disabled:hover:bg-background"
+      aria-label={generateDetailsLabel}
+    >
+      <Sparkles className="size-3" />
+      {translate('auto.components.right.sidebar.SourceControl.aee92f8684', 'Generate')}
+    </Button>
+  )
 
   return (
     <div className="px-3 pb-2">
@@ -4843,54 +4885,18 @@ function PullRequestComposer({
             </span>
           </div>
           {aiGenerationEnabled ? (
-            generating ? (
-              <button
-                type="button"
-                onClick={() => onCancelGenerate()}
-                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                title={translate(
-                  'auto.components.right.sidebar.SourceControl.527e130b6f',
-                  'Stop generating'
-                )}
-                aria-label={translate(
-                  'auto.components.right.sidebar.SourceControl.b355e740b2',
-                  'Stop generating {{value0}} details',
-                  { value0: copy.reviewLabel }
-                )}
-              >
-                <RefreshCw className="size-3 animate-spin" />
-                <span>
-                  {translate(
-                    'auto.components.right.sidebar.SourceControl.e868cec4e1',
-                    'Generating…'
-                  )}
-                </span>
-                <Square className="size-2.5 fill-current" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={generateDisabled}
-                onClick={() => onGenerate()}
-                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-background"
-                title={
-                  generateDisabledReason ??
-                  translate(
-                    'auto.components.right.sidebar.SourceControl.02d8c04339',
-                    'Generate {{value0}} details with AI',
-                    { value0: copy.reviewLabel }
-                  )
-                }
-                aria-label={translate(
-                  'auto.components.right.sidebar.SourceControl.02d8c04339',
-                  'Generate {{value0}} details with AI',
-                  { value0: copy.reviewLabel }
-                )}
-              >
-                <Sparkles className="size-3" />
-                {translate('auto.components.right.sidebar.SourceControl.aee92f8684', 'Generate')}
-              </button>
-            )
+            <Tooltip>
+              {!generating && generateDisabled ? (
+                <TooltipTrigger asChild>
+                  <span className="inline-flex shrink-0 cursor-not-allowed">{generateButton}</span>
+                </TooltipTrigger>
+              ) : (
+                <TooltipTrigger asChild>{generateButton}</TooltipTrigger>
+              )}
+              <TooltipContent side="left" sideOffset={6}>
+                {generateTooltipLabel}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
 
