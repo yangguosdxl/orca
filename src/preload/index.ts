@@ -505,7 +505,8 @@ const api = {
 
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
-    listHostSetups: () => ipcRenderer.invoke('projectHostSetups:list')
+    listHostSetups: () => ipcRenderer.invoke('projectHostSetups:list'),
+    setupExistingFolder: (args) => ipcRenderer.invoke('projectHostSetups:setupExistingFolder', args)
   } satisfies PreloadApi['projects'],
 
   projectGroups: {

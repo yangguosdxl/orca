@@ -353,6 +353,54 @@ describe('repo RPC methods', () => {
     expect(runtime.listProjectHostSetups).toHaveBeenCalled()
   })
 
+  it('routes project-host setup import to the runtime server', async () => {
+    const result = {
+      project: {
+        id: 'project-1',
+        displayName: 'Project',
+        badgeColor: '#737373',
+        sourceRepoIds: ['repo-1'],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      setup: {
+        id: 'repo-1',
+        projectId: 'project-1',
+        hostId: 'local',
+        repoId: 'repo-1',
+        path: '/repo',
+        displayName: 'Project',
+        setupState: 'ready',
+        setupMethod: 'legacy-repo',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      repo: { id: 'repo-1', path: '/repo', displayName: 'Project' }
+    }
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      setupProjectExistingFolder: vi.fn().mockResolvedValue(result)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: REPO_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('projectHostSetup.setupExistingFolder', {
+        projectId: 'project-1',
+        hostId: 'runtime:env-1',
+        path: '/repo',
+        kind: 'git'
+      })
+    )
+
+    expect(runtime.setupProjectExistingFolder).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      hostId: 'runtime:env-1',
+      path: '/repo',
+      kind: 'git'
+    })
+    expect(response).toMatchObject({ ok: true, result: { result } })
+  })
+
   it('allows separate nested-repo imports without a group name', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

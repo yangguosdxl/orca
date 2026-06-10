@@ -11,6 +11,8 @@ import type {
   Repo,
   ProjectGroup,
   ProjectGroupImportResult,
+  ProjectHostSetupExistingFolderArgs,
+  ProjectHostSetupResult,
   NestedRepoScanResult,
   BaseRefDefaultResult,
   SparsePreset
@@ -61,6 +63,8 @@ import { track } from '../telemetry/client'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import type { RepoMethod } from '../../shared/telemetry-events'
 import { detectRepoIconAndUpstream } from '../repo-icon-autodetect'
+import { getProjectHostSetupForRepo } from '../../shared/project-host-setup-projection'
+import { parseExecutionHostId } from '../../shared/execution-host'
 
 // Why: `method` answers "which entry point did the user take?", not "what did
 // they add?" — so the IPC the renderer invoked IS the method. We never send
@@ -81,6 +85,180 @@ function emitRepoAdded(method: RepoMethod, alreadyExisted: boolean): void {
   // `getCohortAtEmit()` here returns the user's Nth `repo_added` as `N`.
   // See docs/onboarding-funnel-cohort-addendum.md §Read-vs-write ordering.
   track('repo_added', { method, ...getCohortAtEmit() })
+}
+
+function buildProjectHostSetupResult(store: Store, repo: Repo): ProjectHostSetupResult {
+  const setup = getProjectHostSetupForRepo(store.getProjectHostSetups(), repo)
+  const project = store.getProjects().find((entry) => entry.id === setup.projectId)
+  if (!project) {
+    throw new Error(`Project setup was created without a project record: ${setup.projectId}`)
+  }
+  return { project, setup, repo }
+}
+
+function alignRepoWithRequestedProject(
+  store: Store,
+  repo: Repo,
+  projectId: string
+): ProjectHostSetupResult {
+  let setup = getProjectHostSetupForRepo(store.getProjectHostSetups(), repo)
+  if (setup.projectId !== projectId) {
+    const project = store.getProjects().find((entry) => entry.id === projectId)
+    if (!project?.providerIdentity || project.providerIdentity.provider !== 'github') {
+      throw new Error('Imported folder does not match the selected project identity.')
+    }
+    // Why: setup-on-host is an explicit user action for this project. When the
+    // folder lacks upstream metadata but the selected project has provider
+    // identity, stamp that identity so compatibility projection can merge it.
+    const updated = store.updateRepo(repo.id, {
+      upstream: {
+        owner: project.providerIdentity.owner,
+        repo: project.providerIdentity.repo
+      }
+    })
+    if (!updated) {
+      throw new Error(`Project setup repo disappeared before it could be linked: ${repo.id}`)
+    }
+    repo = updated
+    setup = getProjectHostSetupForRepo(store.getProjectHostSetups(), repo)
+  }
+  return buildProjectHostSetupResult(store, repo)
+}
+
+async function addLocalRepoFromPath(
+  store: Store,
+  path: string,
+  kind: 'git' | 'folder' = 'git'
+): Promise<{ repo: Repo; alreadyExisted: boolean } | { error: string }> {
+  const repoKind = kind === 'folder' ? 'folder' : 'git'
+  if (repoKind === 'git' && !isGitRepo(path)) {
+    return { error: `Not a valid git repository: ${path}` }
+  }
+
+  const existing = store.getRepos().find((r) => r.path === path)
+  if (existing) {
+    return { repo: existing, alreadyExisted: true }
+  }
+
+  const detected = await detectRepoIconAndUpstream({ repoPath: path, kind: repoKind })
+  const repo: Repo = {
+    id: randomUUID(),
+    path,
+    displayName: getRepoName(path),
+    badgeColor: DEFAULT_REPO_BADGE_COLOR,
+    ...detected,
+    addedAt: Date.now(),
+    kind: repoKind,
+    ...(repoKind === 'git'
+      ? {
+          externalWorktreeVisibility: 'hide' as const,
+          externalWorktreeVisibilityLegacy: false
+        }
+      : {})
+  }
+
+  store.addRepo(repo)
+  return { repo, alreadyExisted: false }
+}
+
+async function addRemoteRepoFromPath(
+  store: Store,
+  args: {
+    connectionId: string
+    remotePath: string
+    displayName?: string
+    kind?: 'git' | 'folder'
+  }
+): Promise<{ repo: Repo; alreadyExisted: boolean } | { error: string }> {
+  const gitProvider = getSshGitProvider(args.connectionId)
+  if (!gitProvider) {
+    return { error: `SSH connection "${args.connectionId}" not found or not connected` }
+  }
+
+  let repoKind: 'git' | 'folder' = args.kind ?? 'git'
+  let resolvedPath = args.remotePath
+
+  // Why: `~` is a shell expansion that Node's fs APIs don't understand.
+  // Resolve tilde paths to absolute paths via the relay before storing,
+  // so all downstream fs operations (readDir, stat, etc.) work correctly.
+  if (resolvedPath === '~' || resolvedPath === '~/' || resolvedPath.startsWith('~/')) {
+    const mux = getActiveMultiplexer(args.connectionId)
+    if (mux) {
+      try {
+        const result = (await mux.request('session.resolveHome', {
+          path: resolvedPath
+        })) as { resolvedPath: string }
+        resolvedPath = result.resolvedPath
+      } catch {
+        // Relay may not support resolveHome yet — fall through to raw path
+      }
+    }
+  }
+
+  const existing = store
+    .getRepos()
+    .find((r) => r.connectionId === args.connectionId && r.path === resolvedPath)
+  if (existing) {
+    return { repo: existing, alreadyExisted: true }
+  }
+
+  if (args.kind !== 'folder') {
+    try {
+      const check = await gitProvider.isGitRepoAsync(resolvedPath)
+      if (check.isRepo) {
+        repoKind = 'git'
+        if (check.rootPath) {
+          resolvedPath = check.rootPath
+        }
+      } else {
+        return { error: `Not a valid git repository: ${args.remotePath}` }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Not a valid git repository')) {
+        return { error: err.message }
+      }
+      return { error: `Not a valid git repository: ${args.remotePath}` }
+    }
+  }
+
+  const folderName = getRemoteRepoFolderName(resolvedPath)
+  let displayName = args.displayName || folderName
+  if (!args.displayName && (args.remotePath === '~' || args.remotePath === '~/')) {
+    const sshTarget = store.getSshTarget(args.connectionId)
+    if (sshTarget) {
+      displayName = sshTarget.label
+    }
+  }
+
+  const detected = await detectRepoIconAndUpstream({
+    repoPath: resolvedPath,
+    kind: repoKind,
+    connectionId: args.connectionId
+  })
+  const repo: Repo = {
+    id: randomUUID(),
+    path: resolvedPath,
+    displayName,
+    badgeColor: DEFAULT_REPO_BADGE_COLOR,
+    ...detected,
+    addedAt: Date.now(),
+    kind: repoKind,
+    connectionId: args.connectionId,
+    ...(repoKind === 'git'
+      ? {
+          externalWorktreeVisibility: 'hide' as const,
+          externalWorktreeVisibilityLegacy: false
+        }
+      : {})
+  }
+
+  store.addRepo(repo)
+  const mux = getActiveMultiplexer(args.connectionId)
+  if (mux) {
+    mux.notify('session.registerRoot', { rootPath: resolvedPath })
+  }
+
+  return { repo, alreadyExisted: false }
 }
 
 function getRemoteRepoFolderName(remotePath: string): string {
@@ -144,6 +322,14 @@ const ProjectGroupMoveProjectArgs = z.object({
   projectId: z.string().min(1),
   groupId: z.string().nullable(),
   order: z.number().finite().optional()
+})
+
+const ProjectHostSetupExistingFolderIpcArgs = z.object({
+  projectId: z.string().min(1),
+  hostId: z.string().min(1),
+  path: z.string().min(1),
+  kind: z.enum(['git', 'folder']).optional(),
+  displayName: z.string().min(1).optional()
 })
 
 const ProjectGroupScanNestedArgs = z.object({
@@ -434,6 +620,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:update')
   ipcMain.removeHandler('projects:list')
   ipcMain.removeHandler('projectHostSetups:list')
+  ipcMain.removeHandler('projectHostSetups:setupExistingFolder')
   ipcMain.removeHandler('projectGroups:list')
   ipcMain.removeHandler('projectGroups:create')
   ipcMain.removeHandler('projectGroups:update')
@@ -463,6 +650,50 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.handle('projects:list', () => store.getProjects())
 
   ipcMain.handle('projectHostSetups:list', () => store.getProjectHostSetups())
+
+  ipcMain.handle(
+    'projectHostSetups:setupExistingFolder',
+    async (
+      _event,
+      rawArgs: ProjectHostSetupExistingFolderArgs
+    ): Promise<ProjectHostSetupResult> => {
+      const args = parseProjectGroupIpcArgs(
+        ProjectHostSetupExistingFolderIpcArgs,
+        rawArgs,
+        'project_host_setup_invalid_args'
+      )
+      const parsedHost = parseExecutionHostId(args.hostId)
+      if (!parsedHost) {
+        throw new Error(`Unsupported host: ${args.hostId}`)
+      }
+      const existingProject = store.getProjects().find((project) => project.id === args.projectId)
+      if (!existingProject) {
+        throw new Error(`Project not found: ${args.projectId}`)
+      }
+
+      const result =
+        parsedHost.kind === 'local'
+          ? await addLocalRepoFromPath(store, args.path, args.kind)
+          : parsedHost.kind === 'ssh'
+            ? await addRemoteRepoFromPath(store, {
+                connectionId: parsedHost.targetId,
+                remotePath: args.path,
+                displayName: args.displayName,
+                kind: args.kind
+              })
+            : {
+                error:
+                  'Runtime hosts must be set up through the runtime projectHostSetup.setupExistingFolder RPC.'
+              }
+      if ('error' in result) {
+        throw new Error(result.error)
+      }
+      invalidateAuthorizedRootsCache()
+      notifyReposChanged(mainWindow)
+      emitRepoAdded('folder_picker', result.alreadyExisted)
+      return alignRepoWithRequestedProject(store, result.repo, args.projectId)
+    }
+  )
 
   ipcMain.handle('projectGroups:list', () => store.getProjectGroups())
 
@@ -678,40 +909,14 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       _event,
       args: { path: string; kind?: 'git' | 'folder' }
     ): Promise<{ repo: Repo } | { error: string }> => {
-      const repoKind = args.kind === 'folder' ? 'folder' : 'git'
-      if (repoKind === 'git' && !isGitRepo(args.path)) {
-        return { error: `Not a valid git repository: ${args.path}` }
+      const result = await addLocalRepoFromPath(store, args.path, args.kind)
+      if ('error' in result) {
+        return result
       }
-
-      // Check if already added
-      const existing = store.getRepos().find((r) => r.path === args.path)
-      if (existing) {
-        emitRepoAdded('folder_picker', true)
-        return { repo: existing }
-      }
-
-      const detected = await detectRepoIconAndUpstream({ repoPath: args.path, kind: repoKind })
-      const repo: Repo = {
-        id: randomUUID(),
-        path: args.path,
-        displayName: getRepoName(args.path),
-        badgeColor: DEFAULT_REPO_BADGE_COLOR,
-        ...detected,
-        addedAt: Date.now(),
-        kind: repoKind,
-        ...(repoKind === 'git'
-          ? {
-              externalWorktreeVisibility: 'hide' as const,
-              externalWorktreeVisibilityLegacy: false
-            }
-          : {})
-      }
-
-      store.addRepo(repo)
       invalidateAuthorizedRootsCache()
       notifyReposChanged(mainWindow)
-      emitRepoAdded('folder_picker', false)
-      return { repo }
+      emitRepoAdded('folder_picker', result.alreadyExisted)
+      return { repo: result.repo }
     }
   )
 
@@ -726,111 +931,13 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         kind?: 'git' | 'folder'
       }
     ): Promise<{ repo: Repo } | { error: string }> => {
-      const gitProvider = getSshGitProvider(args.connectionId)
-      if (!gitProvider) {
-        return { error: `SSH connection "${args.connectionId}" not found or not connected` }
+      const result = await addRemoteRepoFromPath(store, args)
+      if ('error' in result) {
+        return result
       }
-
-      let repoKind: 'git' | 'folder' = args.kind ?? 'git'
-      let resolvedPath = args.remotePath
-
-      // Why: `~` is a shell expansion that Node's fs APIs don't understand.
-      // Resolve tilde paths to absolute paths via the relay before storing,
-      // so all downstream fs operations (readDir, stat, etc.) work correctly.
-      if (resolvedPath === '~' || resolvedPath === '~/' || resolvedPath.startsWith('~/')) {
-        const mux = getActiveMultiplexer(args.connectionId)
-        if (mux) {
-          try {
-            const result = (await mux.request('session.resolveHome', {
-              path: resolvedPath
-            })) as { resolvedPath: string }
-            resolvedPath = result.resolvedPath
-          } catch {
-            // Relay may not support resolveHome yet — fall through to raw path
-          }
-        }
-      }
-
-      // Why: check for duplicates after tilde resolution so that adding `~/`
-      // when `/home/ubuntu` is already stored correctly detects the duplicate.
-      const existing = store
-        .getRepos()
-        .find((r) => r.connectionId === args.connectionId && r.path === resolvedPath)
-      if (existing) {
-        emitRepoAdded('folder_picker', true)
-        return { repo: existing }
-      }
-
-      if (args.kind !== 'folder') {
-        // Why: when kind is not explicitly 'folder', verify the remote path is
-        // a git repo. Return an error on failure so the renderer can show the "Open as
-        // Folder" confirmation dialog — matching the local add-repo behavior
-        // where non-git directories require explicit user consent.
-        try {
-          const check = await gitProvider.isGitRepoAsync(resolvedPath)
-          if (check.isRepo) {
-            repoKind = 'git'
-            if (check.rootPath) {
-              resolvedPath = check.rootPath
-            }
-          } else {
-            return { error: `Not a valid git repository: ${args.remotePath}` }
-          }
-        } catch (err) {
-          if (err instanceof Error && err.message.includes('Not a valid git repository')) {
-            return { error: err.message }
-          }
-          return { error: `Not a valid git repository: ${args.remotePath}` }
-        }
-      }
-
-      const folderName = getRemoteRepoFolderName(resolvedPath)
-
-      // When folderName is the home directory basename (e.g. 'ubuntu'),
-      // use SSH target label for a more descriptive name
-      let displayName = args.displayName || folderName
-      if (!args.displayName && (args.remotePath === '~' || args.remotePath === '~/')) {
-        const sshTarget = store.getSshTarget(args.connectionId)
-        if (sshTarget) {
-          displayName = sshTarget.label
-        }
-      }
-
-      const detected = await detectRepoIconAndUpstream({
-        repoPath: resolvedPath,
-        kind: repoKind,
-        connectionId: args.connectionId
-      })
-      const repo: Repo = {
-        id: randomUUID(),
-        path: resolvedPath,
-        displayName,
-        badgeColor: DEFAULT_REPO_BADGE_COLOR,
-        ...detected,
-        addedAt: Date.now(),
-        kind: repoKind,
-        connectionId: args.connectionId,
-        ...(repoKind === 'git'
-          ? {
-              externalWorktreeVisibility: 'hide' as const,
-              externalWorktreeVisibilityLegacy: false
-            }
-          : {})
-      }
-
-      store.addRepo(repo)
       notifyReposChanged(mainWindow)
-
-      // Why: register the workspace root with the relay so mutating FS operations
-      // are scoped to this repo's path. Without this, the relay's path ACL would
-      // reject writes to the workspace after the first root is registered.
-      const mux = getActiveMultiplexer(args.connectionId)
-      if (mux) {
-        mux.notify('session.registerRoot', { rootPath: resolvedPath })
-      }
-
-      emitRepoAdded('folder_picker', false)
-      return { repo }
+      emitRepoAdded('folder_picker', result.alreadyExisted)
+      return { repo: result.repo }
     }
   )
 

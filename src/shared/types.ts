@@ -125,6 +125,20 @@ export type ProjectHostSetup = {
   updatedAt: number
 }
 
+export type ProjectHostSetupExistingFolderArgs = {
+  projectId: string
+  hostId: ExecutionHostId
+  path: string
+  kind?: RepoKind
+  displayName?: string
+}
+
+export type ProjectHostSetupResult = {
+  project: Project
+  setup: ProjectHostSetup
+  repo: Repo
+}
+
 export type Repo = {
   id: string
   path: string

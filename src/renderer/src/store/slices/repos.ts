@@ -11,7 +11,9 @@ import type {
   ProjectGroup,
   ProjectHostSetup,
   ProjectGroupImportResult,
-  NestedRepoScanResult
+  NestedRepoScanResult,
+  ProjectHostSetupExistingFolderArgs,
+  ProjectHostSetupResult
 } from '../../../../shared/types'
 import {
   projectHostSetupProjectionFromRepos,
@@ -264,6 +266,9 @@ export type RepoSlice = {
   fetchProjectGroups: () => Promise<void>
   addRepo: () => Promise<Repo | null>
   addRepoPath: (path: string, kind?: 'git' | 'folder') => Promise<Repo | null>
+  setupProjectExistingFolder: (
+    args: ProjectHostSetupExistingFolderArgs
+  ) => Promise<ProjectHostSetupResult | null>
   addNonGitFolder: (path: string) => Promise<Repo | null>
   scanNestedRepos: (
     path: string,
@@ -648,6 +653,53 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       toast.error(translate('auto.store.slices.repos.c6e022ddfc', 'Failed to add project'), {
         description: message,
         duration
+      })
+      return null
+    }
+  },
+
+  setupProjectExistingFolder: async (args) => {
+    try {
+      const target = getActiveRuntimeTarget(get().settings)
+      const result =
+        target.kind === 'local'
+          ? await window.api.projects.setupExistingFolder(args)
+          : (
+              await callRuntimeRpc<{ result: ProjectHostSetupResult }>(
+                target,
+                'projectHostSetup.setupExistingFolder',
+                args,
+                { timeoutMs: 15_000 }
+              )
+            ).result
+      const repo = repoWithFetchedOwner(result.repo, target)
+      const setup = setupWithFetchedOwner(result.setup, target)
+      set((s) => {
+        const nextRepos = s.repos.some((entry) => entry.id === repo.id)
+          ? s.repos.map((entry) => (entry.id === repo.id ? repo : entry))
+          : [...s.repos, repo]
+        const nextProjects = s.projects.some((entry) => entry.id === result.project.id)
+          ? s.projects.map((entry) => (entry.id === result.project.id ? result.project : entry))
+          : [...s.projects, result.project]
+        const nextSetups = s.projectHostSetups.some((entry) => entry.id === setup.id)
+          ? s.projectHostSetups.map((entry) => (entry.id === setup.id ? setup : entry))
+          : [...s.projectHostSetups, setup]
+        return {
+          repos: nextRepos,
+          projects: nextProjects,
+          projectHostSetups: nextSetups
+        }
+      })
+      toast.success(translate('auto.store.slices.repos.8bb3ad7935', 'Project added'), {
+        description: repo.displayName
+      })
+      return { ...result, repo, setup }
+    } catch (err) {
+      console.error('Failed to set up project on host:', err)
+      const message = err instanceof Error ? err.message : String(err)
+      toast.error(translate('auto.store.slices.repos.c6e022ddfc', 'Failed to add project'), {
+        description: message,
+        duration: ERROR_TOAST_DURATION
       })
       return null
     }

@@ -39,6 +39,7 @@ const reposPickFolder = vi.fn()
 const reposRemove = vi.fn()
 const reposUpdate = vi.fn()
 const reposReorder = vi.fn()
+const projectsSetupExistingFolder = vi.fn()
 const projectGroupsMoveProject = vi.fn()
 const ptyKill = vi.fn()
 const runtimeEnvironmentCall = vi.fn()
@@ -52,6 +53,7 @@ beforeEach(() => {
   reposRemove.mockReset()
   reposUpdate.mockReset()
   reposReorder.mockReset()
+  projectsSetupExistingFolder.mockReset()
   projectGroupsMoveProject.mockReset()
   ptyKill.mockReset()
   runtimeEnvironmentCall.mockReset()
@@ -68,6 +70,9 @@ beforeEach(() => {
         remove: reposRemove,
         update: reposUpdate,
         reorder: reposReorder
+      },
+      projects: {
+        setupExistingFolder: projectsSetupExistingFolder
       },
       projectGroups: {
         moveProject: projectGroupsMoveProject
@@ -121,11 +126,16 @@ describe('repo slice runtime routing', () => {
     const listHostSetups = vi.fn().mockResolvedValue([setup])
     ;(
       window.api as typeof window.api & {
-        projects?: { list: typeof projectsList; listHostSetups: typeof listHostSetups }
+        projects?: {
+          list: typeof projectsList
+          listHostSetups: typeof listHostSetups
+          setupExistingFolder: typeof projectsSetupExistingFolder
+        }
       }
     ).projects = {
       list: projectsList,
-      listHostSetups
+      listHostSetups,
+      setupExistingFolder: projectsSetupExistingFolder
     }
     reposList.mockResolvedValue([localRepo])
     const store = createTestStore()
@@ -242,6 +252,110 @@ describe('repo slice runtime routing', () => {
     })
     expect(reposAdd).not.toHaveBeenCalled()
     expect(reposPickFolder).not.toHaveBeenCalled()
+  })
+
+  it('sets up a project on a local host through the project setup API', async () => {
+    const project: Project = {
+      id: 'project-1',
+      displayName: 'Project',
+      badgeColor: '#000',
+      sourceRepoIds: ['local-repo'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const setup: ProjectHostSetup = {
+      id: 'local-repo',
+      projectId: project.id,
+      hostId: 'local',
+      repoId: 'local-repo',
+      path: '/local',
+      displayName: 'Local',
+      setupState: 'ready',
+      setupMethod: 'legacy-repo',
+      createdAt: 1,
+      updatedAt: 1
+    }
+    projectsSetupExistingFolder.mockResolvedValue({ project, setup, repo: localRepo })
+    const store = createTestStore()
+
+    await expect(
+      store.getState().setupProjectExistingFolder({
+        projectId: project.id,
+        hostId: 'local',
+        path: '/local',
+        kind: 'git'
+      })
+    ).resolves.toEqual({
+      project,
+      setup,
+      repo: { ...localRepo, executionHostId: 'local' }
+    })
+
+    expect(store.getState().repos).toEqual([{ ...localRepo, executionHostId: 'local' }])
+    expect(store.getState().projects).toEqual([project])
+    expect(store.getState().projectHostSetups).toEqual([setup])
+    expect(projectsSetupExistingFolder).toHaveBeenCalledWith({
+      projectId: project.id,
+      hostId: 'local',
+      path: '/local',
+      kind: 'git'
+    })
+  })
+
+  it('sets up a project on the active runtime host through runtime RPC', async () => {
+    const project: Project = {
+      id: 'project-1',
+      displayName: 'Project',
+      badgeColor: '#000',
+      sourceRepoIds: ['remote-repo'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const setup: ProjectHostSetup = {
+      id: 'remote-repo',
+      projectId: project.id,
+      hostId: 'local',
+      repoId: 'remote-repo',
+      path: '/srv/project',
+      displayName: 'Remote',
+      setupState: 'ready',
+      setupMethod: 'legacy-repo',
+      createdAt: 1,
+      updatedAt: 1
+    }
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-setup',
+      ok: true,
+      result: { result: { project, setup, repo: remoteRepo } },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({ settings: { activeRuntimeEnvironmentId: 'env-1' } as never })
+
+    await expect(
+      store.getState().setupProjectExistingFolder({
+        projectId: project.id,
+        hostId: 'runtime:env-1',
+        path: '/srv/project',
+        kind: 'git'
+      })
+    ).resolves.toEqual({
+      project,
+      setup: { ...setup, hostId: 'runtime:env-1', executionHostId: 'runtime:env-1' },
+      repo: { ...remoteRepo, executionHostId: 'runtime:env-1' }
+    })
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-1',
+      method: 'projectHostSetup.setupExistingFolder',
+      params: {
+        projectId: project.id,
+        hostId: 'runtime:env-1',
+        path: '/srv/project',
+        kind: 'git'
+      },
+      timeoutMs: 15_000
+    })
   })
 
   it('keeps runtime ownership when a runtime repo is moved between groups', async () => {

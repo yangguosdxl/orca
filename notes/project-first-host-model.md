@@ -720,6 +720,12 @@ Landed so far:
   fields to `Worktree`/`WorktreeMeta`, threaded them through worktree merge
   paths, and stamped them for new local, SSH, folder, and runtime-created
   workspaces when project-host setup data is available.
+- Added first-class setup-on-existing-folder plumbing through local IPC,
+  preload, runtime RPC, runtime service, and the renderer repo slice. The new
+  `projectHostSetup.setupExistingFolder` path returns `{ project, setup, repo }`
+  and reuses the existing local/SSH/runtime repo import behavior underneath,
+  with an identity guard so an imported folder does not silently become a
+  different project.
 - Added tests for local repos, SSH repos, same-provider multi-host grouping,
   no-identity same-name non-grouping, selector cache behavior, persistence
   backfill, repo mutation synchronization, renderer hydration, and runtime RPC
@@ -743,6 +749,8 @@ Remaining end-to-end work:
 - teach workspace creation to resolve `{ projectId, hostId }` through a ready
   project-host setup
 - add setup-on-host flows for local paths and SSH paths
+- add clone/provision setup-on-host flows; existing-folder setup now has an API
+  bridge, but not a complete user-facing project settings flow
 - split settings into explicit client, host, project, and project-host setup
   scopes
 - backfill explicit workspace project/setup/host ownership for existing

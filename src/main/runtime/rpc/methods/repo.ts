@@ -4,6 +4,7 @@ import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas
 import { sanitizeRepoIcon } from '../../../../shared/repo-icon'
 import { normalizeRepoBadgeColor } from '../../../../shared/repo-badge-color'
 import { normalizeRepoSourceControlAiOverrides } from '../../../../shared/source-control-ai'
+import { PROJECT_RUNTIME_METHODS } from './project-runtime-rpc-methods'
 
 const RepoSelector = z.object({
   repo: requiredString('Missing repo selector')
@@ -156,16 +157,7 @@ export const REPO_METHODS: RpcMethod[] = [
     params: null,
     handler: (_params, { runtime }) => ({ repos: runtime.listRepos() })
   }),
-  defineMethod({
-    name: 'project.list',
-    params: null,
-    handler: (_params, { runtime }) => ({ projects: runtime.listProjects() })
-  }),
-  defineMethod({
-    name: 'projectHostSetup.list',
-    params: null,
-    handler: (_params, { runtime }) => ({ setups: runtime.listProjectHostSetups() })
-  }),
+  ...PROJECT_RUNTIME_METHODS,
   defineMethod({
     name: 'projectGroup.list',
     params: null,

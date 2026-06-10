@@ -124,6 +124,8 @@ import type {
   Repo,
   ProjectGroup,
   ProjectHostSetup,
+  ProjectHostSetupExistingFolderArgs,
+  ProjectHostSetupResult,
   ProjectGroupImportResult,
   ProjectGroupImportMode,
   ShellHydrationFailureReason,
@@ -777,6 +779,9 @@ export type PreloadApi = {
   projects: {
     list: () => Promise<Project[]>
     listHostSetups: () => Promise<ProjectHostSetup[]>
+    setupExistingFolder: (
+      args: ProjectHostSetupExistingFolderArgs
+    ) => Promise<ProjectHostSetupResult>
   }
   projectGroups: {
     list: () => Promise<ProjectGroup[]>
