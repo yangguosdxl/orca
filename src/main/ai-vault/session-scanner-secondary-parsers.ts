@@ -172,9 +172,15 @@ export async function consumeOpenCodeMessages(
     if (!entry.isFile() || !entry.name.endsWith('.json')) {
       continue
     }
-    const message = asRecord(
-      JSON.parse(await readFile(join(messageDir, entry.name), 'utf-8')) as unknown
-    )
+    let message
+    try {
+      message = asRecord(JSON.parse(await readFile(join(messageDir, entry.name), 'utf-8')) as unknown)
+    } catch {
+      // Why: a single truncated/corrupt per-message file (e.g. interrupted run)
+      // must not abort the whole session. Skip it like the JSONL parsers skip a
+      // bad line via parseJsonObject, keeping the otherwise-valid session.
+      continue
+    }
     if (!message) {
       continue
     }

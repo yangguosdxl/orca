@@ -248,6 +248,51 @@ describe('scanAiVaultSessions', () => {
     })
   })
 
+  it('keeps an OpenCode session when one per-message file is corrupt JSON', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-opencode-corrupt-'))
+    tempRoots.push(root)
+    const roots = isolatedScanRoots(root)
+
+    await mkdir(join(roots.opencodeStorageDir, 'session', 'project'), { recursive: true })
+    await mkdir(join(roots.opencodeStorageDir, 'message', 'opencode-session'), { recursive: true })
+    await writeFile(
+      join(roots.opencodeStorageDir, 'session', 'project', 'ses_opencode.json'),
+      JSON.stringify({
+        id: 'opencode-session',
+        directory: '/tmp/opencode',
+        title: 'OpenCode title',
+        time: { created: 1_777_634_000_000, updated: 1_777_634_001_000 }
+      })
+    )
+    // Why: an interrupted agent run can leave a half-written message file.
+    await writeFile(
+      join(roots.opencodeStorageDir, 'message', 'opencode-session', 'msg_0.json'),
+      '{"role":"user","summary":{"title":"truncat'
+    )
+    await writeFile(
+      join(roots.opencodeStorageDir, 'message', 'opencode-session', 'msg_1.json'),
+      JSON.stringify({
+        role: 'user',
+        summary: { title: 'OpenCode title' },
+        time: { created: 1_777_634_000_000 },
+        tokens: { input: 7, output: 3 }
+      })
+    )
+
+    const result = await scanAiVaultSessions({
+      ...roots,
+      platform: 'darwin'
+    })
+
+    expect(result.issues).toEqual([])
+    expect(result.sessions).toHaveLength(1)
+    expect(result.sessions[0]).toMatchObject({
+      agent: 'opencode',
+      sessionId: 'opencode-session',
+      messageCount: 1
+    })
+  })
+
   it('indexes every supported agent transcript format with native resume commands', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-all-agents-'))
     tempRoots.push(root)
