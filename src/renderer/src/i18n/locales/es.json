@@ -7460,6 +7460,9 @@
             "71026ca2cb": "Refrescante…",
             "889cdfba04": "Crear {{value0}}",
             "98f4c37b33": "Empujar y crear {{value0}}",
+            "b6ce28da5b": "{{value0}} #{{value1}} ya está abierto",
+            "cf9e69f3be": "{{value0}} ya está abierto",
+            "192e686e57": "Abrir en {{value0}}",
             "6633c7a1fb": "Rama de publicación",
             "fdb27637f2": "Publicación…",
             "e56c42122e": "destructivo",
@@ -7493,6 +7496,9 @@
             "a154fe55e6": "Empujar y crear {{value0}}",
             "21c7a1daa0": "{{value0}} ya está abierto",
             "db9cee18f7": "Crear {{value0}}"
+          },
+          "CreateHostedReviewComposer": {
+            "741ff8a0d2": "Empujar y crear {{value0}}"
           },
           "CreatePullRequestGenerateButton": {
             "4012459f8a": "Generar con IA",
@@ -7712,6 +7718,9 @@
             "30b8d4f181": "Soluciona el error de commit con IA",
             "4b37ae99b0": "Inicie el agente de IA predeterminado para solucionar este error de commit",
             "ae743199cd": "Elija una rama base diferente antes de crear un {{value0}}.",
+            "318e2a7f88": "Espere a que termine la generación con IA.",
+            "f76307c1f7": "Elija una rama base.",
+            "4f76c0a9de": "La rama base debe ser distinta de la rama HEAD.",
             "c5e4175139": "Más {{value0}} y acciones remotas",
             "78ddfd0bb4": "Crear como borrador",
             "e64a632456": "principal",

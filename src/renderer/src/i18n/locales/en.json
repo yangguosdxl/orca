@@ -7587,6 +7587,9 @@
             "71026ca2cb": "Refreshing…",
             "889cdfba04": "Create {{value0}}",
             "98f4c37b33": "Push & Create {{value0}}",
+            "b6ce28da5b": "{{value0}} #{{value1}} is already open",
+            "cf9e69f3be": "{{value0}} is already open",
+            "192e686e57": "Open on {{value0}}",
             "6633c7a1fb": "Publish Branch",
             "fdb27637f2": "Publishing…",
             "e56c42122e": "destructive",
@@ -7620,6 +7623,9 @@
             "a154fe55e6": "Push & Create {{value0}}",
             "21c7a1daa0": "{{value0}} is already open",
             "db9cee18f7": "Create {{value0}}"
+          },
+          "CreateHostedReviewComposer": {
+            "741ff8a0d2": "Push & Create {{value0}}"
           },
           "CreatePullRequestGenerateButton": {
             "4012459f8a": "Generate with AI",
@@ -7839,6 +7845,9 @@
             "30b8d4f181": "Fix commit failure with AI",
             "4b37ae99b0": "Start the default AI agent to fix this commit failure",
             "ae743199cd": "Choose a different base branch before creating a {{value0}}.",
+            "318e2a7f88": "Wait for AI generation to finish.",
+            "f76307c1f7": "Choose a base branch.",
+            "4f76c0a9de": "Base branch must differ from the head branch.",
             "c5e4175139": "More {{value0}} and remote actions",
             "78ddfd0bb4": "Create as draft",
             "e64a632456": "main",

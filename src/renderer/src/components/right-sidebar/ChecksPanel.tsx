@@ -66,11 +66,11 @@ import {
   isResolvablePRCommentGroup
 } from '../pr-comments-resolution-prompt'
 import { startFixChecksAgent } from '@/lib/fix-checks-agent-launch'
-import { CreatePullRequestDialog } from './CreatePullRequestDialog'
 import type {
   HostedReviewCreationEligibility,
   HostedReviewProvider
 } from '../../../../shared/hosted-review'
+import { normalizeHostedReviewHeadRef } from '../../../../shared/hosted-review-refs'
 import { getHostedReviewCacheKey, refreshHostedReviewCard } from '@/store/slices/hosted-review'
 import { toast } from 'sonner'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
@@ -89,7 +89,11 @@ import {
   getChecksPanelEmptyStateCopy,
   shouldShowChecksPanelPublishBranchAction
 } from './checks-panel-empty-state'
-import { getRuntimeGitStatus, getRuntimeGitUpstreamStatus } from '@/runtime/runtime-git-client'
+import {
+  getRuntimeGitScope,
+  getRuntimeGitStatus,
+  getRuntimeGitUpstreamStatus
+} from '@/runtime/runtime-git-client'
 import {
   buildChecksPanelGitStatusContextKey,
   readChecksPanelPublishActionGitStatus,
@@ -107,7 +111,13 @@ import { gitLabPipelineJobsToPRChecks } from '../../../../shared/gitlab-pipeline
 import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import { SourceControlAgentActionDialog } from './SourceControlAgentActionDialog'
 import { readSourceControlLaunchRecipeAgentId } from '@/lib/source-control-launch-agent-selection'
-import { resolveSourceControlActionRecipe } from '../../../../shared/source-control-ai'
+import {
+  DEFAULT_SOURCE_CONTROL_AI_PR_CREATION_DEFAULTS,
+  resolveSourceControlActionRecipe,
+  resolveSourceControlAiForOperation,
+  resolveSourceControlAiPrCreationDefaults
+} from '../../../../shared/source-control-ai'
+import { getCommitMessageModelDiscoveryHostKeyForScope } from '../../../../shared/commit-message-host-key'
 import {
   type SourceControlActionRecipe,
   type SourceControlLaunchActionId
@@ -118,6 +128,10 @@ import {
 } from '../../../../shared/source-control-ai-recipe-save'
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import { CreateHostedReviewComposer } from './CreateHostedReviewComposer'
+import { formatCreateError } from './create-pull-request-review-copy'
+import { stripBaseRef, useCreatePullRequestDialogFields } from './useCreatePullRequestDialogFields'
+import { localizedHostedReviewCopy } from '@/i18n/hosted-review-localized-copy'
 import { translate } from '@/i18n/i18n'
 import { groupPRComments, type PRCommentGroup } from '@/lib/pr-comment-groups'
 
@@ -326,6 +340,7 @@ export default function ChecksPanel(): React.JSX.Element {
   const getHostedReviewCreationEligibility = useAppStore(
     (s) => s.getHostedReviewCreationEligibility
   )
+  const createHostedReview = useAppStore((s) => s.createHostedReview)
   const enqueueGitHubPRRefresh = useAppStore((s) => s.enqueueGitHubPRRefresh)
   const conflictOperation = useAppStore((s) =>
     activeWorktreeId ? (s.gitConflictOperationByWorktree[activeWorktreeId] ?? 'unknown') : 'unknown'
@@ -372,8 +387,10 @@ export default function ChecksPanel(): React.JSX.Element {
   const [emptyRefreshing, setEmptyRefreshing] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [conflictDetailsRefreshing, setConflictDetailsRefreshing] = useState(false)
-  const [createPrDialogOpen, setCreatePrDialogOpen] = useState(false)
   const [createPrPushFirst, setCreatePrPushFirst] = useState(false)
+  const createPrInFlightRef = useRef<string | null>(null)
+  const [isCreatingPr, setIsCreatingPr] = useState(false)
+  const [createPrError, setCreatePrError] = useState<string | null>(null)
   const [isPublishingBranch, setIsPublishingBranch] = useState(false)
   const isResolvingConflictsWithAI = false
   const [isFixingChecksWithAI, setIsFixingChecksWithAI] = useState(false)
@@ -507,8 +524,10 @@ export default function ChecksPanel(): React.JSX.Element {
     setIsRefreshing(false)
     setEmptyRefreshing(false)
     setConflictDetailsRefreshing(false)
-    setCreatePrDialogOpen(false)
     setCreatePrPushFirst(false)
+    createPrInFlightRef.current = null
+    setIsCreatingPr(false)
+    setCreatePrError(null)
     setIsPublishingBranch(false)
     setAgentComposerState(null)
     setHostedReviewCreationSnapshot(null)
@@ -662,6 +681,95 @@ export default function ChecksPanel(): React.JSX.Element {
     hostedReviewCreationSnapshot?.requestKey === hostedReviewCreationRequestKey
       ? hostedReviewCreationSnapshot.data
       : null
+  const hostedReviewCreateProvider: HostedReviewProvider =
+    hostedReviewCreation?.provider === 'gitlab' ? 'gitlab' : 'github'
+  const hostedReviewCreateCopy = localizedHostedReviewCopy(hostedReviewCreateProvider)
+  const handleBranchChangedByPullRequestGeneration = useCallback(async (): Promise<void> => {
+    if (!activeWorktreeId || !activeWorktree?.path) {
+      return
+    }
+    // Why: AI PR detail generation can rebase before summarizing. If HEAD
+    // moved, the embedded composer should push before creating the review.
+    setCreatePrPushFirst(true)
+    const connectionId = activeConnectionId ?? undefined
+    await fetchUpstreamStatus(activeWorktreeId, activeWorktree.path, connectionId)
+  }, [activeConnectionId, activeWorktree?.path, activeWorktreeId, fetchUpstreamStatus])
+  const prCreationDefaults = useMemo(() => {
+    if (!settings) {
+      return DEFAULT_SOURCE_CONTROL_AI_PR_CREATION_DEFAULTS
+    }
+    const hostKey = getCommitMessageModelDiscoveryHostKeyForScope(
+      getRuntimeGitScope(settings, repo?.connectionId)
+    )
+    const resolved = resolveSourceControlAiForOperation({
+      settings,
+      repo,
+      operation: 'pullRequest',
+      discoveryHostKey: hostKey,
+      prCreationProductDefaults: DEFAULT_SOURCE_CONTROL_AI_PR_CREATION_DEFAULTS
+    })
+    return resolved.ok
+      ? resolved.value.prCreationDefaults
+      : resolveSourceControlAiPrCreationDefaults({
+          settings,
+          repo,
+          prCreationProductDefaults: DEFAULT_SOURCE_CONTROL_AI_PR_CREATION_DEFAULTS
+        })
+  }, [repo, settings])
+  const createComposerOpen =
+    !activeReview &&
+    !isFolder &&
+    Boolean(branch) &&
+    (hostedReviewCreation?.canCreate === true ||
+      hostedReviewCreation?.blockedReason === 'needs_push')
+  const {
+    aiGenerationEnabled: prAiGenerationEnabled,
+    base: prBase,
+    setBase: setPrBase,
+    title: prTitle,
+    setTitle: setPrTitle,
+    body: prBody,
+    setBody: setPrBody,
+    draft: prDraft,
+    setDraft: setPrDraft,
+    baseQuery: prBaseQuery,
+    setBaseQuery: setPrBaseQuery,
+    baseResults: prBaseResults,
+    setBaseResults: setPrBaseResults,
+    baseSearchError: prBaseSearchError,
+    generating: prGenerating,
+    generateError: prGenerateError,
+    generateDisabled: prGenerateDisabled,
+    generateDisabledReason: prGenerateDisabledReason,
+    handleGenerate: handleGeneratePullRequestFields,
+    handleCancelGenerate: handleCancelGeneratePullRequestFields
+  } = useCreatePullRequestDialogFields({
+    open: createComposerOpen,
+    repoId: repo?.id ?? '',
+    worktreeId: activeWorktreeId,
+    worktreePath: activeWorktreePath ?? '',
+    branch,
+    eligibility: hostedReviewCreation,
+    repo,
+    settings,
+    submitting: isCreatingPr,
+    prCreationDefaults,
+    onBranchChangedByGeneration: handleBranchChangedByPullRequestGeneration
+  })
+  const handlePrBaseChange = useCallback(
+    (value: string): void => {
+      setCreatePrError(null)
+      setPrBase(value)
+    },
+    [setPrBase]
+  )
+  const handlePrTitleChange = useCallback(
+    (value: string): void => {
+      setCreatePrError(null)
+      setPrTitle(value)
+    },
+    [setPrTitle]
+  )
   const stateRequestKey =
     repo && branch
       ? activeGitLabReview
@@ -2468,17 +2576,6 @@ export default function ChecksPanel(): React.JSX.Element {
     pushBranch
   ])
 
-  const handleBranchChangedByPullRequestGeneration = useCallback(async (): Promise<void> => {
-    if (!activeWorktreeId || !activeWorktree?.path) {
-      return
-    }
-    // Why: AI PR detail generation rebases before summarizing; if HEAD moved,
-    // the dialog must push before creating from the refreshed branch state.
-    setCreatePrPushFirst(true)
-    const connectionId = activeConnectionId ?? undefined
-    await fetchUpstreamStatus(activeWorktreeId, activeWorktree.path, connectionId)
-  }, [activeConnectionId, activeWorktree?.path, activeWorktreeId, fetchUpstreamStatus])
-
   const handlePullRequestCreated = useCallback(
     async (result: {
       provider: HostedReviewProvider
@@ -2535,6 +2632,166 @@ export default function ChecksPanel(): React.JSX.Element {
     ]
   )
 
+  const handleCreatePullRequest = useCallback(async (): Promise<void> => {
+    if (!repo || !branch || !createComposerOpen || prGenerating || createPrInFlightRef.current) {
+      return
+    }
+
+    const requestContextKey = panelContextKey
+    const isCurrentCreateRequest = (): boolean =>
+      panelContextKeyRef.current === requestContextKey &&
+      createPrInFlightRef.current === requestContextKey
+    const base = stripBaseRef(prBase).trim()
+    const title = prTitle.trim()
+    const worktreePath = activeWorktreePath ?? repo.path
+    if (!title) {
+      setCreatePrError(
+        translate(
+          'auto.components.right.sidebar.SourceControl.f3a8b2c1d0e5',
+          'Enter a {{value0}} title.',
+          {
+            value0: hostedReviewCreateCopy.reviewLabel
+          }
+        )
+      )
+      return
+    }
+    if (!base || stripBaseRef(base).toLowerCase() === stripBaseRef(branch).toLowerCase()) {
+      setCreatePrError(
+        translate(
+          'auto.components.right.sidebar.SourceControl.ae743199cd',
+          'Choose a different base branch before creating a {{value0}}.',
+          { value0: hostedReviewCreateCopy.reviewLabel }
+        )
+      )
+      return
+    }
+
+    createPrInFlightRef.current = requestContextKey
+    setIsCreatingPr(true)
+    setCreatePrError(null)
+    let pushed = false
+    try {
+      const shouldPushBeforeCreate =
+        createPrPushFirst || hostedReviewCreation?.blockedReason === 'needs_push'
+      if (shouldPushBeforeCreate) {
+        const ok = await pushBeforeCreatePullRequest()
+        if (!isCurrentCreateRequest()) {
+          return
+        }
+        if (!ok) {
+          setCreatePrError('Push failed. Resolve the push error, then try again.')
+          return
+        }
+        pushed = true
+      }
+      const result = await createHostedReview(repo.path, {
+        provider: hostedReviewCreateProvider,
+        base,
+        head: normalizeHostedReviewHeadRef(branch),
+        title,
+        body: prBody,
+        draft: prDraft,
+        worktreePath,
+        useTemplate: prCreationDefaults.useTemplate
+      })
+      if (!isCurrentCreateRequest()) {
+        return
+      }
+      if (result.ok) {
+        await handlePullRequestCreated({
+          provider: hostedReviewCreateProvider,
+          number: result.number,
+          url: result.url
+        })
+        if (prCreationDefaults.openAfterCreate) {
+          openHttpLink(result.url, { worktreeId: activeWorktreeId })
+        }
+        setCreatePrPushFirst(false)
+        return
+      }
+      if (result.existingReview?.url) {
+        const number = result.existingReview.number
+        toast.success(
+          number
+            ? translate(
+                'auto.components.right.sidebar.ChecksPanel.b6ce28da5b',
+                '{{value0}} #{{value1}} is already open',
+                { value0: hostedReviewCreateCopy.titleLabel, value1: number }
+              )
+            : translate(
+                'auto.components.right.sidebar.ChecksPanel.cf9e69f3be',
+                '{{value0}} is already open',
+                { value0: hostedReviewCreateCopy.titleLabel }
+              ),
+          {
+            action: {
+              label: translate(
+                'auto.components.right.sidebar.ChecksPanel.192e686e57',
+                'Open on {{value0}}',
+                { value0: hostedReviewCreateCopy.providerName }
+              ),
+              onClick: () => window.api.shell.openUrl(result.existingReview!.url)
+            }
+          }
+        )
+        if (number) {
+          await handlePullRequestCreated({
+            provider: hostedReviewCreateProvider,
+            number,
+            url: result.existingReview.url
+          })
+          setCreatePrPushFirst(false)
+          return
+        }
+      }
+      setCreatePrError(formatCreateError(result, pushed, hostedReviewCreateCopy.shortLabel))
+    } catch (error) {
+      if (!isCurrentCreateRequest()) {
+        return
+      }
+      setCreatePrError(
+        error instanceof Error
+          ? error.message
+          : translate(
+              'auto.components.right.sidebar.SourceControl.e2b7a1c0d9f4',
+              'Failed to create {{value0}}',
+              { value0: hostedReviewCreateCopy.reviewLabel }
+            )
+      )
+    } finally {
+      if (createPrInFlightRef.current === requestContextKey) {
+        createPrInFlightRef.current = null
+        setIsCreatingPr(false)
+        setGitStatusRefreshNonce((value) => value + 1)
+      }
+    }
+  }, [
+    activeWorktreePath,
+    activeWorktreeId,
+    branch,
+    createComposerOpen,
+    createHostedReview,
+    createPrPushFirst,
+    handlePullRequestCreated,
+    hostedReviewCreateCopy.providerName,
+    hostedReviewCreateCopy.reviewLabel,
+    hostedReviewCreateCopy.shortLabel,
+    hostedReviewCreateCopy.titleLabel,
+    hostedReviewCreateProvider,
+    hostedReviewCreation?.blockedReason,
+    panelContextKey,
+    prBase,
+    prBody,
+    prCreationDefaults.openAfterCreate,
+    prCreationDefaults.useTemplate,
+    prDraft,
+    prGenerating,
+    prTitle,
+    pushBeforeCreatePullRequest,
+    repo
+  ])
+
   // ── Empty state ──
   if (!activeWorktree) {
     return (
@@ -2588,7 +2845,6 @@ export default function ChecksPanel(): React.JSX.Element {
       linkedGitLabMR !== null || hostedReviewCreation?.provider === 'gitlab'
     const emptyReviewLabel = emptyReviewIsGitLab ? 'merge request' : 'pull request'
     const emptyReviewShortLabel = emptyReviewIsGitLab ? 'MR' : 'PR'
-    const canCreate = hostedReviewCreation?.canCreate
     const canPushCreate = hostedReviewCreation?.blockedReason === 'needs_push'
     const canPublishBranch =
       isPublishingBranch ||
@@ -2608,74 +2864,78 @@ export default function ChecksPanel(): React.JSX.Element {
       reviewShortLabel: emptyReviewShortLabel
     })
     return (
-      <>
-        {repo && (
-          /* Keyed to the same branch/worktree context as the panel's render-time
-             reset so dialog-local submission state cannot leak across contexts. */
-          <CreatePullRequestDialog
-            key={panelContextKey}
-            open={createPrDialogOpen}
-            repoId={repo.id}
-            repoPath={repo.path}
-            worktreeId={activeWorktreeId}
-            worktreePath={activeWorktreePath ?? repo.path}
-            branch={branch}
-            eligibility={hostedReviewCreation}
-            pushBeforeCreate={createPrPushFirst}
-            onOpenChange={setCreatePrDialogOpen}
-            onPushBeforeCreate={pushBeforeCreatePullRequest}
-            onBranchChangedByGeneration={handleBranchChangedByPullRequestGeneration}
-            onCreated={handlePullRequestCreated}
-          />
+      <div className="px-4 py-6">
+        {detachedHeadDisplay && (
+          <div className="mb-3">
+            <DetachedHeadBadge display={detachedHeadDisplay} side="bottom" />
+          </div>
         )}
-        <div className="px-4 py-6">
-          {detachedHeadDisplay && (
-            <div className="mb-3">
-              <DetachedHeadBadge display={detachedHeadDisplay} side="bottom" />
-            </div>
-          )}
-          <div className="text-sm font-medium text-foreground">{emptyStateCopy.title}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{emptyStateCopy.description}</div>
-          {!operationInProgress && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {canPublishBranch && (
-                <Button
-                  size="xs"
-                  disabled={isPublishingBranch || isRemoteOperationActive}
-                  onClick={handlePublishBranch}
-                >
-                  {isPublishingBranch
-                    ? translate(
-                        'auto.components.right.sidebar.ChecksPanel.fdb27637f2',
-                        'Publishing…'
-                      )
-                    : translate(
-                        'auto.components.right.sidebar.ChecksPanel.6633c7a1fb',
-                        'Publish Branch'
-                      )}
-                </Button>
-              )}
-              {(canCreate || canPushCreate) && (
-                <Button
-                  size="xs"
-                  onClick={() => {
-                    setCreatePrPushFirst(canPushCreate)
-                    setCreatePrDialogOpen(true)
-                  }}
-                >
-                  {canPushCreate
-                    ? translate(
-                        'auto.components.right.sidebar.ChecksPanel.98f4c37b33',
-                        'Push & Create {{value0}}',
-                        { value0: emptyReviewShortLabel }
-                      )
-                    : translate(
-                        'auto.components.right.sidebar.ChecksPanel.889cdfba04',
-                        'Create {{value0}}',
-                        { value0: emptyReviewShortLabel }
-                      )}
-                </Button>
-              )}
+        <div className="text-sm font-medium text-foreground">{emptyStateCopy.title}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{emptyStateCopy.description}</div>
+        {!operationInProgress && createComposerOpen ? (
+          <div className="mt-4 border-t border-border pt-3">
+            <CreateHostedReviewComposer
+              className="p-0"
+              provider={hostedReviewCreateProvider}
+              branch={branch}
+              base={prBase}
+              setBase={handlePrBaseChange}
+              title={prTitle}
+              setTitle={handlePrTitleChange}
+              body={prBody}
+              setBody={setPrBody}
+              draft={prDraft}
+              setDraft={setPrDraft}
+              baseQuery={prBaseQuery}
+              setBaseQuery={setPrBaseQuery}
+              baseResults={prBaseResults}
+              setBaseResults={setPrBaseResults}
+              baseSearchError={prBaseSearchError}
+              aiGenerationEnabled={prAiGenerationEnabled}
+              generating={prGenerating}
+              generateDisabled={prGenerateDisabled}
+              generateDisabledReason={prGenerateDisabledReason}
+              generateError={prGenerateError}
+              createError={createPrError}
+              isCreating={isCreatingPr}
+              pushBeforeCreate={createPrPushFirst || canPushCreate}
+              primaryAction={{
+                disabled: isCreatingPr || isPublishingBranch || isRemoteOperationActive,
+                title: canPushCreate
+                  ? translate(
+                      'auto.components.right.sidebar.ChecksPanel.98f4c37b33',
+                      'Push & Create {{value0}}',
+                      { value0: emptyReviewShortLabel }
+                    )
+                  : translate(
+                      'auto.components.right.sidebar.ChecksPanel.889cdfba04',
+                      'Create {{value0}}',
+                      { value0: emptyReviewShortLabel }
+                    )
+              }}
+              onGenerate={() => void handleGeneratePullRequestFields()}
+              onCancelGenerate={handleCancelGeneratePullRequestFields}
+              onPrimaryAction={() => void handleCreatePullRequest()}
+            />
+          </div>
+        ) : null}
+        {!operationInProgress && (!createComposerOpen || canPublishBranch) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canPublishBranch && (
+              <Button
+                size="xs"
+                disabled={isPublishingBranch || isRemoteOperationActive}
+                onClick={handlePublishBranch}
+              >
+                {isPublishingBranch
+                  ? translate('auto.components.right.sidebar.ChecksPanel.fdb27637f2', 'Publishing…')
+                  : translate(
+                      'auto.components.right.sidebar.ChecksPanel.6633c7a1fb',
+                      'Publish Branch'
+                    )}
+              </Button>
+            )}
+            {!createComposerOpen ? (
               <Button
                 size="xs"
                 variant="outline"
@@ -2694,10 +2954,10 @@ export default function ChecksPanel(): React.JSX.Element {
                   ? translate('auto.components.right.sidebar.ChecksPanel.71026ca2cb', 'Refreshing…')
                   : translate('auto.components.right.sidebar.ChecksPanel.7f4489f370', 'Refresh')}
               </Button>
-            </div>
-          )}
-        </div>
-      </>
+            ) : null}
+          </div>
+        )}
+      </div>
     )
   }
 

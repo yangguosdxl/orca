@@ -7568,6 +7568,9 @@
             "71026ca2cb": "刷新中…",
             "889cdfba04": "创建 {{value0}}",
             "98f4c37b33": "推送并创建 {{value0}}",
+            "b6ce28da5b": "{{value0}} #{{value1}} 已打开",
+            "cf9e69f3be": "{{value0}} 已打开",
+            "192e686e57": "打开于 {{value0}}",
             "6633c7a1fb": "发布分支",
             "fdb27637f2": "出版…",
             "e56c42122e": "destructive",
@@ -7601,6 +7604,9 @@
             "a154fe55e6": "推送并创建 {{value0}}",
             "21c7a1daa0": "{{value0}} 已打开",
             "db9cee18f7": "创建 {{value0}}"
+          },
+          "CreateHostedReviewComposer": {
+            "741ff8a0d2": "推送并创建 {{value0}}"
           },
           "CreatePullRequestGenerateButton": {
             "4012459f8a": "用 AI 生成",
@@ -7820,6 +7826,9 @@
             "30b8d4f181": "使用 AI 修复 commit 失败",
             "4b37ae99b0": "启动默认的AIAgent 来修复此 commit 失败",
             "ae743199cd": "在创建 {{value0}} 之前，请选择其他基础分支。",
+            "318e2a7f88": "请等待 AI 生成完成。",
+            "f76307c1f7": "请选择基础分支。",
+            "4f76c0a9de": "基础分支必须与 head 分支不同。",
             "c5e4175139": "更多 {{value0}} 和远程操作",
             "78ddfd0bb4": "创建为草稿",
             "e64a632456": "主要的",

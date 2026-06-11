@@ -137,6 +137,7 @@ import { createWorktreeNavHistorySlice } from './worktree-nav-history'
 import { createDictationSlice } from './dictation'
 import { createWorkspaceCleanupSlice } from './workspace-cleanup'
 import { createRuntimeStatusSlice } from './runtime-status'
+import { createPullRequestGenerationSlice } from './pull-request-generation'
 
 function createTestStore() {
   return create<AppState>()((...a) => ({
@@ -169,7 +170,8 @@ function createTestStore() {
     ...createWorktreeNavHistorySlice(...a),
     ...createDictationSlice(...a),
     ...createWorkspaceCleanupSlice(...a),
-    ...createRuntimeStatusSlice(...a)
+    ...createRuntimeStatusSlice(...a),
+    ...createPullRequestGenerationSlice(...a)
   }))
 }
 
