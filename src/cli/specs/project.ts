@@ -34,6 +34,21 @@ export const PROJECT_COMMAND_SPECS: CommandSpec[] = [
     ]
   },
   {
+    path: ['project', 'setup-clone'],
+    summary: 'Make a project available on a host by cloning a repository',
+    usage:
+      'orca project setup-clone --project <id> --host <host-id> --url <clone-url> --destination <path> [--display-name <name>] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'project', 'host', 'url', 'destination', 'display-name'],
+    notes: [
+      'For remote runtimes, --destination must be an absolute parent directory on the remote server.',
+      'SSH targets are cloned through the desktop UI because the desktop client owns SSH connections.'
+    ],
+    examples: [
+      'orca project setup-clone --project github:stablyai/orca --host local --url https://github.com/stablyai/orca.git --destination ~/src',
+      'orca project setup-clone --project github:stablyai/orca --host runtime:gpu --url https://github.com/stablyai/orca.git --destination /srv --json'
+    ]
+  },
+  {
     path: ['project', 'setup-create'],
     summary: 'Create independent project host setup metadata',
     usage:

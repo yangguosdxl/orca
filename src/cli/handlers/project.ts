@@ -1,6 +1,7 @@
 import type {
   Project,
   ProjectHostSetup,
+  ProjectHostSetupCloneArgs,
   ProjectHostSetupCreateArgs,
   ProjectHostSetupCreateResult,
   ProjectHostSetupDeleteResult,
@@ -62,6 +63,26 @@ export const PROJECT_HANDLERS: Record<string, CommandHandler> = {
     }
     const result = await client.call<{ result: ProjectHostSetupResult }>(
       'projectHostSetup.setupExistingFolder',
+      args
+    )
+    printResult(result, json, formatProjectHostSetupResult)
+  },
+  'project setup-clone': async ({ flags, client, cwd, json }) => {
+    const rawDestination = getRequiredStringFlag(flags, 'destination')
+    const args: ProjectHostSetupCloneArgs = {
+      projectId: getRequiredStringFlag(flags, 'project'),
+      hostId: getRequiredStringFlag(flags, 'host') as ProjectHostSetupCloneArgs['hostId'],
+      url: getRequiredStringFlag(flags, 'url'),
+      destination: resolveRepoPathArgument(
+        rawDestination,
+        cwd,
+        client.isRemote,
+        'Project setup clone'
+      ),
+      displayName: getOptionalStringFlag(flags, 'display-name')
+    }
+    const result = await client.call<{ result: ProjectHostSetupResult }>(
+      'projectHostSetup.clone',
       args
     )
     printResult(result, json, formatProjectHostSetupResult)

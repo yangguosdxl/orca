@@ -19,6 +19,21 @@ const ProjectHostSetupExistingFolder = z.object({
   setupMethod: z.enum(['imported-existing-folder', 'cloned']).optional()
 })
 
+const ProjectHostSetupClone = z.object({
+  projectId: requiredString('Missing project ID'),
+  hostId: requiredString('Missing host ID').transform((value, ctx) => {
+    const hostId = normalizeExecutionHostId(value)
+    if (!hostId) {
+      ctx.addIssue({ code: 'custom', message: 'Invalid host ID' })
+      return z.NEVER
+    }
+    return hostId
+  }),
+  url: requiredString('Missing clone URL'),
+  destination: requiredString('Missing clone destination'),
+  displayName: OptionalString
+})
+
 const ProjectHostSetupCreate = z.object({
   projectId: requiredString('Missing project ID'),
   hostId: requiredString('Missing host ID').transform((value, ctx) => {
@@ -81,6 +96,13 @@ export const PROJECT_RUNTIME_METHODS: RpcMethod[] = [
     params: ProjectHostSetupExistingFolder,
     handler: async (params, { runtime }) => ({
       result: await runtime.setupProjectExistingFolder(params)
+    })
+  }),
+  defineMethod({
+    name: 'projectHostSetup.clone',
+    params: ProjectHostSetupClone,
+    handler: async (params, { runtime }) => ({
+      result: await runtime.setupProjectClone(params)
     })
   }),
   defineMethod({

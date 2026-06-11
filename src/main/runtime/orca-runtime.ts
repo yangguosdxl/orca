@@ -6520,6 +6520,18 @@ export class OrcaRuntimeService {
     return { project, setup, repo }
   }
 
+  async setupProjectClone(args: ProjectHostSetupCloneArgs): Promise<ProjectHostSetupResult> {
+    const repo = await this.cloneRepo(args.url, args.destination)
+    return await this.setupProjectExistingFolder({
+      projectId: args.projectId,
+      hostId: args.hostId,
+      path: repo.path,
+      kind: 'git',
+      displayName: args.displayName,
+      setupMethod: 'cloned'
+    })
+  }
+
   updateProjectHostSetup(args: ProjectHostSetupUpdateArgs): ProjectHostSetupUpdateResult {
     if (!this.store?.updateProjectHostSetup) {
       throw new Error('runtime_unavailable')
