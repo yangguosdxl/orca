@@ -86,6 +86,10 @@ import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner
 import { CLIENT_PLATFORM } from '@/lib/new-workspace'
 import { buildAgentResumeStartupPlan } from '@/lib/tui-agent-startup'
 import {
+  resolveTuiAgentLaunchArgs,
+  resolveTuiAgentLaunchEnv
+} from '../../../../shared/tui-agent-launch-defaults'
+import {
   isResumableTuiAgent,
   normalizeAgentProviderSession
 } from '../../../../shared/agent-session-resume'
@@ -1780,6 +1784,14 @@ export function connectPanePty(
         agent: entry.agentType,
         providerSession,
         cmdOverrides: useAppStore.getState().settings?.agentCmdOverrides ?? {},
+        agentArgs: resolveTuiAgentLaunchArgs(
+          entry.agentType,
+          useAppStore.getState().settings?.agentDefaultArgs
+        ),
+        agentEnv: resolveTuiAgentLaunchEnv(
+          entry.agentType,
+          useAppStore.getState().settings?.agentDefaultEnv
+        ),
         platform: getColdRestoreAgentResumePlatform()
       })
       if (!startupPlan) {

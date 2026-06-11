@@ -5,6 +5,10 @@ import {
   buildAgentStartupPlan,
   planAgentCliArgsSuffix
 } from '@/lib/tui-agent-startup'
+import {
+  resolveTuiAgentLaunchArgs,
+  resolveTuiAgentLaunchEnv
+} from '../../../shared/tui-agent-launch-defaults'
 import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
 import { isTuiAgentEnabled, pickTuiAgent } from '../../../shared/tui-agent-selection'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
@@ -22,7 +26,6 @@ import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
 import { getConnectionId } from '@/lib/connection-context'
 import type { GitPushTarget, SetupDecision, TuiAgent } from '../../../shared/types'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
-import type { LaunchableWorkItem, LaunchWorkItemDirectArgs } from '@/lib/launchable-work-item'
 import {
   buildDirectWorkItemStartupOpts,
   pasteDirectWorkItemDraftWhenAgentReady
@@ -31,14 +34,16 @@ import {
   resolveDirectPrStartPoint,
   resolveDirectSetupDecision
 } from '@/lib/launch-work-item-direct-preflight'
+import type {
+  LaunchableWorkItem,
+  LaunchWorkItemDirectArgs
+} from '@/lib/launch-work-item-direct-types'
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
 
 // Why: bracketed paste markers and ready-wait grace timing live in
 // agent-paste-draft.ts so the new-workspace and "Use" flows share one
 // definition of "type into the agent's input as a non-submitted draft".
-
-export type { LaunchableWorkItem, LaunchWorkItemDirectArgs } from '@/lib/launchable-work-item'
 
 async function getDirectDraftContent(
   item: LaunchableWorkItem,
@@ -263,6 +268,13 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     // Why: draft launches prefer a native prefill flag when the CLI exposes one;
     // submit-after-ready launches must avoid native drafts so Orca can send the
     // generated prompt as the first turn after the TUI is ready.
+    const effectiveAgentArgs =
+      effectiveAgent && agentArgs === undefined
+        ? resolveTuiAgentLaunchArgs(effectiveAgent, settings?.agentDefaultArgs)
+        : agentArgs
+    const effectiveAgentEnv = effectiveAgent
+      ? resolveTuiAgentLaunchEnv(effectiveAgent, settings?.agentDefaultEnv)
+      : null
     const draftLaunchPlan =
       promptDelivery === 'submit-after-ready' || effectiveAgent === null
         ? null
@@ -271,7 +283,8 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
             draft: draftContent,
             cmdOverrides: settings?.agentCmdOverrides ?? {},
             platform: launchPlatform,
-            agentArgs
+            agentArgs: effectiveAgentArgs,
+            agentEnv: effectiveAgentEnv
           })
     if (draftLaunchPlan) {
       startupPlan = {
@@ -288,7 +301,8 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
         prompt: '',
         cmdOverrides: settings?.agentCmdOverrides ?? {},
         platform: launchPlatform,
-        agentArgs,
+        agentArgs: effectiveAgentArgs,
+        agentEnv: effectiveAgentEnv,
         allowEmptyPromptLaunch: true
       })
       startupPlanFailed = startupPlan === null
