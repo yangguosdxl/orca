@@ -173,7 +173,7 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
                 onPointerDown={(event) => revealAdminOptions(event.altKey)}
                 onClick={(event) => revealAdminOptions(event.altKey)}
               >
-                <CircleHelp className="size-3.5" />
+                <CircleHelp className="size-4" />
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>

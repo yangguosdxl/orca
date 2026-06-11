@@ -3347,6 +3347,7 @@
           "ee240a39eb": "Edit filters"
         },
         "SidebarHeader": {
+          "25a95899c9": "Add Project",
           "92154beb7e": "New workspace",
           "49f62c5665": "Workspace board",
           "5c9c7c16aa": "Add a project to create workspaces",
@@ -3396,6 +3397,9 @@
           "c4f8e1b72a": "X"
         },
         "SidebarToolbar": {
+          "87d0064026": "Workspace board moved to the bottom bar",
+          "a30e34eb5c": "Close workspace board",
+          "49f62c5665": "Workspace board",
           "19e32d0e5f": "Open folder picker to add a project",
           "abc62b6328": "Add Project"
         },

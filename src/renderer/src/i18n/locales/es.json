@@ -3330,7 +3330,8 @@
           "49f62c5665": "tablero del espacio de trabajo",
           "5c9c7c16aa": "Agregar un proyecto para crear espacios de trabajo",
           "ca6f729da2": "Nuevo espacio de trabajo ({{value0}})",
-          "a30e34eb5c": "Cerrar tablero del espacio de trabajo"
+          "a30e34eb5c": "Cerrar tablero del espacio de trabajo",
+          "25a95899c9": "Agregar proyecto"
         },
         "SidebarNav": {
           "80611a8b10": "Buscar",
@@ -3376,7 +3377,10 @@
         },
         "SidebarToolbar": {
           "19e32d0e5f": "Abra el selector de carpetas para agregar un proyecto",
-          "abc62b6328": "Agregar proyecto"
+          "abc62b6328": "Agregar proyecto",
+          "87d0064026": "El tablero del espacio de trabajo se movió a la barra inferior",
+          "a30e34eb5c": "Cerrar tablero del espacio de trabajo",
+          "49f62c5665": "tablero del espacio de trabajo"
         },
         "SidebarWorkspaceFilterSection": {
           "c3fa13dc2e": "Ocultar rama predeterminada",
