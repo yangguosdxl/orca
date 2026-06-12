@@ -3957,7 +3957,14 @@
           "terminalAria": "Linear agent 스킬 설치 terminal",
           "install": "CLI 및 스킬 설치",
           "wslCopy": "연결된 Linear 작업에서 WSL agent 인계를 위해 설치합니다.",
-          "wslLabel": "WSL 기본값"
+          "wslLabel": "WSL 기본값",
+          "openSetup": "설정 열기",
+          "toastMissingCliAndSkill": "Orca CLI와 Linear agent 스킬이 없습니다",
+          "toastMissingCli": "Orca CLI가 없습니다",
+          "toastMissingSkill": "Linear agent 스킬이 없습니다",
+          "remoteToastDescription": "호스트 인계를 위해 로컬 설정을 설치하세요. 원격 agent 환경에는 자체 설정이 필요할 수 있습니다.",
+          "wslToastDescription": "연결된 Linear 티켓 인계에 티켓 컨텍스트가 포함되도록 선택한 WSL agent 런타임에 설치하세요.",
+          "hostToastDescription": "연결된 Linear 티켓에서 시작한 Agents가 티켓 컨텍스트를 읽고 업데이트할 수 있도록 설치하세요."
         },
         "FolderWorkspaceComposerDialog": {
           "connectFailed": "프로젝트에 연결하지 못했습니다.",

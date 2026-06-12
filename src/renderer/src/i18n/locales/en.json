@@ -3957,7 +3957,14 @@
           "terminalAria": "Linear agent skill installer terminal",
           "install": "Install CLI & Skill",
           "wslCopy": "Install it for WSL agent handoffs from linked Linear work.",
-          "wslLabel": "WSL default"
+          "wslLabel": "WSL default",
+          "openSetup": "Open setup",
+          "toastMissingCliAndSkill": "Orca CLI and Linear agent skill are missing",
+          "toastMissingCli": "Orca CLI is missing",
+          "toastMissingSkill": "Linear agent skill is missing",
+          "remoteToastDescription": "Install local setup for host handoffs; remote agent environments may still need their own setup.",
+          "wslToastDescription": "Install them for the selected WSL agent runtime so linked Linear ticket handoffs include ticket context.",
+          "hostToastDescription": "Install them so agents started from linked Linear tickets can read and update the ticket context."
         },
         "FolderWorkspaceComposerDialog": {
           "connectFailed": "Failed to connect to project.",

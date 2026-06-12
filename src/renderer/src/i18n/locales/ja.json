@@ -3957,7 +3957,14 @@
           "terminalAria": "Linear agent スキルのインストール terminal",
           "install": "CLI とスキルをインストール",
           "wslCopy": "リンクされた Linear 作業からの WSL agent 引き継ぎ用にインストールします。",
-          "wslLabel": "WSL 既定"
+          "wslLabel": "WSL 既定",
+          "openSetup": "設定を開く",
+          "toastMissingCliAndSkill": "Orca CLI と Linear agent スキルがありません",
+          "toastMissingCli": "Orca CLI がありません",
+          "toastMissingSkill": "Linear agent スキルがありません",
+          "remoteToastDescription": "ホスト引き継ぎ用にローカル設定をインストールします。リモート agent 環境では独自の設定が必要な場合があります。",
+          "wslToastDescription": "リンクされた Linear チケットの引き継ぎにチケットコンテキストが含まれるよう、選択した WSL agent ランタイムにインストールします。",
+          "hostToastDescription": "リンクされた Linear チケットから開始した Agents がチケットコンテキストを読み取り、更新できるようにインストールします。"
         },
         "FolderWorkspaceComposerDialog": {
           "connectFailed": "プロジェクトに接続できませんでした。",

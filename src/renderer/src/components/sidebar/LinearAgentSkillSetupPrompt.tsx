@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Info, RefreshCw, TicketCheck, X } from 'lucide-react'
+import { toast } from 'sonner'
 import type { CliInstallStatus } from '../../../../shared/cli-install-types'
 import type { SkillDiscoveryTarget } from '../../../../shared/skills'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,18 @@ import {
   getWslCliDistroRequest
 } from '../settings/CliSkillRuntimeSetup'
 import {
+  LINEAR_AGENT_SKILL_SETUP_TOAST_LIMIT,
+  createLinearAgentSkillSetupActivationId,
+  getLinearAgentSkillSetupReminderState,
+  resetLinearAgentSkillSetupReminderState
+} from './linear-agent-skill-setup-reminders'
+import {
+  getLinearAgentSkillSetupInlineRuntimeCopy,
+  getLinearAgentSkillSetupMissingLabel,
+  getLinearAgentSkillSetupToastTitle,
+  getLinearAgentSkillSetupToastDescription
+} from './linear-agent-skill-setup-copy'
+import {
   getCurrentPlatform,
   getLinearPromptAgentRuntime,
   getLinearPromptTerminalShellOverride,
@@ -41,13 +54,9 @@ import {
 } from './linear-agent-skill-runtime'
 import { translate } from '@/i18n/i18n'
 
-// Why: closing the workspace modal means "not now"; keep it quiet for this
-// app session without turning a casual close into a permanent dismissal.
-const sessionSnoozedRuntimeKeys = new Set<string>()
-
 export const _linearAgentSkillSetupPromptInternalsForTests = {
-  resetSessionSnoozes(): void {
-    sessionSnoozedRuntimeKeys.clear()
+  resetSessionReminders(): void {
+    resetLinearAgentSkillSetupReminderState()
   }
 }
 
@@ -71,6 +80,10 @@ export function LinearAgentSkillSetupPrompt({
   const [cliStatus, setCliStatus] = useState<CliInstallStatus | null>(null)
   const [cliLoading, setCliLoading] = useState(linked)
   const [setupDialogOpen, setSetupDialogOpen] = useState(false)
+  const activationIdRef = useRef<string | undefined>(undefined)
+  if (activationIdRef.current === undefined) {
+    activationIdRef.current = createLinearAgentSkillSetupActivationId()
+  }
   const agentRuntime = useMemo(
     () => getLinearPromptAgentRuntime(settings, currentPlatform, remote),
     [currentPlatform, remote, settings]
@@ -85,9 +98,6 @@ export function LinearAgentSkillSetupPrompt({
   const localDismissStorageKey = getLocalDismissStorageKey(agentRuntime)
   const [localDismissed, setLocalDismissed] = useState(() =>
     readLocalDismissed(localDismissStorageKey)
-  )
-  const [sessionSnoozed, setSessionSnoozed] = useState(() =>
-    sessionSnoozedRuntimeKeys.has(localDismissStorageKey)
   )
   const skill = useInstalledAgentSkill(LINEAR_TICKETS_SKILL_NAME, {
     enabled: linked,
@@ -107,11 +117,8 @@ export function LinearAgentSkillSetupPrompt({
     settings,
     agentRuntime
   )
-  const dismissed = localDismissed || sessionSnoozed
-
   useEffect(() => {
     setLocalDismissed(readLocalDismissed(localDismissStorageKey))
-    setSessionSnoozed(sessionSnoozedRuntimeKeys.has(localDismissStorageKey))
   }, [localDismissStorageKey])
 
   const refreshCliStatus = useCallback(async (): Promise<void> => {
@@ -140,41 +147,94 @@ export function LinearAgentSkillSetupPrompt({
 
   const cliAvailable = isOrcaCliAvailableOnPath(cliStatus)
   const missingSetup =
-    linked && !dismissed && !cliLoading && !skill.loading && !(cliAvailable && skill.installed)
+    linked && !localDismissed && !cliLoading && !skill.loading && !(cliAvailable && skill.installed)
 
   useEffect(() => {
-    if (surface === 'modal' && missingSetup) {
+    if (surface !== 'modal' || !missingSetup) {
+      return
+    }
+    const state = getLinearAgentSkillSetupReminderState(localDismissStorageKey)
+    if (!state.modalShown) {
+      // Why: first eligible Linear activation gets the full setup flow; casual
+      // closes only change later activations for the same runtime target.
+      state.modalShown = true
+      state.lastToastActivationId = activationIdRef.current
       setSetupDialogOpen(true)
     }
-  }, [missingSetup, surface])
+  }, [localDismissStorageKey, missingSetup, surface])
 
   const dismissPermanently = (): void => {
     localStorage.setItem(localDismissStorageKey, '1')
     setLocalDismissed(true)
     setSetupDialogOpen(false)
+    const state = getLinearAgentSkillSetupReminderState(localDismissStorageKey)
+    if (state.activeToastId !== undefined) {
+      toast.dismiss(state.activeToastId)
+      state.activeToastId = undefined
+    }
   }
 
   const snoozeForSession = (): void => {
-    sessionSnoozedRuntimeKeys.add(localDismissStorageKey)
-    setSessionSnoozed(true)
+    getLinearAgentSkillSetupReminderState(localDismissStorageKey).snoozed = true
     setSetupDialogOpen(false)
   }
 
-  const missingLabel =
-    !cliAvailable && !skill.installed
-      ? translate(
-          'auto.components.sidebar.LinearAgentSkillSetupPrompt.missingCliAndSkill',
-          'Orca CLI and Linear agent skill are missing.'
-        )
-      : !cliAvailable
-        ? translate(
-            'auto.components.sidebar.LinearAgentSkillSetupPrompt.missingCli',
-            'Orca CLI is missing.'
-          )
-        : translate(
-            'auto.components.sidebar.LinearAgentSkillSetupPrompt.missingSkill',
-            'Linear agent skill is missing.'
-          )
+  const missingLabel = getLinearAgentSkillSetupMissingLabel(cliAvailable, skill.installed)
+
+  const toastTitle = getLinearAgentSkillSetupToastTitle(cliAvailable, skill.installed)
+
+  const toastDescription = getLinearAgentSkillSetupToastDescription(remote, agentRuntime)
+
+  useEffect(() => {
+    if (surface !== 'modal' || !missingSetup || setupDialogOpen) {
+      return
+    }
+    const state = getLinearAgentSkillSetupReminderState(localDismissStorageKey)
+    const activationId = activationIdRef.current
+    if (
+      !state.modalShown ||
+      !state.snoozed ||
+      state.toastCount >= LINEAR_AGENT_SKILL_SETUP_TOAST_LIMIT ||
+      state.lastToastActivationId === activationId
+    ) {
+      return
+    }
+    state.toastCount += 1
+    state.lastToastActivationId = activationId
+    state.activeToastId = toast.warning(toastTitle, {
+      id: `linear-agent-skill-setup-${localDismissStorageKey}`,
+      description: toastDescription,
+      action: {
+        label: translate(
+          'auto.components.sidebar.LinearAgentSkillSetupPrompt.openSetup',
+          'Open setup'
+        ),
+        onClick: () => setSetupDialogOpen(true)
+      }
+    })
+  }, [localDismissStorageKey, missingSetup, setupDialogOpen, surface, toastDescription, toastTitle])
+
+  useEffect(() => {
+    if (missingSetup) {
+      return
+    }
+    const state = getLinearAgentSkillSetupReminderState(localDismissStorageKey)
+    if (state.activeToastId !== undefined) {
+      toast.dismiss(state.activeToastId)
+      state.activeToastId = undefined
+    }
+  }, [localDismissStorageKey, missingSetup])
+
+  useEffect(
+    () => () => {
+      const state = getLinearAgentSkillSetupReminderState(localDismissStorageKey)
+      if (state.activeToastId !== undefined) {
+        toast.dismiss(state.activeToastId)
+        state.activeToastId = undefined
+      }
+    },
+    [localDismissStorageKey]
+  )
 
   if (!missingSetup) {
     return null
@@ -240,7 +300,7 @@ export function LinearAgentSkillSetupPrompt({
             'Linear agent skill installer terminal'
           )}
           terminalWorktreeId="sidebar-linear-agent-skill-setup"
-          terminalHeightPx={240}
+          terminalHeightPx={280}
           terminalShellOverride={terminalShellOverride}
           installed={skill.installed}
           loading={skill.loading}
@@ -310,21 +370,7 @@ export function LinearAgentSkillSetupPrompt({
             )}
           </div>
           <p className="leading-snug">
-            {missingLabel}{' '}
-            {remote
-              ? translate(
-                  'auto.components.sidebar.LinearAgentSkillSetupPrompt.remoteCopy',
-                  'This installs host setup; remote agent environments may need separate setup.'
-                )
-              : agentRuntime.runtime === 'wsl'
-                ? translate(
-                    'auto.components.sidebar.LinearAgentSkillSetupPrompt.wslCopy',
-                    'Install it for WSL agent handoffs from linked Linear work.'
-                  )
-                : translate(
-                    'auto.components.sidebar.LinearAgentSkillSetupPrompt.hostCopy',
-                    'Install it for host agent handoffs from linked Linear work.'
-                  )}
+            {missingLabel} {getLinearAgentSkillSetupInlineRuntimeCopy(remote, agentRuntime)}
           </p>
         </div>
         <Button

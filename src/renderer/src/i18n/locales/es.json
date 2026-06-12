@@ -3957,7 +3957,14 @@
           "terminalAria": "Terminal de instalación de la habilidad de Agent de Linear",
           "install": "Instalar CLI y habilidad",
           "wslCopy": "Instálala para traspasos de Agent en WSL desde trabajo Linear enlazado.",
-          "wslLabel": "WSL predeterminado"
+          "wslLabel": "WSL predeterminado",
+          "openSetup": "Abrir configuración",
+          "toastMissingCliAndSkill": "Faltan la CLI de Orca y la habilidad de Agent de Linear",
+          "toastMissingCli": "Falta la CLI de Orca",
+          "toastMissingSkill": "Falta la habilidad de Agent de Linear",
+          "remoteToastDescription": "Instala la configuración local para traspasos del host; los entornos de Agent remotos pueden necesitar su propia configuración.",
+          "wslToastDescription": "Instálalas para el runtime de Agent WSL seleccionado, de modo que los traspasos de tickets Linear enlazados incluyan contexto del ticket.",
+          "hostToastDescription": "Instálalas para que los Agents iniciados desde tickets Linear enlazados puedan leer y actualizar el contexto del ticket."
         },
         "FolderWorkspaceComposerDialog": {
           "connectFailed": "No se pudo conectar al proyecto.",

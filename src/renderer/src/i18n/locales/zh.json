@@ -3957,7 +3957,14 @@
           "terminalAria": "Linear agent 技能安装 terminal",
           "install": "安装 CLI 和技能",
           "wslCopy": "为已链接 Linear 工作的 WSL agent 交接安装此项。",
-          "wslLabel": "WSL 默认值"
+          "wslLabel": "WSL 默认值",
+          "openSetup": "打开设置",
+          "toastMissingCliAndSkill": "缺少 Orca CLI 和 Linear agent 技能",
+          "toastMissingCli": "缺少 Orca CLI",
+          "toastMissingSkill": "缺少 Linear agent 技能",
+          "remoteToastDescription": "为主机交接安装本地设置；远程 agent 环境可能仍需要自己的设置。",
+          "wslToastDescription": "为所选 WSL agent 运行时安装它们，以便已链接 Linear ticket 的交接包含 ticket 上下文。",
+          "hostToastDescription": "安装它们后，从已链接 Linear ticket 启动的 Agents 可以读取并更新 ticket 上下文。"
         },
         "FolderWorkspaceComposerDialog": {
           "connectFailed": "无法连接到项目。",
