@@ -211,7 +211,7 @@ export function LinearAgentSkillSetupPrompt({
               )}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex items-start gap-2 text-[13px] leading-snug text-foreground">
+          <div className="flex items-start gap-2 text-base font-semibold leading-snug text-foreground">
             <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <p>
               {translate(
