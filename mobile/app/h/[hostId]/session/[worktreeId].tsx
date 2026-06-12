@@ -130,6 +130,10 @@ import {
   type MobileNewTabAgentOption,
   type MobileNewTabAgentSettings
 } from '../../../../src/session/mobile-new-tab-agent-options'
+import {
+  buildMobileImagePastePayload,
+  saveMobileClipboardImageAsTempFile
+} from '../../../../src/session/mobile-clipboard-image'
 import { resolveMarkdownFloatingActionsBottom } from '../../../../src/session/markdown-floating-actions-layout'
 import { resolveTabStripScrollOffset } from '../../../../src/session/tab-strip-scroll'
 import {
@@ -3196,30 +3200,64 @@ export default function SessionScreen() {
     }
   }, [])
 
+  const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
+    if (!client) {
+      return null
+    }
+    const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
+    const repoResponse = await client.sendRequest('repo.list')
+    if (!repoResponse.ok) {
+      throw new Error((repoResponse as RpcFailure).error.message)
+    }
+    const repos = ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
+    return repos.find((repo) => repo.id === repoId)?.connectionId?.trim() || null
+  }, [client, worktreeId])
+
+  const refreshCanPaste = useCallback(() => {
+    void Promise.all([
+      Clipboard.hasStringAsync().catch(() => false),
+      Clipboard.hasImageAsync().catch(() => false)
+    ]).then(([hasString, hasImage]) => {
+      setCanPaste(hasString || hasImage)
+    })
+  }, [])
+
   const handlePaste = useCallback(async () => {
     if (!client || !activeHandle || !canSend) {
       return
     }
     try {
       const text = await Clipboard.getStringAsync()
-      if (text.length === 0) {
-        return
+      let payload: string | null = null
+      if (text.length > 0) {
+        const modes = ptyModesRef.current.get(activeHandle) || {
+          bracketedPasteMode: false,
+          altScreen: false,
+          mouseTrackingMode: 'none',
+          sgrMouseMode: false,
+          sgrMousePixelsMode: false
+        }
+        const wrap = modes.bracketedPasteMode && !modes.altScreen
+        // Why: strip embedded bracketed-paste markers from clipboard text so a
+        // malicious copy containing `\x1b[201~` can't terminate paste mode early
+        // and have the trailing bytes interpreted as shell commands. Matches
+        // xterm.js / iTerm2 behavior.
+        // eslint-disable-next-line no-control-regex -- intentional bracketed-paste marker stripping
+        const sanitized = wrap ? text.replace(/\x1b\[20[01]~/g, '') : text
+        payload = wrap ? `\x1b[200~${sanitized}\x1b[201~` : sanitized
+      } else {
+        const image = await Clipboard.getImageAsync({ format: 'png' })
+        if (!image) {
+          refreshCanPaste()
+          return
+        }
+        const connectionId = await getActiveWorktreeConnectionId()
+        const imagePath = await saveMobileClipboardImageAsTempFile(client, image.data, {
+          connectionId
+        })
+        payload = buildMobileImagePastePayload(imagePath)
       }
-      const modes = ptyModesRef.current.get(activeHandle) || {
-        bracketedPasteMode: false,
-        altScreen: false,
-        mouseTrackingMode: 'none',
-        sgrMouseMode: false,
-        sgrMousePixelsMode: false
-      }
-      const wrap = modes.bracketedPasteMode && !modes.altScreen
-      // Why: strip embedded bracketed-paste markers from clipboard text so a
-      // malicious copy containing `\x1b[201~` can't terminate paste mode early
-      // and have the trailing bytes interpreted as shell commands. Matches
-      // xterm.js / iTerm2 behavior.
-      // eslint-disable-next-line no-control-regex -- intentional bracketed-paste marker stripping
-      const sanitized = wrap ? text.replace(/\x1b\[20[01]~/g, '') : text
-      const payload = wrap ? `\x1b[200~${sanitized}\x1b[201~` : sanitized
+
       const wrappedBytes = new TextEncoder().encode(payload).byteLength
       if (wrappedBytes > 256 * 1024) {
         triggerError()
@@ -3237,7 +3275,7 @@ export default function SessionScreen() {
           : {})
       })
       triggerSelection()
-      void Clipboard.hasStringAsync().then(setCanPaste)
+      refreshCanPaste()
     } catch (e) {
       triggerError()
       const err = e as { name?: string; message?: string }
@@ -3246,17 +3284,24 @@ export default function SessionScreen() {
       console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
       if (isDisconnected) {
         showToast('Paste failed (disconnected)', 1500)
+      } else if (err.message === 'Clipboard image is too large') {
+        showToast('Image too large to paste', 1500)
+      } else {
+        showToast('Paste failed', 1500)
       }
     }
-  }, [client, activeHandle, canSend, connState, showToast])
+  }, [client, activeHandle, canSend, connState, getActiveWorktreeConnectionId, refreshCanPaste, showToast])
 
   // Why: refresh canPaste on mount, AppState active, after paste.
   useEffect(() => {
     let mounted = true
     const refresh = () => {
-      void Clipboard.hasStringAsync().then((has) => {
+      void Promise.all([
+        Clipboard.hasStringAsync().catch(() => false),
+        Clipboard.hasImageAsync().catch(() => false)
+      ]).then(([hasString, hasImage]) => {
         if (mounted) {
-          setCanPaste(has)
+          setCanPaste(hasString || hasImage)
         }
       })
     }
