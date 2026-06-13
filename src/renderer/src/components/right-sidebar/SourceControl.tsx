@@ -969,8 +969,9 @@ function SourceControlInner(): React.JSX.Element {
       }
       try {
         await refreshGitStatusForWorktree({
-          // Why: route git status by the repo OWNER host, not the focused runtime.
-          settings: activeRepoSettings,
+          // Why: generation can finish after the user switches hosts; refresh
+          // the same host that owned the generation request.
+          settings: context.runtimeTargetSettings,
           worktreeId: context.worktreeId,
           worktreePath: context.worktreePath,
           connectionId: context.connectionId,
@@ -987,7 +988,6 @@ function SourceControlInner(): React.JSX.Element {
       }
     },
     [
-      activeRepoSettings,
       fetchUpstreamStatus,
       isFolder,
       setGitStatus,
@@ -1953,7 +1953,8 @@ function SourceControlInner(): React.JSX.Element {
         connectionId: getConnectionId(activeWorktreeId) ?? undefined,
         requestId,
         repoId: activeRepo.id,
-        branch: branchName
+        branch: branchName,
+        runtimeTargetSettings: activeRepoSettings
       }
       const seed = { ...fields }
       // Why: SourceControl can unmount on tab switches; persisting the running
@@ -1967,7 +1968,7 @@ function SourceControlInner(): React.JSX.Element {
         const result = await generateRuntimePullRequestFields(
           {
             // Why: route generation by the repo OWNER host, not the focused runtime.
-            settings: activeRepoSettings,
+            settings: context.runtimeTargetSettings,
             worktreeId: context.worktreeId,
             worktreePath: context.worktreePath,
             connectionId: context.connectionId
@@ -2050,8 +2051,9 @@ function SourceControlInner(): React.JSX.Element {
       return resolvePullRequestGenerationCancel(current)
     })
     void cancelRuntimeGeneratePullRequestFields({
-      // Why: route the cancel by the repo OWNER host, not the focused runtime.
-      settings: activeRepoSettings,
+      // Why: the user can switch hosts while generation runs; cancel the
+      // original request owner instead of the current focused host.
+      settings: record.context.runtimeTargetSettings,
       worktreeId: record.context.worktreeId,
       worktreePath: record.context.worktreePath,
       connectionId: record.context.connectionId
@@ -2068,12 +2070,7 @@ function SourceControlInner(): React.JSX.Element {
         }
       })
     })
-  }, [
-    activeRepoSettings,
-    activePullRequestGenerationKey,
-    prGenerationRecords,
-    updatePullRequestGenerationRecord
-  ])
+  }, [activePullRequestGenerationKey, prGenerationRecords, updatePullRequestGenerationRecord])
 
   const {
     aiGenerationEnabled: prAiGenerationEnabled,
