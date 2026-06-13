@@ -46,7 +46,12 @@ const mockApi = {
     resolveReviewThread: vi.fn(),
     listWorkItems: vi.fn(),
     countWorkItems: vi.fn().mockResolvedValue(0),
-    getProjectViewTable: vi.fn()
+    getProjectViewTable: vi.fn(),
+    updateProjectItemField: vi.fn(),
+    clearProjectItemField: vi.fn(),
+    updateIssueBySlug: vi.fn(),
+    updatePullRequestBySlug: vi.fn(),
+    updateIssueTypeBySlug: vi.fn()
   },
   hostedReview: {
     forBranch: vi.fn().mockResolvedValue(null),
@@ -4681,6 +4686,177 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       store.getState().projectViewCache[projectViewCacheKey('organization', 'acme', 1, 'view-1')]
         ?.data?.project.id
     ).toBe('project-local')
+  })
+
+  it('routes project field mutations through the source encoded in the cache key', async () => {
+    const store = createTestStore()
+    const cacheKey = projectViewCacheKey(
+      'organization',
+      'acme',
+      1,
+      'view-1',
+      undefined,
+      'runtime:env-project'
+    )
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-focused' },
+      projectViewCache: {
+        [cacheKey]: {
+          fetchedAt: 1,
+          data: {
+            project: {
+              id: 'project-1',
+              owner: 'acme',
+              ownerType: 'organization',
+              number: 1,
+              title: 'Roadmap',
+              url: 'https://github.com/orgs/acme/projects/1'
+            },
+            selectedView: {
+              id: 'view-1',
+              number: 1,
+              name: 'Table',
+              layout: 'TABLE_LAYOUT',
+              filter: '',
+              fields: [{ id: 'field-1', name: 'Notes', dataType: 'TEXT', kind: 'text' }],
+              groupByFields: [],
+              sortByFields: []
+            },
+            rows: [
+              {
+                id: 'row-1',
+                itemType: 'ISSUE',
+                content: {
+                  repository: 'acme/repo',
+                  number: 12,
+                  title: 'Issue',
+                  body: '',
+                  url: 'https://github.com/acme/repo/issues/12',
+                  state: 'OPEN',
+                  labels: [],
+                  assignees: [],
+                  issueType: null,
+                  parentIssue: null
+                },
+                fieldValuesByFieldId: {}
+              }
+            ],
+            totalCount: 1,
+            parentFieldDropped: false
+          }
+        }
+      }
+    } as unknown as Partial<AppState>)
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-field',
+      ok: true,
+      result: { ok: true },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    const result = await store
+      .getState()
+      .updateProjectFieldValue(cacheKey, 'row-1', 'field-1', { kind: 'text', text: 'next' })
+
+    expect(result).toEqual({ ok: true })
+    expect(mockApi.gh.updateProjectItemField).not.toHaveBeenCalled()
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-project',
+      method: 'github.project.updateItemField',
+      params: {
+        projectId: 'project-1',
+        itemId: 'row-1',
+        fieldId: 'field-1',
+        value: { kind: 'text', text: 'next' }
+      },
+      timeoutMs: 30_000
+    })
+  })
+
+  it('routes slug-only project row mutations through the source encoded in the cache key', async () => {
+    const store = createTestStore()
+    const cacheKey = projectViewCacheKey(
+      'organization',
+      'acme',
+      1,
+      'view-1',
+      undefined,
+      'runtime:env-project'
+    )
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-focused' },
+      repos: [],
+      projectViewCache: {
+        [cacheKey]: {
+          fetchedAt: 1,
+          data: {
+            project: {
+              id: 'project-1',
+              owner: 'acme',
+              ownerType: 'organization',
+              number: 1,
+              title: 'Roadmap',
+              url: 'https://github.com/orgs/acme/projects/1'
+            },
+            selectedView: {
+              id: 'view-1',
+              number: 1,
+              name: 'Table',
+              layout: 'TABLE_LAYOUT',
+              filter: '',
+              fields: [],
+              groupByFields: [],
+              sortByFields: []
+            },
+            rows: [
+              {
+                id: 'row-1',
+                itemType: 'ISSUE',
+                content: {
+                  repository: 'acme/repo',
+                  number: 12,
+                  title: 'Issue',
+                  body: '',
+                  url: 'https://github.com/acme/repo/issues/12',
+                  state: 'OPEN',
+                  labels: [],
+                  assignees: [],
+                  issueType: null,
+                  parentIssue: null
+                },
+                fieldValuesByFieldId: {}
+              }
+            ],
+            totalCount: 1,
+            parentFieldDropped: false
+          }
+        }
+      }
+    } as unknown as Partial<AppState>)
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-issue',
+      ok: true,
+      result: { ok: true },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    const result = await store
+      .getState()
+      .patchProjectIssueOrPr(cacheKey, 'row-1', { addLabels: ['bug'] })
+
+    expect(result).toEqual({ ok: true })
+    expect(mockApi.gh.updateIssueBySlug).not.toHaveBeenCalled()
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-project',
+      method: 'github.project.updateIssueBySlug',
+      params: {
+        owner: 'acme',
+        repo: 'repo',
+        number: 12,
+        updates: { addLabels: ['bug'] }
+      },
+      timeoutMs: 30_000
+    })
   })
 
   it('bounds project view table cache entries across many projects', async () => {

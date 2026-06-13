@@ -807,6 +807,7 @@ export default function ProjectViewWrapper(_props: Props = {} as Props): React.J
             }
           }}
           onStartWork={handleStartWork}
+          sourceSettings={settings}
         />
       ) : null}
 
@@ -847,6 +848,7 @@ export default function ProjectViewWrapper(_props: Props = {} as Props): React.J
           button here would only confuse the user. */}
       <ProjectItemSlugDialog
         projectOrigin={resolvedMissingRepoDialogs.slugDialog?.origin ?? null}
+        sourceSettings={settings}
         onClose={() => setSlugDialog(null)}
       />
 

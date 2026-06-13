@@ -14,8 +14,12 @@ type RepoOwnerState = {
 export function settingsForProjectRowOwner(
   state: RepoOwnerState,
   owner: string,
-  repo: string
+  repo: string,
+  fallbackSettings:
+    | Pick<GlobalSettings, 'activeRuntimeEnvironmentId'>
+    | null
+    | undefined = state.settings
 ): Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined {
   const matchedRepo = lookupReposBySlugFromCache(state.repos, state.settings, `${owner}/${repo}`)[0]
-  return matchedRepo ? getSettingsForRepoRuntimeOwner(state, matchedRepo.id) : state.settings
+  return matchedRepo ? getSettingsForRepoRuntimeOwner(state, matchedRepo.id) : fallbackSettings
 }

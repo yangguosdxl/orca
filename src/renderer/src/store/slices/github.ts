@@ -358,6 +358,17 @@ function projectViewSourceScope(settings: AppState['settings']): string {
   return target.kind === 'environment' ? `runtime:${target.environmentId}` : 'local'
 }
 
+function settingsForProjectViewCacheKey(
+  settings: AppState['settings'],
+  cacheKey: string
+): Pick<NonNullable<AppState['settings']>, 'activeRuntimeEnvironmentId'> {
+  const runtimeMatch = /^github-project:runtime:([^:]+):/.exec(cacheKey)
+  if (runtimeMatch) {
+    return { ...settings, activeRuntimeEnvironmentId: runtimeMatch[1] }
+  }
+  return { ...settings, activeRuntimeEnvironmentId: null }
+}
+
 // Why: module-scope inflight map — must mirror `inflightWorkItemsRequests`
 // (dedup + force-refresh semantics). Reuses the work-item concurrency gate:
 // the gate exists to bound `gh` subprocess pressure at the renderer boundary,
@@ -1794,7 +1805,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     }
     applyRowPatch(set, cacheKey, rowId, optimisticRow)
 
-    const target = getActiveRuntimeTarget(get().settings)
+    const target = getActiveRuntimeTarget(settingsForProjectViewCacheKey(get().settings, cacheKey))
     const result =
       target.kind === 'environment'
         ? await callRuntimeRpc<GitHubProjectMutationResult>(
@@ -1852,7 +1863,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     }
     applyRowPatch(set, cacheKey, rowId, optimisticRow)
 
-    const target = getActiveRuntimeTarget(get().settings)
+    const target = getActiveRuntimeTarget(settingsForProjectViewCacheKey(get().settings, cacheKey))
     const result =
       target.kind === 'environment'
         ? await callRuntimeRpc<GitHubProjectMutationResult>(
@@ -1953,9 +1964,16 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     // PRs goes through updatePullRequestBySlug; for issues through
     // updateIssueBySlug. We dispatch both as needed.
     let envelope: GitHubProjectMutationResult = { ok: true }
-    // Why: route the row edit to the matched repo's owner host so it lands where
-    // the repo lives; fall back to focused settings when no repo matches the slug.
-    const target = getActiveRuntimeTarget(settingsForProjectRowOwner(get(), owner, repo))
+    // Why: Project rows may be slug-only and have no registered Orca repo.
+    // Fall back to the view source encoded in the cache key, not focused host.
+    const target = getActiveRuntimeTarget(
+      settingsForProjectRowOwner(
+        get(),
+        owner,
+        repo,
+        settingsForProjectViewCacheKey(get().settings, cacheKey)
+      )
+    )
     if (
       previousRow.itemType === 'PULL_REQUEST' &&
       (updates.title !== undefined || updates.body !== undefined)
@@ -2074,9 +2092,16 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       content: { ...previousRow.content, issueType }
     }
     applyRowPatch(set, cacheKey, rowId, optimistic)
-    // Why: route the issue-type edit to the matched repo's owner host; fall back
-    // to focused settings when no repo matches the slug.
-    const target = getActiveRuntimeTarget(settingsForProjectRowOwner(get(), owner, repo))
+    // Why: slug-only Project rows still belong to the source host that loaded
+    // the view; focused host may have changed after the table was fetched.
+    const target = getActiveRuntimeTarget(
+      settingsForProjectRowOwner(
+        get(),
+        owner,
+        repo,
+        settingsForProjectViewCacheKey(get().settings, cacheKey)
+      )
+    )
     const args = {
       owner,
       repo,
