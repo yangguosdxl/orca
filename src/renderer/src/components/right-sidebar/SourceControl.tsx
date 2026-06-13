@@ -2121,7 +2121,7 @@ function SourceControlInner(): React.JSX.Element {
     branch: branchName,
     eligibility: hostedReviewCreation,
     repo: activeRepo ?? null,
-    settings,
+    settings: activeRepoSettings,
     submitting: isCreatingPr,
     prCreationDefaults: resolvedPrCreationDefaults,
     onBranchChangedByGeneration: handleBranchChangedByPullRequestGeneration,

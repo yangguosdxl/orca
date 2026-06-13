@@ -12,7 +12,7 @@ import {
   Link,
   Unlink
 } from 'lucide-react'
-import { useAppStore } from '@/store'
+import { useAppStore, type AppState } from '@/store'
 import {
   mergePRCommentIntoList,
   prChecksCacheSuffix,
@@ -465,11 +465,13 @@ export default function ChecksPanel(): React.JSX.Element {
   const runtimeEnvironmentId = useAppStore((s) =>
     getRuntimeEnvironmentIdForWorktree(s, activeWorktreeId)
   )
-  const ownerSettings = useMemo(
+  const ownerSettings = useMemo<AppState['settings']>(
     () =>
-      runtimeEnvironmentId
-        ? { ...settings, activeRuntimeEnvironmentId: runtimeEnvironmentId }
-        : { ...settings, activeRuntimeEnvironmentId: null },
+      !settings
+        ? settings
+        : runtimeEnvironmentId
+          ? { ...settings, activeRuntimeEnvironmentId: runtimeEnvironmentId }
+          : { ...settings, activeRuntimeEnvironmentId: null },
     [runtimeEnvironmentId, settings]
   )
   const repoConnectionId = repo?.connectionId?.trim() || null
@@ -761,7 +763,7 @@ export default function ChecksPanel(): React.JSX.Element {
     branch,
     eligibility: hostedReviewCreation,
     repo,
-    settings,
+    settings: ownerSettings,
     submitting: isCreatingPr,
     prCreationDefaults,
     onBranchChangedByGeneration: handleBranchChangedByPullRequestGeneration

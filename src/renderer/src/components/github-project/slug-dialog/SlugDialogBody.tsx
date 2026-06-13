@@ -338,12 +338,14 @@ export function SlugDialogBody({
                 owner={owner}
                 repo={repo}
                 comments={details.comments}
+                sourceSettings={sourceSettings}
                 onChange={(next) => setDetails((d) => (d ? { ...d, comments: next } : d))}
               />
               <NewCommentForm
                 owner={owner}
                 repo={repo}
                 number={number}
+                sourceSettings={sourceSettings}
                 onAdded={(c) => setDetails((d) => (d ? { ...d, comments: [...d.comments, c] } : d))}
               />
             </section>

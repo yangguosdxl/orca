@@ -1,4 +1,5 @@
 import { getRepoExecutionHostId, parseExecutionHostId } from '../../../shared/execution-host'
+import type { ExecutionHostId } from '../../../shared/execution-host'
 import type { GlobalSettings, Repo, Worktree } from '../../../shared/types'
 import { getRepoIdFromWorktreeId } from '@/store/slices/worktree-helpers'
 
@@ -37,6 +38,24 @@ export function getRuntimeEnvironmentIdForWorktree(
     return parsed?.kind === 'runtime' ? parsed.environmentId : null
   }
   return state.settings?.activeRuntimeEnvironmentId?.trim() || null
+}
+
+export function getExecutionHostIdForWorktree(
+  state: WorktreeRuntimeOwnerState,
+  worktreeId: string | null | undefined
+): ExecutionHostId {
+  if (!worktreeId) {
+    return 'local'
+  }
+  const repoId =
+    findWorktreeRepoId(state.worktreesByRepo, worktreeId) ?? getRepoIdFromWorktreeId(worktreeId)
+  const repo = state.repos?.find((entry) => entry.id === repoId)
+  const hasExplicitOwner = Boolean(repo?.executionHostId?.trim() || repo?.connectionId?.trim())
+  if (repo && hasExplicitOwner) {
+    return getRepoExecutionHostId(repo)
+  }
+  const environmentId = state.settings?.activeRuntimeEnvironmentId?.trim()
+  return environmentId ? `runtime:${encodeURIComponent(environmentId)}` : 'local'
 }
 
 export function getSettingsForWorktreeRuntimeOwner(

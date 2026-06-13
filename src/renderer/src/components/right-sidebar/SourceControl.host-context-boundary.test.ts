@@ -37,4 +37,18 @@ describe('SourceControl host-context boundaries', () => {
     expect(refreshSection).toContain('settings: context.runtimeTargetSettings')
     expect(refreshSection).not.toContain('settings: activeRepoSettings')
   })
+
+  it('routes create-review field generation through caller-provided owner settings', () => {
+    const sourceControlCall = sourceBetween(
+      SOURCE_CONTROL_SOURCE,
+      '} = useCreatePullRequestDialogFields({',
+      'const handleGeneratePullRequestFieldsClick = useCallback'
+    )
+    expect(sourceControlCall).toContain('settings: activeRepoSettings')
+
+    const hookSource = readFileSync(join(__dirname, 'useCreatePullRequestDialogFields.ts'), 'utf8')
+    const requestContext = sourceBetween(hookSource, 'const requestContext = {', 'const seed = {')
+    expect(requestContext).toContain('settings,')
+    expect(requestContext).not.toContain('useAppStore.getState().settings')
+  })
 })

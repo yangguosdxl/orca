@@ -8,7 +8,7 @@ import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-cl
 import { useAppStore } from '@/store'
 import { useRepoSlugIndex } from '@/lib/repo-slug-index'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
-import type { PRComment } from '../../../../../shared/types'
+import type { GlobalSettings, PRComment } from '../../../../../shared/types'
 import type {
   GitHubProjectCommentMutationResult,
   GitHubProjectMutationResult
@@ -37,14 +37,17 @@ export function CommentsList({
   owner,
   repo,
   comments,
+  sourceSettings,
   onChange
 }: {
   owner: string
   repo: string
   comments: PRComment[]
+  sourceSettings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
   onChange: (next: PRComment[]) => void
 }): React.JSX.Element {
-  const runtimeSettings = useRuntimeSettingsForSlug(owner, repo)
+  const fallbackRuntimeSettings = useRuntimeSettingsForSlug(owner, repo)
+  const runtimeSettings = sourceSettings ?? fallbackRuntimeSettings
   return (
     <div className="flex flex-col gap-3">
       {comments.length === 0 ? (
@@ -181,16 +184,19 @@ export function NewCommentForm({
   owner,
   repo,
   number,
+  sourceSettings,
   onAdded
 }: {
   owner: string
   repo: string
   number: number
+  sourceSettings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
   onAdded: (c: PRComment) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const runtimeSettings = useRuntimeSettingsForSlug(owner, repo)
+  const fallbackRuntimeSettings = useRuntimeSettingsForSlug(owner, repo)
+  const runtimeSettings = sourceSettings ?? fallbackRuntimeSettings
   return (
     <div className="flex flex-col gap-2">
       <textarea

@@ -541,6 +541,56 @@ describe('createBrowserSlice runtime guard', () => {
     expect(store.getState().browserSessionProfiles[0]?.id).toBe('local-default')
   })
 
+  it('uses the target worktree host default profile when creating a browser tab', () => {
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: null } as AppState['settings'],
+      repos: [
+        {
+          id: 'repo-1',
+          path: '/repo',
+          displayName: 'Repo',
+          badgeColor: '#000000',
+          addedAt: 1,
+          connectionId: null,
+          executionHostId: 'runtime:env-1'
+        }
+      ],
+      worktreesByRepo: {
+        'repo-1': [
+          {
+            id: 'wt-remote',
+            repoId: 'repo-1',
+            path: '/repo/wt',
+            head: 'abc123',
+            branch: 'feature',
+            isBare: false,
+            isMainWorktree: false,
+            displayName: 'Workspace',
+            comment: '',
+            linkedIssue: null,
+            linkedPR: null,
+            linkedLinearIssue: null,
+            isArchived: false,
+            isUnread: false,
+            isPinned: false,
+            sortOrder: 0,
+            lastActivityAt: 1
+          }
+        ]
+      },
+      defaultBrowserSessionProfileId: 'local-default',
+      defaultBrowserSessionProfileIdByHostId: {
+        local: 'local-default',
+        'runtime:env-1': 'remote-default'
+      }
+    })
+
+    const tab = store.getState().createBrowserTab('wt-remote', 'https://example.com')
+
+    expect(tab.sessionProfileId).toBe('remote-default')
+  })
+
   it('does not import local browser cookies while a runtime environment is active', async () => {
     const store = createTestStore()
     store.setState({ settings: settingsWithRuntime('env-1') })

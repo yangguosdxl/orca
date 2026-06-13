@@ -43,7 +43,10 @@ import {
   getSettingsFocusedExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
-import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
+  getExecutionHostIdForWorktree,
+  getRuntimeEnvironmentIdForWorktree
+} from '@/lib/worktree-runtime-owner'
 
 type CreateBrowserTabOptions = {
   activate?: boolean
@@ -235,6 +238,10 @@ function isRuntimeEnvironmentActive(state: AppState): boolean {
 
 function getBrowserSettingsHostId(state: Pick<AppState, 'settings'>): ExecutionHostId {
   return getSettingsFocusedExecutionHostId(state.settings)
+}
+
+function getBrowserWorktreeHostId(state: AppState, worktreeId: string): ExecutionHostId {
+  return getExecutionHostIdForWorktree(state, worktreeId)
 }
 
 function profileListByHostUpdate(
@@ -462,7 +469,9 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     const sessionProfileId =
       options?.sessionProfileId !== undefined
         ? options.sessionProfileId
-        : get().defaultBrowserSessionProfileId
+        : (get().defaultBrowserSessionProfileIdByHostId[
+            getBrowserWorktreeHostId(get(), worktreeId)
+          ] ?? get().defaultBrowserSessionProfileId)
     const browserTab = buildWorkspaceFromPage(
       workspaceId,
       worktreeId,
