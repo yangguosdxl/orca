@@ -84,7 +84,17 @@ function resolveAgentForegroundProcessFromPs(stdout: string, shellPid: number): 
   const candidates = collectDescendants(parsePsRows(stdout), shellPid).sort(
     (a, b) => candidateScore(b) - candidateScore(a)
   )
+  // Why: `+` in `ps stat` marks descendants holding the terminal foreground.
+  // When any candidate holds the foreground, only those may determine identity
+  // — otherwise a suspended (Ctrl-Z) or backgrounded recognized agent (e.g. a
+  // stopped `codex`) masquerades as the tab's agent while vim or a dev server
+  // actually owns the foreground. candidateScore only biases sort order, so the
+  // first recognized descendant was returned regardless of foreground status.
+  const hasForegroundCandidate = candidates.some((candidate) => candidate.stat.includes('+'))
   for (const candidate of candidates) {
+    if (hasForegroundCandidate && !candidate.stat.includes('+')) {
+      continue
+    }
     const recognized = recognizeAgentProcessFromCommandLine(candidate.command)
     if (recognized) {
       return recognized.processName
