@@ -2682,6 +2682,7 @@ function CommentCodeContext({
 function ConversationTab({
   item,
   repoPath,
+  repoId,
   body,
   comments,
   files,
@@ -2729,7 +2730,10 @@ function ConversationTab({
   const [bodySaving, setBodySaving] = useState(false)
   const bodyTextareaRef = useRef<HTMLTextAreaElement>(null)
   const bodyTextareaFocusFrameRef = useRef<number | null>(null)
-  const repoAssignees = useRepoAssignees(repoPath, item.repoId)
+  const repoOwnerSettings = useAppStore(
+    useShallow((s) => getSettingsForRepoRuntimeOwner(s, item.repoId ?? repoId ?? null))
+  )
+  const repoAssignees = useRepoAssignees(repoPath, item.repoId, repoOwnerSettings)
   const commentCounts = useMemo(() => getPRCommentAudienceCounts(comments), [comments])
   const visibleComments = useMemo(
     () => filterPRCommentsByAudience(comments, commentFilter),

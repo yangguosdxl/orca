@@ -40,4 +40,12 @@ describe('PullRequestPage host boundaries', () => {
     expect(section).toContain('useRepoAssigneesBySlug(')
     expect(section).toContain('repoOwnerSettings')
   })
+
+  it('routes PR mention metadata through the PR repo owner host', () => {
+    const source = componentSource('PullRequestPage.tsx')
+    const section = sourceBetween(source, 'function ConversationTab', 'const mentionOptions')
+
+    expect(section).toContain('getSettingsForRepoRuntimeOwner(s, item.repoId ?? repoId ?? null)')
+    expect(section).toContain('useRepoAssignees(repoPath, item.repoId, repoOwnerSettings)')
+  })
 })
