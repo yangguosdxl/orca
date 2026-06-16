@@ -710,6 +710,7 @@ export type TabContentType =
   | 'editor'
   | 'diff'
   | 'conflict-review'
+  | 'check-details'
   | 'browser'
   | 'simulator'
 
