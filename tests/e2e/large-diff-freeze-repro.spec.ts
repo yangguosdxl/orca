@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 import type { Page } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { waitForSessionReady } from './helpers/store'
-import { getLargeDiffRenderLimit } from '../../src/renderer/src/components/editor/large-diff-render-limit'
+import { getLargeDiffRenderLimit } from '../../src/shared/large-diff-render-limit'
 
 type IsolatedLargeDiffRepo = {
   repoPath: string
