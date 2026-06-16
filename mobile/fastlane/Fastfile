@@ -3,12 +3,15 @@
 # Builds the prebuilt iOS workspace, signs it with the distribution identity
 # already imported into the CI keychain, and uploads the resulting .ipa to
 # TestFlight / App Store Connect. All Apple credentials come from CI env vars
-# (see .github/workflows/mobile-build.yml) so nothing secret lives in the repo.
+# (see .github/workflows/mobile-ios-release.yml) so nothing secret lives in the
+# repo.
 #
 # Provisioning profiles are generated/refreshed automatically from the App
 # Store Connect API key via `-allowProvisioningUpdates`; only the distribution
 # certificate's private key must be pre-supplied (the API key cannot recreate
 # it across runs), which is why we import a .p12 into the keychain first.
+
+require "tempfile"
 
 default_platform(:ios)
 
@@ -28,19 +31,33 @@ platform :ios do
 
     team_id = ENV.fetch("APPLE_TEAM_ID")
 
+    # Why: gym (build_app) has no `api_key` option, so we feed xcodebuild the
+    # App Store Connect key directly via xcargs. Without these auth flags,
+    # `-allowProvisioningUpdates` has no credentials and the archive fails with
+    # "No Accounts" / "No profiles for ... were found". The distribution cert is
+    # pre-imported into the keychain by the workflow; the API key only
+    # generates/downloads the provisioning profile.
+    #
+    # `app_store_connect_api_key` returns the DECODED key bytes in api_key[:key]
+    # (it does not write a file), so we materialize the .p8 ourselves for
+    # -authenticationKeyPath. Tempfile lives for the process; the runner VM is
+    # ephemeral so nothing secret persists.
+    key_file = Tempfile.new(["asc_api_key", ".p8"])
+    key_file.write(api_key[:key])
+    key_file.close
+
+    auth_args =
+      "-allowProvisioningUpdates " \
+      "-authenticationKeyID #{api_key[:key_id]} " \
+      "-authenticationKeyIssuerID #{api_key[:issuer_id]} " \
+      "-authenticationKeyPath #{key_file.path}"
+
     build_app(
       workspace: WORKSPACE,
       scheme: SCHEME,
       configuration: "Release",
       export_method: "app-store",
-      # Why: pass the API key to gym so it forwards
-      # -authenticationKeyID/-authenticationKeyIssuerID/-authenticationKeyPath to
-      # xcodebuild. Without it, `-allowProvisioningUpdates` has no credentials and
-      # the archive fails with "No Accounts" / "No profiles for ... were found".
-      # The distribution cert itself is pre-imported into the keychain by the
-      # workflow; the API key only generates/downloads the provisioning profile.
-      api_key: api_key,
-      xcargs: "-allowProvisioningUpdates DEVELOPMENT_TEAM=#{team_id}",
+      xcargs: "#{auth_args} DEVELOPMENT_TEAM=#{team_id}",
       export_options: {
         teamID: team_id,
         signingStyle: "automatic",
