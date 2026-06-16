@@ -2486,6 +2486,10 @@ export function connectPanePty(
       // hidden xterm is dirty, skipping is safer than sending stale CPR/DECRQM.
     }
 
+    function isHiddenStartupRendererQueryWindowActive(): boolean {
+      return shouldSnapshotHiddenCodexOutput && hiddenStartupRendererQueryPending.length > 0
+    }
+
     function takeHiddenStartupRendererQueryPendingForForeground(data: string): {
       statelessQueryData: string
       statefulQueryData: string
