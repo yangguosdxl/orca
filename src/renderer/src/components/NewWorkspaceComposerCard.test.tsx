@@ -38,16 +38,27 @@ vi.mock('@/components/sparse/SparseCheckoutPresetSelect', () => ({
 vi.mock('@/components/new-workspace/SmartWorkspaceNameField', () => ({
   default: ({
     branchesEnabled,
-    repoBackedSourcesDisabled
+    repoBackedSourcesDisabled,
+    onActiveSourceModeChange
   }: {
     branchesEnabled?: boolean
     repoBackedSourcesDisabled?: boolean
+    onActiveSourceModeChange?: (mode: string) => void
   }) => (
-    <input
-      aria-label="workspace name"
-      data-branches-enabled={branchesEnabled ? 'true' : 'false'}
-      data-repo-backed-sources-disabled={repoBackedSourcesDisabled ? 'true' : 'false'}
-    />
+    <>
+      <input
+        aria-label="workspace name"
+        data-branches-enabled={branchesEnabled ? 'true' : 'false'}
+        data-repo-backed-sources-disabled={repoBackedSourcesDisabled ? 'true' : 'false'}
+      />
+      <button
+        type="button"
+        data-testid="set-linear-mode"
+        onClick={() => onActiveSourceModeChange?.('linear')}
+      >
+        Linear mode
+      </button>
+    </>
   )
 }))
 
@@ -121,7 +132,7 @@ function renderCard(
         selectedRepoIsGit
         onRepoChange={() => {}}
         onProjectChange={() => {}}
-        primaryActionLabel="Create Workspace"
+        primaryActionLabel="Create workspace"
         name=""
         onNameValueChange={() => {}}
         onSmartGitHubItemSelect={() => {}}
@@ -176,16 +187,44 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     current = null
   })
 
-  it('shows a subordinate Task Source selector for multi-repo folder groups', () => {
+  it('shows a subordinate Task Source selector inside the create-from section', () => {
     current = renderCard({
       taskSourceProjectOptions: sourceOptions,
       selectedTaskSourceProjectId: 'repo-a-project',
       onTaskSourceProjectChange: vi.fn()
     })
 
-    expect(current.container.textContent).toContain('Task Source')
-    expect(current.container.textContent).toContain('Repo A')
-    expect(current.container.textContent).toContain('Repo B')
+    const projectSection = current.container.querySelector(
+      '[data-contextual-tour-target="workspace-creation-project"]'
+    )
+    const nameSection = current.container.querySelector(
+      '[data-contextual-tour-target="workspace-creation-name"]'
+    )
+    expect(projectSection?.textContent).not.toContain('Task Source')
+    expect(nameSection?.textContent).toContain("Name or 'Create From'")
+    expect(nameSection?.textContent).toContain('Task Source')
+    expect(nameSection?.textContent).toContain('Repo A')
+    expect(nameSection?.textContent).toContain('Repo B')
+  })
+
+  it('hides folder task-source controls when the smart name field switches to Linear mode', () => {
+    current = renderCard({
+      taskSourceProjectOptions: sourceOptions,
+      selectedTaskSourceProjectId: 'repo-a-project',
+      onTaskSourceProjectChange: vi.fn()
+    })
+
+    act(() => {
+      current?.container
+        .querySelector<HTMLButtonElement>('[data-testid="set-linear-mode"]')
+        ?.click()
+    })
+
+    const nameSection = current.container.querySelector(
+      '[data-contextual-tour-target="workspace-creation-name"]'
+    )
+    expect(nameSection?.textContent).not.toContain('Task Source')
+    expect(current.container.querySelector('[aria-label="workspace name"]')).toBeTruthy()
   })
 
   it('does not disable folder workspace creation when only source lookup needs SSH', () => {
@@ -203,7 +242,7 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     })
 
     const createButton = [...current.container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Create Workspace')
+      button.textContent?.includes('Create workspace')
     )
     expect(createButton).toBeTruthy()
     expect(createButton?.hasAttribute('disabled')).toBe(false)

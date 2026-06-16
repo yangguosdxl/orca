@@ -183,10 +183,10 @@ function QuickTabBody({
   )
   const isFolderWorkspaceTarget = selectedProjectOption?.kind === 'project-group'
   const primaryActionLabel = isFolderWorkspaceTarget
-    ? getFolderWorkspacePrimaryActionLabel(quickAgent)
+    ? getFolderWorkspacePrimaryActionLabel()
     : cardProps.selectedRepoIsGit
-      ? 'Create Worktree'
-      : 'Create Workspace'
+      ? 'Create worktree'
+      : 'Create workspace'
 
   // Cmd/Ctrl+Enter submits, Esc first blurs the focused input (like the full page).
   useEffect(() => {

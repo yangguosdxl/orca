@@ -4037,7 +4037,6 @@
           "create": "워크스페이스 만들기",
           "sourceProject": "작업 소스",
           "chooseSourceProject": "작업 소스 선택",
-          "createStart": "만들고 에이전트 시작",
           "createFailed": "폴더 작업 영역을 만들지 못했습니다."
         },
         "ProjectOrderManualDefaultNotice": {

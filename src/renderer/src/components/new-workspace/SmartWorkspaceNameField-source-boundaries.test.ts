@@ -55,4 +55,11 @@ describe('SmartWorkspaceNameField repo-backed source boundaries', () => {
     expect(FIELD_SOURCE).toContain('!crossRepoPrompt || !allowCrossRepoProjectAdd')
     expect(FIELD_SOURCE).toContain(') : allowCrossRepoProjectAdd ? (')
   })
+
+  it('reports the active source mode without lifting source search state', () => {
+    expect(FIELD_SOURCE).toContain('onActiveSourceModeChange?: (mode: SmartNameMode) => void')
+    expect(FIELD_SOURCE).toContain('onActiveSourceModeChange')
+    expect(FIELD_SOURCE).toContain('onActiveSourceModeChange?.(mode)')
+    expect(FIELD_SOURCE).toContain('[mode, onActiveSourceModeChange]')
+  })
 })

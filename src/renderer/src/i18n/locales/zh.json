@@ -4037,7 +4037,6 @@
           "create": "创建工作区",
           "sourceProject": "任务来源",
           "chooseSourceProject": "选择任务来源",
-          "createStart": "创建并启动代理",
           "createFailed": "文件夹工作区创建失败。"
         },
         "ProjectOrderManualDefaultNotice": {

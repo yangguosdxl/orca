@@ -4037,7 +4037,6 @@
           "create": "ワークスペースを作成",
           "sourceProject": "タスクソース",
           "chooseSourceProject": "タスクソースを選択",
-          "createStart": "作成してエージェントを開始",
           "createFailed": "フォルダーワークスペースを作成できませんでした。"
         },
         "ProjectOrderManualDefaultNotice": {

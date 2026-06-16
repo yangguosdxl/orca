@@ -103,6 +103,7 @@ type SmartWorkspaceNameFieldProps = {
   repoBackedSourcesDisabled?: boolean
   allowCrossRepoProjectAdd?: boolean
   crossRepoSwitchTarget?: 'project' | 'task-source'
+  onActiveSourceModeChange?: (mode: SmartNameMode) => void
 }
 
 export type SmartWorkspaceNameSelection = {
@@ -152,7 +153,8 @@ export default function SmartWorkspaceNameField({
   branchesEnabled = true,
   repoBackedSourcesDisabled = false,
   allowCrossRepoProjectAdd = true,
-  crossRepoSwitchTarget = 'project'
+  crossRepoSwitchTarget = 'project',
+  onActiveSourceModeChange
 }: SmartWorkspaceNameFieldProps): React.JSX.Element {
   // Why: tab/filter labels use the lightweight translate() helper; subscribing
   // here makes them refresh even when language changes don't remount the field.
@@ -258,6 +260,10 @@ export default function SmartWorkspaceNameField({
     link: NonNullable<ReturnType<typeof parseGitHubIssueOrPRLink>>
     matchingRepo: RepoOption | null
   } | null>(null)
+
+  useEffect(() => {
+    onActiveSourceModeChange?.(mode)
+  }, [mode, onActiveSourceModeChange])
   const preflightStatusCurrent = preflightStatusContextKey === expectedPreflightContextKey
   const localGitlabAvailable = preflightStatusCurrent && preflightStatus?.glab?.installed === true
   const gitlabSourceAvailable = canUseGitLabSmartSource({
@@ -1075,6 +1081,7 @@ export default function SmartWorkspaceNameField({
         value={mode}
         onValueChange={(next) => {
           const nextMode = next as SmartNameMode
+          onActiveSourceModeChange?.(nextMode)
           setMode(nextMode)
           setOpen(!disabled && nextMode !== 'text' && selectedSource === null)
           cancelLocalInputFocusFrame()

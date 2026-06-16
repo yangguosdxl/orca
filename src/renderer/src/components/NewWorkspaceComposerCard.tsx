@@ -35,6 +35,7 @@ import SparseCheckoutPresetSelect from '@/components/sparse/SparseCheckoutPreset
 import SmartWorkspaceNameField, {
   type SmartWorkspaceNameSelection
 } from '@/components/new-workspace/SmartWorkspaceNameField'
+import type { SmartNameMode } from '@/components/new-workspace/smart-workspace-source-results'
 import ProjectCombobox from '@/components/new-workspace/ProjectCombobox'
 import ProjectHostSetupCombobox from '@/components/new-workspace/ProjectHostSetupCombobox'
 import type { SetupConfig } from '@/lib/new-workspace'
@@ -393,9 +394,15 @@ export default function NewWorkspaceComposerCard({
     sourceLookupSshStatus === 'disconnected' || sourceLookupSshStatus === null
       ? translate('auto.components.NewWorkspaceComposerCard.connectSourceLookup', 'Connect')
       : translate('auto.components.NewWorkspaceComposerCard.reconnectSourceLookup', 'Reconnect')
+  const [activeSmartNameMode, setActiveSmartNameMode] = React.useState<SmartNameMode>('smart')
   const showTaskSourceSelector = taskSourceProjectOptions.length > 1
-  const showTaskSourceSection =
-    showTaskSourceSelector || Boolean(taskSourceEmptyMessage) || sourceLookupRequiresConnection
+  const activeModeUsesRepoBackedSources =
+    activeSmartNameMode === 'smart' ||
+    activeSmartNameMode === 'github' ||
+    activeSmartNameMode === 'gitlab'
+  const showRepoBackedSourceControls =
+    activeModeUsesRepoBackedSources &&
+    (showTaskSourceSelector || Boolean(taskSourceEmptyMessage) || sourceLookupRequiresConnection)
   const setupConfigLabel =
     setupConfig?.kind === 'default-tabs'
       ? 'Default tab commands'
@@ -623,69 +630,6 @@ export default function NewWorkspaceComposerCard({
           ) : null}
         </div>
 
-        {showTaskSourceSection ? (
-          <div className="space-y-1">
-            {showTaskSourceSelector ? (
-              <>
-                <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
-                  {translate(
-                    'auto.components.sidebar.FolderWorkspaceComposerDialog.sourceProject',
-                    'Task Source'
-                  )}
-                </label>
-                <ProjectCombobox
-                  options={taskSourceProjectOptions}
-                  value={selectedTaskSourceProjectId}
-                  onValueChange={(value) => onTaskSourceProjectChange?.(value)}
-                  onValueSelected={focusNameInput}
-                  placeholder={translate(
-                    'auto.components.sidebar.FolderWorkspaceComposerDialog.chooseSourceProject',
-                    'Choose task source'
-                  )}
-                  triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
-                />
-              </>
-            ) : null}
-            {taskSourceEmptyMessage ? (
-              <p className="text-[11px] text-muted-foreground">{taskSourceEmptyMessage}</p>
-            ) : null}
-            {sourceLookupRequiresConnection && sourceLookupConnectionId ? (
-              <div
-                role="status"
-                aria-live="polite"
-                className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/35 px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-medium text-foreground">
-                    {translate('auto.components.NewWorkspaceComposerCard.b5a0796911', 'Connect')}{' '}
-                    {selectedRepoName}
-                  </div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    {sourceLookupSshStatusLabel}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => void onConnectSourceLookupRepo?.()}
-                  disabled={sourceLookupConnectInProgress}
-                  className="shrink-0"
-                >
-                  {sourceLookupConnectInProgress ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <PlugZap className="size-3.5" />
-                  )}
-                  {sourceLookupConnectInProgress
-                    ? translate('auto.components.NewWorkspaceComposerCard.f660aa1454', 'Connecting')
-                    : sourceLookupConnectButtonLabel}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
         <div className="min-w-0 space-y-1" data-contextual-tour-target="workspace-creation-name">
           <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
             {selectedRepoIsGit
@@ -701,6 +645,71 @@ export default function NewWorkspaceComposerCard({
               {translate('auto.components.NewWorkspaceComposerCard.0c5d6a479c', '[Optional]')}
             </span>
           </label>
+          {showRepoBackedSourceControls ? (
+            <div className="space-y-1">
+              {showTaskSourceSelector ? (
+                <>
+                  <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
+                    {translate(
+                      'auto.components.sidebar.FolderWorkspaceComposerDialog.sourceProject',
+                      'Task Source'
+                    )}
+                  </label>
+                  <ProjectCombobox
+                    options={taskSourceProjectOptions}
+                    value={selectedTaskSourceProjectId}
+                    onValueChange={(value) => onTaskSourceProjectChange?.(value)}
+                    onValueSelected={focusNameInput}
+                    placeholder={translate(
+                      'auto.components.sidebar.FolderWorkspaceComposerDialog.chooseSourceProject',
+                      'Choose task source'
+                    )}
+                    triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+                  />
+                </>
+              ) : null}
+              {taskSourceEmptyMessage ? (
+                <p className="text-[11px] text-muted-foreground">{taskSourceEmptyMessage}</p>
+              ) : null}
+              {sourceLookupRequiresConnection && sourceLookupConnectionId ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/35 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-foreground">
+                      {translate('auto.components.NewWorkspaceComposerCard.b5a0796911', 'Connect')}{' '}
+                      {selectedRepoName}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {sourceLookupSshStatusLabel}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => void onConnectSourceLookupRepo?.()}
+                    disabled={sourceLookupConnectInProgress}
+                    className="shrink-0"
+                  >
+                    {sourceLookupConnectInProgress ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : (
+                      <PlugZap className="size-3.5" />
+                    )}
+                    {sourceLookupConnectInProgress
+                      ? translate(
+                          'auto.components.NewWorkspaceComposerCard.f660aa1454',
+                          'Connecting'
+                        )
+                      : sourceLookupConnectButtonLabel}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <SmartWorkspaceNameField
             inputRef={nameInputRef}
             repos={eligibleRepos}
@@ -724,6 +733,7 @@ export default function NewWorkspaceComposerCard({
             repoBackedSourcesDisabled={sourceLookupRequiresConnection}
             allowCrossRepoProjectAdd={allowSmartNameAddProject}
             crossRepoSwitchTarget={smartNameRepoSwitchTarget}
+            onActiveSourceModeChange={setActiveSmartNameMode}
             onPlainEnter={() => {
               // Why: Enter on the workspace name advances focus to the next
               // field (Agent combobox) rather than submitting, letting the user
