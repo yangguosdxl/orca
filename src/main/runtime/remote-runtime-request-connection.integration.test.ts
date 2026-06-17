@@ -428,12 +428,14 @@ describe('remote runtime request connection integration', () => {
             })
           })
         )
+        // Why: CI can register subscription cleanups before the first
+        // response crosses the shared-control socket.
         await waitFor(
-          () => subscriptionCleanups.size >= mixedSubscriptions.length + 1,
+          () =>
+            subscriptionCleanups.size >= mixedSubscriptions.length + 1 && mixedEvents.length > 0,
           5000,
           () => `cleanup count ${subscriptionCleanups.size}, event count ${mixedEvents.length}`
         )
-        expect(mixedEvents.length).toBeGreaterThan(0)
         expect(
           (server as unknown as { wsConnectionIds: Map<unknown, unknown> }).wsConnectionIds.size
         ).toBe(1)
