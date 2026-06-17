@@ -3515,7 +3515,8 @@ describe('connectPanePty', () => {
     const pane = createPane(1)
     const manager = createManager(1)
     const deps = createDeps({
-      isVisibleRef: { current: false }
+      isVisibleRef: { current: false },
+      startup: { command: 'codex' }
     })
 
     connectPanePty(pane as never, manager as never, deps as never)
