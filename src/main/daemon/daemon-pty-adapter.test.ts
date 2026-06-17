@@ -744,10 +744,14 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
         lastSubprocess._simulateData('first cycle content\r\n')
         await historyAdapter.shutdown(id, { immediate: true, keepHistory: true })
-        // Why: production wake always happens after the slept session's exit
-        // event closed its history; wait for that close before re-spawning.
         const metaPath = join(historyDir, getHistorySessionDirName(id), 'meta.json')
-        await waitFor(() => JSON.parse(readFileSync(metaPath, 'utf-8')).endedAt !== null)
+        const checkpointPath = join(historyDir, getHistorySessionDirName(id), 'checkpoint.json')
+        // Why: keep-history sleep stays unclean so cold restore remains eligible;
+        // the final checkpoint is the deterministic handoff signal.
+        expect(JSON.parse(readFileSync(metaPath, 'utf-8')).endedAt).toBeNull()
+        expect(JSON.parse(readFileSync(checkpointPath, 'utf-8')).snapshotAnsi).toContain(
+          'first cycle content'
+        )
 
         const firstWake = await historyAdapter.spawn({
           cols: 80,
@@ -761,7 +765,10 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
         lastSubprocess._simulateData('second cycle content\r\n')
         await historyAdapter.shutdown(id, { immediate: true, keepHistory: true })
-        await waitFor(() => JSON.parse(readFileSync(metaPath, 'utf-8')).endedAt !== null)
+        expect(JSON.parse(readFileSync(metaPath, 'utf-8')).endedAt).toBeNull()
+        expect(JSON.parse(readFileSync(checkpointPath, 'utf-8')).snapshotAnsi).toContain(
+          'second cycle content'
+        )
 
         const secondWake = await historyAdapter.spawn({
           cols: 80,
