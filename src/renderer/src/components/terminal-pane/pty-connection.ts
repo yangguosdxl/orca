@@ -737,17 +737,21 @@ function updateSynchronizedOutputScanTail(data: string): string {
   return data.slice(-SYNCHRONIZED_OUTPUT_SCAN_TAIL_CHARS)
 }
 
-function containsSequenceAcrossBoundary(tail: string, data: string, sequence: string): boolean {
+function getSequenceAcrossBoundaryPrefix(
+  tail: string,
+  data: string,
+  sequence: string
+): string | null {
   const maxPrefixLength = Math.min(sequence.length - 1, tail.length, data.length)
   for (let prefixLength = 1; prefixLength <= maxPrefixLength; prefixLength++) {
     if (
       tail.endsWith(sequence.slice(0, prefixLength)) &&
       data.startsWith(sequence.slice(prefixLength))
     ) {
-      return true
+      return tail.slice(-prefixLength)
     }
   }
-  return false
+  return null
 }
 
 function containsCursorPositionSequence(data: string): boolean {
@@ -3413,18 +3417,19 @@ export function connectPanePty(
       const synchronizedOutputEnded = containsSynchronizedOutputEnd(hiddenSynchronizedScanData)
       // Why: if a DEC 2026 marker spans chunks, xterm may already hold the
       // first bytes of that escape. Complete that boundary live, then skip.
-      const splitSynchronizedBoundary =
-        !foreground &&
-        (containsSequenceAcrossBoundary(
-          synchronizedHiddenOutputScanTail,
-          data,
-          SYNCHRONIZED_OUTPUT_START_SEQUENCE
-        ) ||
-          containsSequenceAcrossBoundary(
+      const splitSynchronizedBoundaryPrefix = !foreground
+        ? (getSequenceAcrossBoundaryPrefix(
+            synchronizedHiddenOutputScanTail,
+            data,
+            SYNCHRONIZED_OUTPUT_START_SEQUENCE
+          ) ??
+          getSequenceAcrossBoundaryPrefix(
             synchronizedHiddenOutputScanTail,
             data,
             SYNCHRONIZED_OUTPUT_END_SEQUENCE
           ))
+        : null
+      const splitSynchronizedBoundary = splitSynchronizedBoundaryPrefix !== null
       const synchronizedHiddenOutput =
         !foreground &&
         (synchronizedHiddenOutputActive || synchronizedOutputStarted || synchronizedOutputEnded)
@@ -3462,7 +3467,10 @@ export function connectPanePty(
                 : 'synchronized'
           )
         }
-        writePtyOutputToXterm(data, foreground)
+        writePtyOutputToXterm(
+          splitSynchronizedBoundary ? `${splitSynchronizedBoundaryPrefix}${data}` : data,
+          foreground
+        )
       } else if (
         (hiddenOutputRestoreNeeded || hiddenOutputRestoreInFlight) &&
         restoreAppliesToCurrentPty
