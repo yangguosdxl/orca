@@ -88,6 +88,12 @@ export async function killWorkspacePort(
   )
 
   if (!port) {
+    if (scan.unavailableReason) {
+      // Why: an empty port list from an unavailable/paused scan does not mean
+      // the port vanished — surface the scan's reason instead of falsely
+      // claiming the port is gone (e.g. during a command-timeout backoff).
+      return { ok: false, reason: scan.unavailableReason }
+    }
     return { ok: false, reason: 'The port is no longer listening.' }
   }
   if (port.kind !== 'workspace') {
