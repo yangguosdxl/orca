@@ -2967,7 +2967,7 @@ export function connectPanePty(
       }
       const restoreAppliesToCurrentPty =
         hiddenOutputRestorePtyId !== null && transport.getPtyId() === hiddenOutputRestorePtyId
-      const synchronizedOutputStarted = containsSynchronizedOutputStart(data)
+      const synchronizedOutputStarted = data.startsWith('\x1b[?2026h')
       const synchronizedHiddenOutput =
         !foreground &&
         (synchronizedHiddenOutputActive ||
