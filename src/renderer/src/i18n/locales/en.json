@@ -3596,7 +3596,10 @@
           "95c9754653": "Agent activity layout",
           "3d4b9c4997": "Hover",
           "ba87080fb7": "Show properties",
-          "320b675c9a": "Card display",
+          "320b675c9a": "Card layout",
+          "newCardDisplay": {
+            "title": "Card display"
+          },
           "09faabd875": "Project order",
           "7bada3b1ab": "Sort by",
           "dc0bb670bc": "Group by",
@@ -3620,6 +3623,8 @@
           "b8dcc6f321": "PR/MR link",
           "ca4d3c522e": "Linear issue",
           "91dfc653e8": "GitHub ticket",
+          "bdd23b4e07": "GitHub issues",
+          "44713a5d04": "Linear issues",
           "cc17bd443b": "Detailed",
           "0f9b959b31": "PR",
           "e029a2d775": "Status",
@@ -4361,7 +4366,7 @@
             "tintOpacity": "Tint Strength",
             "tintOpacityDescription": "Controls how strongly the tint is mixed into the sidebar."
           },
-          "workspaceCardLayoutGuidance": "Use the workspace sidebar options menu > Card display > Compact."
+          "workspaceCardLayoutGuidance": "Use the workspace sidebar options menu > Card layout > Compact."
         },
         "AutoRenameBranchFromWorkSetting": {
           "1626524572": "Nautilus",

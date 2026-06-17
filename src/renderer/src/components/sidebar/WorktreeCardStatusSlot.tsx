@@ -18,6 +18,7 @@ type WorktreeCardStatusSlotProps = {
   onToggleUnread: React.MouseEventHandler<HTMLButtonElement>
   onPointerDown: React.PointerEventHandler<HTMLButtonElement>
   prDisplay?: WorktreeCardPrDisplay | null
+  newCardStyle?: boolean
   className?: string
 }
 
@@ -53,25 +54,24 @@ export function WorktreeCardStatusSlot({
   onToggleUnread,
   onPointerDown,
   prDisplay = null,
+  newCardStyle = false,
   className
 }: WorktreeCardStatusSlotProps): React.JSX.Element | null {
   const status = useWorktreeActivityStatus(worktreeId)
   const statusLabel = getWorktreeStatusLabel(status) || status
   const canShowReviewStatus =
-    showStatus && prDisplay !== null && (status === 'active' || status === 'done')
+    newCardStyle && showStatus && prDisplay !== null && (status === 'active' || status === 'done')
   const passiveStatusLabel =
     canShowReviewStatus && prDisplay ? getReviewStatusTooltip(prDisplay) : statusLabel
+  // Why: the PR/MR glyph has more visual weight below its center than the dot
+  // status indicator, so its status-lane instance needs a tiny optical lift.
+  const reviewStatusIconClassName = 'size-4 -translate-y-px'
   const passiveStatus =
     canShowReviewStatus && prDisplay ? (
       <Tooltip>
         <TooltipTrigger asChild>
-          <span
-            className={cn(
-              'inline-flex size-5 -translate-y-px items-center justify-center p-0.5',
-              className
-            )}
-          >
-            <ReviewIcon review={prDisplay} className="size-4" />
+          <span className={cn('inline-flex size-5 items-center justify-center p-0.5', className)}>
+            <ReviewIcon review={prDisplay} className={reviewStatusIconClassName} />
             <span className="sr-only">{passiveStatusLabel}</span>
           </span>
         </TooltipTrigger>
@@ -96,7 +96,9 @@ export function WorktreeCardStatusSlot({
 
   const actionLabel = isUnread ? 'Mark as read' : 'Mark as unread'
   const tooltip =
-    showStatus && !isUnread ? `${passiveStatusLabel} · ${unreadTooltip}` : unreadTooltip
+    showStatus && (!isUnread || (newCardStyle && canShowReviewStatus && prDisplay))
+      ? `${passiveStatusLabel} · ${unreadTooltip}`
+      : unreadTooltip
 
   return (
     <>
@@ -116,12 +118,19 @@ export function WorktreeCardStatusSlot({
             )}
             aria-label={actionLabel}
           >
-            {isUnread ? (
+            {isUnread && showStatus && canShowReviewStatus && prDisplay ? (
+              <>
+                <span className="inline-flex size-5 items-center justify-center p-0.5">
+                  <ReviewIcon review={prDisplay} className={reviewStatusIconClassName} />
+                </span>
+                <FilledBellIcon className="absolute -right-1 -top-1 size-[13px] text-amber-500 drop-shadow-sm" />
+              </>
+            ) : isUnread ? (
               <FilledBellIcon className="size-[13px] text-amber-500 drop-shadow-sm" />
             ) : showStatus && canShowReviewStatus && prDisplay ? (
               <>
-                <span className="inline-flex size-5 -translate-y-px items-center justify-center p-0.5 transition-opacity group-hover/unread:opacity-0 group-focus-within/unread:opacity-0">
-                  <ReviewIcon review={prDisplay} className="size-4" />
+                <span className="inline-flex size-5 items-center justify-center p-0.5 transition-opacity group-hover/unread:opacity-0 group-focus-within/unread:opacity-0">
+                  <ReviewIcon review={prDisplay} className={reviewStatusIconClassName} />
                 </span>
                 <Bell className="absolute size-3 text-muted-foreground/40 opacity-0 transition-opacity group-hover/unread:opacity-100 group-focus-within/unread:opacity-100" />
               </>

@@ -937,6 +937,18 @@ describe('OrcaRuntimeService', () => {
     expect(runtime.getClientSettings()).toMatchObject({ compactWorktreeCards: true })
   })
 
+  it('projects experimentalNewWorktreeCardStyle to paired client settings', () => {
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        experimentalNewWorktreeCardStyle: true
+      })
+    } as never)
+
+    expect(runtime.getClientSettings()).toMatchObject({ experimentalNewWorktreeCardStyle: true })
+  })
+
   it('accepts compactWorktreeCards updates from paired clients', () => {
     let settings = {
       ...store.getSettings(),
@@ -960,6 +972,31 @@ describe('OrcaRuntimeService', () => {
       { notifyListeners: true }
     )
     expect(runtime.getClientSettings()).toMatchObject({ compactWorktreeCards: true })
+  })
+
+  it('accepts experimentalNewWorktreeCardStyle updates from paired clients', () => {
+    let settings = {
+      ...store.getSettings(),
+      experimentalNewWorktreeCardStyle: false
+    }
+    const updateSettings = vi.fn((updates: Partial<typeof settings>) => {
+      settings = { ...settings, ...updates }
+      return settings
+    })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => settings,
+      updateSettings
+    } as never)
+
+    expect(runtime.updateClientSettings({ experimentalNewWorktreeCardStyle: true })).toMatchObject({
+      experimentalNewWorktreeCardStyle: true
+    })
+    expect(updateSettings).toHaveBeenCalledWith(
+      { experimentalNewWorktreeCardStyle: true },
+      { notifyListeners: true }
+    )
+    expect(runtime.getClientSettings()).toMatchObject({ experimentalNewWorktreeCardStyle: true })
   })
 
   it('rejects relative paths for runtime nested repo scan/import', async () => {

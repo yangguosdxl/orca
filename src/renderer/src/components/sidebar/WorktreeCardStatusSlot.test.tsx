@@ -67,7 +67,7 @@ describe('WorktreeCardStatusSlot', () => {
     expect(markup).toContain('bg-emerald-500')
   })
 
-  it('uses PR status instead of the quiet active dot', () => {
+  it('keeps the quiet active dot ahead of PR status by default', () => {
     const markup = renderToStaticMarkup(
       <WorktreeCardStatusSlot
         worktreeId="wt-1"
@@ -81,12 +81,32 @@ describe('WorktreeCardStatusSlot', () => {
       />
     )
 
+    expect(markup).toContain('Active')
+    expect(markup).toContain('bg-emerald-500')
+    expect(markup).not.toContain('PR checks: Failed')
+  })
+
+  it('uses PR status instead of the quiet active dot when new card style is on', () => {
+    const markup = renderToStaticMarkup(
+      <WorktreeCardStatusSlot
+        worktreeId="wt-1"
+        showStatus
+        showUnreadAction={false}
+        isUnread={false}
+        unreadTooltip="Mark as unread"
+        onPointerDown={vi.fn()}
+        onToggleUnread={vi.fn()}
+        prDisplay={review}
+        newCardStyle
+      />
+    )
+
     expect(markup).toContain('PR checks: Failed')
     expect(markup).toContain('text-rose-500/85')
     expect(markup).not.toContain('bg-emerald-500')
   })
 
-  it('uses PR status instead of the quiet done dot', () => {
+  it('uses PR status instead of the quiet done dot when new card style is on', () => {
     mocks.status = 'done'
     const markup = renderToStaticMarkup(
       <WorktreeCardStatusSlot
@@ -98,6 +118,7 @@ describe('WorktreeCardStatusSlot', () => {
         onPointerDown={vi.fn()}
         onToggleUnread={vi.fn()}
         prDisplay={review}
+        newCardStyle
       />
     )
 
@@ -125,7 +146,7 @@ describe('WorktreeCardStatusSlot', () => {
     expect(markup).not.toContain('PR checks: Failed')
   })
 
-  it('keeps unread reachable ahead of PR status', () => {
+  it('keeps unread ahead of PR status by default', () => {
     const markup = renderToStaticMarkup(
       <WorktreeCardStatusSlot
         worktreeId="wt-1"
@@ -142,5 +163,29 @@ describe('WorktreeCardStatusSlot', () => {
     expect(markup).toContain('aria-label="Mark as read"')
     expect(markup).toContain('Mark as read')
     expect(markup).not.toContain('PR checks: Failed')
+    expect(markup).not.toContain('bg-emerald-500')
+  })
+
+  it('overlays unread on PR status instead of replacing it when new card style is on', () => {
+    const markup = renderToStaticMarkup(
+      <WorktreeCardStatusSlot
+        worktreeId="wt-1"
+        showStatus
+        showUnreadAction
+        isUnread
+        unreadTooltip="Mark as read"
+        onPointerDown={vi.fn()}
+        onToggleUnread={vi.fn()}
+        prDisplay={review}
+        newCardStyle
+      />
+    )
+
+    expect(markup).toContain('aria-label="Mark as read"')
+    expect(markup).toContain('Mark as read')
+    expect(markup).toContain('PR checks: Failed · Mark as read')
+    expect(markup).toContain('text-rose-500/85')
+    expect(markup).toContain('absolute -right-1 -top-1 size-[13px] text-amber-500')
+    expect(markup).not.toContain('bg-emerald-500')
   })
 })

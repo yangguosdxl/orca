@@ -64,8 +64,7 @@ import type {
   TerminalLayoutSnapshot,
   TerminalTab,
   WorkspaceSessionPatch,
-  WorkspaceSessionState,
-  WorktreeCardProperty
+  WorkspaceSessionState
 } from '../shared/types'
 import { projectHostSetupProjectionFromRepos } from '../shared/project-host-setup-projection'
 import {
@@ -85,7 +84,6 @@ import {
   getDefaultUIState,
   getDefaultRepoHookSettings,
   getDefaultWorkspaceSession,
-  getWorktreeCardModeProperties,
   normalizeAgentActivityDisplayMode,
   normalizeWorktreeCardProperties,
   ONBOARDING_FLOW_VERSION,
@@ -996,12 +994,12 @@ function resolveSetupGuideSidebarDismissedOnLoad(
   return onboarding.closedAt !== null || persistedDismissed === true
 }
 
-function areWorktreeCardPropertiesEqual(
-  a: readonly WorktreeCardProperty[] | undefined,
-  b: readonly WorktreeCardProperty[]
-): boolean {
+// Why: read a settings field that was removed from GlobalSettings but can
+// still exist on disk. One-shot use for the inline-agents migration.
+function readDeprecatedExperimentFlag(parsed: PersistedState | undefined): boolean {
   return (
-    a !== undefined && a.length === b.length && a.every((property, index) => property === b[index])
+    (parsed?.settings as { experimentalAgentDashboard?: boolean } | undefined)
+      ?.experimentalAgentDashboard === true
   )
 }
 
@@ -2711,57 +2709,52 @@ export class Store {
               this.loadNeedsSave = true
             }
             const rawCardProps = parsed.ui?.worktreeCardProperties
-            const hasWorktreeCardModeDefaultedMarker = Object.prototype.hasOwnProperty.call(
-              parsed.ui ?? {},
-              '_worktreeCardModeDefaulted'
-            )
-            const worktreeCardModeDefaulted = parsed.ui?._worktreeCardModeDefaulted === true
-            const worktreeCardMode =
-              (parsed.settings?.compactWorktreeCards ??
-              parsed.settings?.experimentalCompactWorktreeCards ??
-              defaults.settings.compactWorktreeCards)
-                ? 'Compact'
-                : 'Default'
+            const inlineAgentsMigrated = parsed.ui?._inlineAgentsDefaultedForAllUsers === true
+            const expandedCardPropsMigrated =
+              parsed.ui?._expandedWorktreeCardPropertiesDefaulted === true
+            const hadExperimentOn = readDeprecatedExperimentFlag(parsed)
+            const deliberateUncheck =
+              hadExperimentOn &&
+              Array.isArray(rawCardProps) &&
+              !rawCardProps.includes('inline-agents')
+            const needsInlineAgentsMigration =
+              !inlineAgentsMigrated &&
+              !deliberateUncheck &&
+              Array.isArray(rawCardProps) &&
+              !rawCardProps.includes('inline-agents')
             const migratedCardProps = (() => {
-              const modeProps = getWorktreeCardModeProperties(worktreeCardMode)
               if (!Array.isArray(rawCardProps)) {
-                return modeProps
+                return undefined
               }
-              // Why: the compact/default switcher was removed; old compact
-              // users keep compact visuals via the equivalent card toggles.
-              if (worktreeCardMode === 'Compact' && worktreeCardModeDefaulted) {
-                return modeProps
-              }
-              if (worktreeCardModeDefaulted) {
-                return normalizeWorktreeCardProperties(rawCardProps)
-              }
-              // Why: old detailed cards always showed a branch row. Preserve
-              // that once only for profiles that had persisted card properties
-              // before the two-mode default marker existed; fresh defaults
-              // keep the reviewed no-branch surface.
-              if (
-                !hasWorktreeCardModeDefaultedMarker &&
-                worktreeCardMode === 'Default' &&
-                Array.isArray(rawCardProps)
-              ) {
-                return normalizeWorktreeCardProperties([...modeProps, 'branch'])
-              }
-              if (!hasWorktreeCardModeDefaultedMarker) {
-                return modeProps
-              }
-              return normalizeWorktreeCardProperties(rawCardProps)
+              const candidate = needsInlineAgentsMigration
+                ? [...rawCardProps, 'inline-agents' as const]
+                : rawCardProps
+              const expandedCandidate = (() => {
+                if (expandedCardPropsMigrated) {
+                  return candidate
+                }
+                const next = [...candidate]
+                // Why: Linear used to be controlled by the generic issue
+                // property and Ports were always visible. Add the split-out
+                // properties once so existing cards keep their prior surface.
+                if (candidate.includes('issue') && !candidate.includes('linear-issue')) {
+                  next.push('linear-issue' as const)
+                }
+                if (!candidate.includes('ports')) {
+                  next.push('ports' as const)
+                }
+                return next
+              })()
+              const normalized = normalizeWorktreeCardProperties(expandedCandidate)
+              const changed =
+                normalized.length !== rawCardProps.length ||
+                normalized.some((property, index) => property !== rawCardProps[index])
+              return changed ? normalized : undefined
             })()
-            const nextWorktreeCardModeDefaulted = hasWorktreeCardModeDefaultedMarker
-              ? worktreeCardModeDefaulted
-              : true
             if (
-              !hasWorktreeCardModeDefaultedMarker ||
-              !areWorktreeCardPropertiesEqual(
-                Array.isArray(rawCardProps)
-                  ? normalizeWorktreeCardProperties(rawCardProps)
-                  : undefined,
-                migratedCardProps
-              )
+              migratedCardProps !== undefined ||
+              !inlineAgentsMigrated ||
+              !expandedCardPropsMigrated
             ) {
               this.loadNeedsSave = true
             }
@@ -2798,11 +2791,12 @@ export class Store {
               _workspaceStatusesDefaultWorkflowMigrated: true,
               _workspaceStatusesDefaultVisualsMigrated: true,
               _sortBySmartMigrated: true,
-              worktreeCardProperties: migratedCardProps,
-              _worktreeCardModeDefaulted: nextWorktreeCardModeDefaulted,
+              ...(migratedCardProps !== undefined
+                ? { worktreeCardProperties: migratedCardProps }
+                : {}),
               // Why: keep stamping the legacy flag for forward-compat with
               // a rollback to a pre-default-on build that still reads it.
-              // The mode marker is the one that now gates card-property migration.
+              // The new flag is the one that actually gates the migration.
               _inlineAgentsDefaultedForExperiment: true,
               _inlineAgentsDefaultedForAllUsers: true,
               _expandedWorktreeCardPropertiesDefaulted: true

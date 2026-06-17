@@ -13,7 +13,7 @@ describe('worktree card properties', () => {
 
     expect(props).toContain('inline-agents')
     expect(props).not.toContain('branch')
-    expect(props).not.toContain('pr')
+    expect(props).toContain('pr')
     expect(props).toEqual(DEFAULT_WORKTREE_CARD_PROPERTIES)
   })
 
@@ -40,8 +40,14 @@ describe('worktree card properties', () => {
     )
   })
 
-  it('normalizes legacy ci, pr, and unread away while preserving selected properties', () => {
-    expect(normalizeWorktreeCardProperties(['ci', 'branch', 'pr', 'unread'])).toEqual(['branch'])
+  it('normalizes fixed and legacy properties while preserving selected properties', () => {
+    expect(normalizeWorktreeCardProperties(['ci', 'branch', 'pr', 'unread'])).toEqual([
+      'status',
+      'unread',
+      'ci',
+      'branch',
+      'pr'
+    ])
   })
 
   it('returns combined mode update payloads', () => {

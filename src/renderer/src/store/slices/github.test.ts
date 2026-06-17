@@ -2942,7 +2942,7 @@ describe('createGitHubSlice.refreshGitHubForWorktreeIfStale', () => {
           }
         ]
       },
-      worktreeCardProperties: ['status'],
+      worktreeCardProperties: ['status', 'pr'],
       prCache: {
         [`repo-1::${branch}`]: {
           data: makePR({ state: 'open' }),
@@ -2991,7 +2991,7 @@ describe('createGitHubSlice.refreshGitHubForWorktreeIfStale', () => {
           }
         ]
       },
-      worktreeCardProperties: ['status'],
+      worktreeCardProperties: ['status', 'pr'],
       hostedReviewCache: {
         [hostedReviewCacheKey]: {
           data: {

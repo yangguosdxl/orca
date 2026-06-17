@@ -2646,6 +2646,9 @@ async function syncRuntimeBackedSettings(
   if (typeof updates.compactWorktreeCards === 'boolean') {
     runtimeUpdates.compactWorktreeCards = updates.compactWorktreeCards
   }
+  if (typeof updates.experimentalNewWorktreeCardStyle === 'boolean') {
+    runtimeUpdates.experimentalNewWorktreeCardStyle = updates.experimentalNewWorktreeCardStyle
+  }
   if (Object.keys(runtimeUpdates).length === 0) {
     return localNext
   }

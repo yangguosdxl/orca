@@ -3557,7 +3557,10 @@
           "95c9754653": "Agent 활동 레이아웃",
           "3d4b9c4997": "호버",
           "ba87080fb7": "속성 표시",
-          "320b675c9a": "카드 표시",
+          "320b675c9a": "카드 레이아웃",
+          "newCardDisplay": {
+            "title": "카드 표시"
+          },
           "09faabd875": "프로젝트 순서",
           "7bada3b1ab": "정렬 기준",
           "dc0bb670bc": "그룹화 기준",
@@ -3580,6 +3583,8 @@
           "b8dcc6f321": "PR/MR 링크",
           "ca4d3c522e": "Linear 이슈",
           "91dfc653e8": "GitHub 티켓",
+          "bdd23b4e07": "GitHub 이슈",
+          "44713a5d04": "Linear 이슈",
           "cc17bd443b": "상세한",
           "0f9b959b31": "PR",
           "e029a2d775": "상태",
@@ -4346,7 +4351,7 @@
             "tintOpacity": "색조 강도",
             "tintOpacityDescription": "사이드바에 색조를 얼마나 강하게 섞을지 조절합니다."
           },
-          "workspaceCardLayoutGuidance": "작업 공간 사이드바 옵션 메뉴 > 카드 표시 > 컴팩트를 사용하세요."
+          "workspaceCardLayoutGuidance": "작업 공간 사이드바 옵션 메뉴 > 카드 레이아웃 > 컴팩트를 사용하세요."
         },
         "AutoRenameBranchFromWorkSetting": {
           "1626524572": "Nautilus",

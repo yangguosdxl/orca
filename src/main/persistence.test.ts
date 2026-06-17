@@ -4411,7 +4411,7 @@ describe('Store', () => {
     const store = await createStore()
     store.updateUI({ worktreeCardProperties: ['inline-agents'] })
 
-    expect(store.getUI().worktreeCardProperties).toEqual(['inline-agents'])
+    expect(store.getUI().worktreeCardProperties).toEqual(['status', 'unread', 'inline-agents'])
   })
 
   it('persists updater reminder metadata in UI state', async () => {
@@ -4844,9 +4844,9 @@ describe('Store', () => {
     expect(store.getSettings().experimentalActivity).toBe(true)
   })
 
-  // ── worktree-card mode migration ───────────────────────────────────
+  // ── worktree-card property migration ───────────────────────────────
 
-  it('keeps the branch row visible once for legacy detailed profiles', async () => {
+  it('adds split-out default card properties for legacy detailed profiles', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -4861,19 +4861,20 @@ describe('Store', () => {
     const store = await createStore()
     expect(store.getUI().worktreeCardProperties).toEqual([
       'status',
-      'branch',
+      'unread',
+      'ci',
       'issue',
       'linear-issue',
+      'pr',
       'comment',
       'ports',
       'inline-agents'
     ])
-    expect(store.getUI().worktreeCardProperties).not.toContain('ci')
-    expect(store.getUI().worktreeCardProperties).not.toContain('unread')
-    expect(store.getUI()._worktreeCardModeDefaulted).toBe(true)
+    expect(store.getUI()._inlineAgentsDefaultedForAllUsers).toBe(true)
+    expect(store.getUI()._expandedWorktreeCardPropertiesDefaulted).toBe(true)
   })
 
-  it('keeps branch, tasks, notes, ports, and inline agents hidden for legacy compact profiles', async () => {
+  it('adds split-out default card properties without duplicating inline agents', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -4894,11 +4895,20 @@ describe('Store', () => {
       workspaceSession: {}
     })
     const store = await createStore()
-    expect(store.getUI().worktreeCardProperties).toEqual(['status'])
+    expect(store.getUI().worktreeCardProperties).toEqual([
+      'status',
+      'unread',
+      'ci',
+      'issue',
+      'linear-issue',
+      'pr',
+      'comment',
+      'ports',
+      'inline-agents'
+    ])
     expect(store.getUI().worktreeCardProperties).not.toContain('branch')
-    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
-    expect(store.getUI().worktreeCardProperties).not.toContain('unread')
-    expect(store.getUI()._worktreeCardModeDefaulted).toBe(true)
+    expect(store.getUI()._inlineAgentsDefaultedForAllUsers).toBe(true)
+    expect(store.getUI()._expandedWorktreeCardPropertiesDefaulted).toBe(true)
   })
 
   it('derives fresh default profiles without branch', async () => {
@@ -4915,8 +4925,10 @@ describe('Store', () => {
 
     expect(store.getUI().worktreeCardProperties).toEqual([
       'status',
+      'unread',
       'issue',
       'linear-issue',
+      'pr',
       'comment',
       'ports',
       'inline-agents'
@@ -4925,7 +4937,7 @@ describe('Store', () => {
     expect(store.getUI()._worktreeCardModeDefaulted).toBe(true)
   })
 
-  it('preserves exact mode properties after the mode marker exists', async () => {
+  it('adds split-out defaults even when the mode marker exists but expansion has not run', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -4940,13 +4952,20 @@ describe('Store', () => {
     })
     const store = await createStore()
 
-    expect(store.getUI().worktreeCardProperties).toEqual(['status', 'issue'])
-    expect(store.getUI().worktreeCardProperties).not.toContain('ci')
+    expect(store.getUI().worktreeCardProperties).toEqual([
+      'status',
+      'unread',
+      'ci',
+      'issue',
+      'linear-issue',
+      'pr',
+      'ports',
+      'inline-agents'
+    ])
     expect(store.getUI().worktreeCardProperties).not.toContain('branch')
-    expect(store.getUI().worktreeCardProperties).not.toContain('unread')
   })
 
-  it('preserves custom card properties after the mode marker exists', async () => {
+  it('preserves deliberate post-migration card property opt-outs', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -4954,16 +4973,18 @@ describe('Store', () => {
       settings: { compactWorktreeCards: false },
       ui: {
         worktreeCardProperties: ['status', 'pr'],
-        _worktreeCardModeDefaulted: false
+        _inlineAgentsDefaultedForAllUsers: true,
+        _expandedWorktreeCardPropertiesDefaulted: true
       },
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
     })
     const store = await createStore()
 
-    expect(store.getUI().worktreeCardProperties).toEqual(['status'])
+    expect(store.getUI().worktreeCardProperties).toEqual(['status', 'unread', 'pr'])
     expect(store.getUI().worktreeCardProperties).not.toContain('branch')
-    expect(store.getUI()._worktreeCardModeDefaulted).toBe(false)
+    expect(store.getUI().worktreeCardProperties).not.toContain('ports')
+    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
   })
 
   it('does not re-add branch after an explicit Default mode selection', async () => {
@@ -4983,7 +5004,8 @@ describe('Store', () => {
           'ports',
           'inline-agents'
         ],
-        _worktreeCardModeDefaulted: true
+        _inlineAgentsDefaultedForAllUsers: true,
+        _expandedWorktreeCardPropertiesDefaulted: true
       },
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
@@ -4991,12 +5013,10 @@ describe('Store', () => {
     const store = await createStore()
 
     expect(store.getUI().worktreeCardProperties).not.toContain('branch')
-    expect(store.getUI().worktreeCardProperties).not.toContain('pr')
-    expect(store.getUI().worktreeCardProperties).not.toContain('unread')
     expect(store.getUI().worktreeCardProperties).toContain('inline-agents')
   })
 
-  it('keeps explicit Compact mode compact after reload', async () => {
+  it('preserves explicit Compact card properties after expansion has run', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
@@ -5012,7 +5032,8 @@ describe('Store', () => {
           'comment',
           'ports'
         ],
-        _worktreeCardModeDefaulted: true
+        _inlineAgentsDefaultedForAllUsers: true,
+        _expandedWorktreeCardPropertiesDefaulted: true
       },
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
@@ -5020,29 +5041,42 @@ describe('Store', () => {
     const store = await createStore()
 
     expect(store.getSettings().compactWorktreeCards).toBe(true)
-    expect(store.getUI().worktreeCardProperties).toEqual(['status'])
+    expect(store.getUI().worktreeCardProperties).toEqual([
+      'status',
+      'unread',
+      'issue',
+      'linear-issue',
+      'pr',
+      'comment',
+      'ports'
+    ])
     expect(store.getUI().worktreeCardProperties).not.toContain('branch')
     expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
-    expect(store.getUI().worktreeCardProperties).not.toContain('unread')
   })
 
-  it('derives missing marked card properties from explicit Compact mode', async () => {
+  it('uses the default preset when card properties are missing', async () => {
     writeDataFile({
       schemaVersion: 1,
       repos: [],
       worktreeMeta: {},
       settings: { compactWorktreeCards: true },
-      ui: {
-        _worktreeCardModeDefaulted: true
-      },
+      ui: {},
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
     })
     const store = await createStore()
 
     expect(store.getSettings().compactWorktreeCards).toBe(true)
-    expect(store.getUI().worktreeCardProperties).toEqual(['status'])
-    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
+    expect(store.getUI().worktreeCardProperties).toEqual([
+      'status',
+      'unread',
+      'issue',
+      'linear-issue',
+      'pr',
+      'comment',
+      'ports',
+      'inline-agents'
+    ])
   })
 
   // ── GitHub Cache ───────────────────────────────────────────────────

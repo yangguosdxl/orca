@@ -2647,6 +2647,8 @@ export type GlobalSettings = {
   experimentalAgentHibernation?: boolean
   /** Milliseconds a completed agent must stay idle before hibernation can be considered. */
   agentHibernationIdleMs?: number
+  /** Experimental: opt-in preview of the updated worktree-card layout and metadata behavior. */
+  experimentalNewWorktreeCardStyle?: boolean
   /** Compact worktree cards by hiding a redundant metadata row when the title
    *  and branch already say the same thing. */
   compactWorktreeCards: boolean
@@ -2874,6 +2876,9 @@ export type NotificationPermissionStatusResult = {
 
 export type WorktreeCardProperty =
   | 'status'
+  | 'unread'
+  // Legacy persisted preference. CI status is now represented by linked PR metadata.
+  | 'ci'
   // Internal migration-only property for legacy detailed cards that showed
   // branch identity as a visible row.
   | 'branch'
@@ -2881,6 +2886,7 @@ export type WorktreeCardProperty =
   // persisted values so older profiles and provider-specific fetch paths work.
   | 'issue'
   | 'linear-issue'
+  | 'pr'
   | 'comment'
   | 'ports'
   // Why: inline list of agent activity rendered directly inside each

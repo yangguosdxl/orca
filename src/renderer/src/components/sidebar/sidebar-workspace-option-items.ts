@@ -1,4 +1,4 @@
-import type { WorktreeCardProperty } from '../../../../shared/types'
+import type { AgentActivityDisplayMode, WorktreeCardProperty } from '../../../../shared/types'
 import { TASK_WORKTREE_CARD_PROPERTIES } from '../../../../shared/constants'
 import { translate } from '@/i18n/i18n'
 
@@ -29,25 +29,105 @@ export const GROUP_BY_OPTIONS = [
   }
 ] as const
 
+export const CARD_LAYOUT_OPTIONS = [
+  {
+    id: 'detailed',
+    get label() {
+      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.cc17bd443b', 'Detailed')
+    }
+  },
+  {
+    id: 'compact',
+    get label() {
+      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.25105b28cb', 'Compact')
+    }
+  }
+] as const
+
+export const PROPERTY_OPTIONS: { id: WorktreeCardProperty; label: string }[] = [
+  {
+    id: 'issue',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.91dfc653e8',
+        'GitHub ticket'
+      )
+    }
+  },
+  {
+    id: 'linear-issue',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.ca4d3c522e',
+        'Linear issue'
+      )
+    }
+  },
+  {
+    id: 'pr',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.b8dcc6f321',
+        'PR/MR link'
+      )
+    }
+  },
+  {
+    id: 'comment',
+    get label() {
+      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.26c71e536c', 'Notes')
+    }
+  },
+  {
+    id: 'ports',
+    get label() {
+      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.b64d8bcca0', 'Ports')
+    }
+  },
+  {
+    id: 'inline-agents',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.d7084e8bc8',
+        'Agent activity'
+      )
+    }
+  }
+]
+
+export const AGENT_ACTIVITY_DISPLAY_OPTIONS: {
+  id: AgentActivityDisplayMode
+  label: string
+}[] = [
+  {
+    id: 'compact',
+    get label() {
+      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.25105b28cb', 'Compact')
+    }
+  },
+  {
+    id: 'full',
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.2a81e07366',
+        'Full list'
+      )
+    }
+  }
+]
+
 export type WorktreeCardPropertyOption = {
   id: string
   properties: readonly WorktreeCardProperty[]
   label: string
 }
 
-export const WORKTREE_CARD_PROPERTY_OPTIONS: WorktreeCardPropertyOption[] = [
+const BASE_WORKTREE_CARD_PROPERTY_OPTIONS: WorktreeCardPropertyOption[] = [
   {
     id: 'status',
     properties: ['status'],
     get label() {
       return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.1a0eec0d35', 'Status')
-    }
-  },
-  {
-    id: 'tasks',
-    properties: TASK_WORKTREE_CARD_PROPERTIES,
-    get label() {
-      return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.b5536d5a88', 'Tasks')
     }
   },
   {
@@ -85,6 +165,56 @@ export const WORKTREE_CARD_PROPERTY_OPTIONS: WorktreeCardPropertyOption[] = [
     }
   }
 ]
+
+const TASK_WORKTREE_CARD_PROPERTY_OPTION: WorktreeCardPropertyOption = {
+  id: 'tasks',
+  properties: TASK_WORKTREE_CARD_PROPERTIES,
+  get label() {
+    return translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.b5536d5a88', 'Tasks')
+  }
+}
+
+const ISSUE_WORKTREE_CARD_PROPERTY_OPTIONS: WorktreeCardPropertyOption[] = [
+  {
+    id: 'issue',
+    properties: ['issue'],
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.bdd23b4e07',
+        'GitHub issues'
+      )
+    }
+  },
+  {
+    id: 'linear-issue',
+    properties: ['linear-issue'],
+    get label() {
+      return translate(
+        'auto.components.sidebar.SidebarWorkspaceOptionsMenu.44713a5d04',
+        'Linear issues'
+      )
+    }
+  }
+]
+
+type WorktreeCardPropertyOptionsInput = {
+  newCardStyle?: boolean
+}
+
+export function getWorktreeCardPropertyOptions({
+  newCardStyle = false
+}: WorktreeCardPropertyOptionsInput = {}): WorktreeCardPropertyOption[] {
+  const issueOptions = newCardStyle
+    ? ISSUE_WORKTREE_CARD_PROPERTY_OPTIONS
+    : [TASK_WORKTREE_CARD_PROPERTY_OPTION]
+  return [
+    BASE_WORKTREE_CARD_PROPERTY_OPTIONS[0],
+    ...issueOptions,
+    ...BASE_WORKTREE_CARD_PROPERTY_OPTIONS.slice(1)
+  ]
+}
+
+export const WORKTREE_CARD_PROPERTY_OPTIONS = getWorktreeCardPropertyOptions()
 
 export const SORT_OPTIONS = [
   {

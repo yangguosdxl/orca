@@ -342,6 +342,39 @@ describe('web settings preload API', () => {
     expect(runtimeCalls).toEqual([{ method: 'settings.get', params: undefined }])
   })
 
+  it('hydrates new worktree card style from a paired runtime', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: `call-${runtimeCalls.length}`,
+            ok: true,
+            result: { settings: { experimentalNewWorktreeCardStyle: true } },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    const settings = await globals.window.api.settings.get()
+    const stored = JSON.parse(globals.storage.getItem('orca.web.settings.v1') ?? '{}') as {
+      experimentalNewWorktreeCardStyle?: boolean
+    }
+
+    expect(settings.experimentalNewWorktreeCardStyle).toBe(true)
+    expect(stored.experimentalNewWorktreeCardStyle).toBe(true)
+    expect(runtimeCalls).toEqual([{ method: 'settings.get', params: undefined }])
+  })
+
   it('forwards compact worktree card updates to a paired runtime', async () => {
     const runtimeCalls: { method: string; params: unknown }[] = []
     vi.doMock('./web-runtime-client', () => ({
@@ -370,6 +403,39 @@ describe('web settings preload API', () => {
     expect(settings.compactWorktreeCards).toBe(true)
     expect(runtimeCalls).toEqual([
       { method: 'settings.update', params: { compactWorktreeCards: true } }
+    ])
+  })
+
+  it('forwards new worktree card style updates to a paired runtime', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: `call-${runtimeCalls.length}`,
+            ok: true,
+            result: { settings: { experimentalNewWorktreeCardStyle: true } },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    const settings = await globals.window.api.settings.set({
+      experimentalNewWorktreeCardStyle: true
+    })
+
+    expect(settings.experimentalNewWorktreeCardStyle).toBe(true)
+    expect(runtimeCalls).toEqual([
+      { method: 'settings.update', params: { experimentalNewWorktreeCardStyle: true } }
     ])
   })
 })

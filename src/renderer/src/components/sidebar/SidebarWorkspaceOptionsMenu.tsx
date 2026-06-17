@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -26,9 +25,9 @@ import { SidebarHostScopeMenuSection } from './SidebarHostScopeMenuSection'
 import {
   GROUP_BY_OPTIONS,
   PROJECT_ORDER_OPTIONS,
-  SORT_OPTIONS,
-  WORKTREE_CARD_PROPERTY_OPTIONS
+  SORT_OPTIONS
 } from './sidebar-workspace-option-items'
+import { WorktreeCardDisplayMenuSection } from './WorktreeCardDisplayMenuSection'
 import { translate } from '@/i18n/i18n'
 
 type SidebarWorkspaceOptionsMenuProps = {
@@ -44,8 +43,6 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
   const hideDefaultBranchWorkspace = useAppStore((s) => s.hideDefaultBranchWorkspace)
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
   const repos = useAppStore((s) => s.repos)
-  const worktreeCardProperties = useAppStore((s) => s.worktreeCardProperties)
-  const setWorktreeCardProperties = useAppStore((s) => s.setWorktreeCardProperties)
   const setWorkspaceHostScope = useAppStore((s) => s.setWorkspaceHostScope)
   const visibleWorkspaceHostIds = useAppStore((s) => s.visibleWorkspaceHostIds)
   const setVisibleWorkspaceHostIds = useAppStore((s) => s.setVisibleWorkspaceHostIds)
@@ -94,15 +91,6 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
   const projectOrderLabel =
     PROJECT_ORDER_OPTIONS.find((opt) => opt.id === projectOrderBy)?.label ?? 'Manual'
   const hostVisibilityLabel = getSidebarHostVisibilityLabel(visibleWorkspaceHostIds, hostOptions)
-  const handleWorktreeCardPropertyChange = useCallback(
-    (properties: readonly (typeof worktreeCardProperties)[number][], checked: boolean): void => {
-      const next = checked
-        ? [...worktreeCardProperties, ...properties]
-        : worktreeCardProperties.filter((property) => !properties.includes(property))
-      setWorktreeCardProperties(next)
-    },
-    [setWorktreeCardProperties, worktreeCardProperties]
-  )
 
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={handleOpenChange}>
@@ -297,35 +285,7 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
           </DropdownMenuSub>
         )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <span className="flex flex-1 items-center justify-between gap-3">
-              {translate(
-                'auto.components.sidebar.SidebarWorkspaceOptionsMenu.320b675c9a',
-                'Card display'
-              )}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent
-            className="w-56"
-            data-workspace-board-preserve-open={preserveWorkspaceBoardOpen ? '' : undefined}
-          >
-            {WORKTREE_CARD_PROPERTY_OPTIONS.map((opt) => (
-              <DropdownMenuCheckboxItem
-                key={opt.id}
-                checked={opt.properties.every((property) =>
-                  worktreeCardProperties.includes(property)
-                )}
-                onCheckedChange={(checked) =>
-                  handleWorktreeCardPropertyChange(opt.properties, checked === true)
-                }
-                onSelect={(e) => e.preventDefault()}
-              >
-                {opt.label}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        <WorktreeCardDisplayMenuSection preserveWorkspaceBoardOpen={preserveWorkspaceBoardOpen} />
 
         <DropdownMenuSeparator />
         <SidebarWorkspaceFilterSection />

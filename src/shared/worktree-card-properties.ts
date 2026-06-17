@@ -5,11 +5,14 @@ import type {
   WorktreeCardProperty
 } from './types'
 
+const FIXED_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = ['status', 'unread']
+
 export const TASK_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = ['issue', 'linear-issue']
 
 export const DEFAULT_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = [
-  'status',
+  ...FIXED_WORKTREE_CARD_PROPERTIES,
   ...TASK_WORKTREE_CARD_PROPERTIES,
+  'pr',
   'comment',
   'ports',
   // Why: agent activity is the primary reason users opt into the feature, so
@@ -22,9 +25,12 @@ export const COMPACT_WORKTREE_CARD_PROPERTIES: WorktreeCardProperty[] = ['status
 
 const WORKTREE_CARD_PROPERTY_ORDER: WorktreeCardProperty[] = [
   'status',
+  'unread',
+  'ci',
   'branch',
   'issue',
   'linear-issue',
+  'pr',
   'comment',
   'ports',
   'inline-agents'
@@ -33,7 +39,7 @@ const WORKTREE_CARD_PROPERTY_ORDER: WorktreeCardProperty[] = [
 export function normalizeWorktreeCardProperties(
   properties: readonly unknown[] | null | undefined
 ): WorktreeCardProperty[] {
-  const normalized: WorktreeCardProperty[] = []
+  const normalized: WorktreeCardProperty[] = [...FIXED_WORKTREE_CARD_PROPERTIES]
   const source = properties ?? DEFAULT_WORKTREE_CARD_PROPERTIES
   for (const property of WORKTREE_CARD_PROPERTY_ORDER) {
     if (source.includes(property) && !normalized.includes(property)) {

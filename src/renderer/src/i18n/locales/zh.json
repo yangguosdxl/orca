@@ -3557,7 +3557,10 @@
           "95c9754653": "Agent 活动布局",
           "3d4b9c4997": "徘徊",
           "ba87080fb7": "显示属性",
-          "320b675c9a": "卡片显示",
+          "320b675c9a": "卡片布局",
+          "newCardDisplay": {
+            "title": "卡片显示"
+          },
           "09faabd875": "项目订单",
           "7bada3b1ab": "排序方式",
           "dc0bb670bc": "分组依据",
@@ -3580,6 +3583,8 @@
           "b8dcc6f321": "PR/MR链接",
           "ca4d3c522e": "Linear 议题",
           "91dfc653e8": "GitHub 票证",
+          "bdd23b4e07": "GitHub 议题",
+          "44713a5d04": "Linear 议题",
           "cc17bd443b": "详细的",
           "0f9b959b31": "PR",
           "e029a2d775": "状态",
@@ -4346,7 +4351,7 @@
             "tintOpacity": "色调强度",
             "tintOpacityDescription": "控制色调混入边栏的强度。"
           },
-          "workspaceCardLayoutGuidance": "使用工作区侧边栏选项菜单 > 卡片显示 > 紧凑。"
+          "workspaceCardLayoutGuidance": "使用工作区侧边栏选项菜单 > 卡片布局 > 紧凑。"
         },
         "AutoRenameBranchFromWorkSetting": {
           "1626524572": "Nautilus",
