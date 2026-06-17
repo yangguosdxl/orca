@@ -495,7 +495,9 @@ test.describe('Terminal raw emoji table scroll restore repro', () => {
 
     try {
       await sendToTerminal(orcaPage, ptyId, `node ${JSON.stringify(scriptPath)}\r`)
-      await orcaPage.waitForTimeout(80)
+      // Why: this golden targets restored table geometry, not process-start
+      // timing; finish the fixture before forcing a worktree restore.
+      await waitForTerminalOutput(orcaPage, rawEmojiFixtureCompletionMarker(runId), 10_000)
       await switchToWorktree(orcaPage, secondWorktreeId)
       await waitForActiveTerminalManager(orcaPage, 30_000)
       await orcaPage.waitForTimeout(1_000)
