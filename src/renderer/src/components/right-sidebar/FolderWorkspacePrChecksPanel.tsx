@@ -212,9 +212,6 @@ export default function FolderWorkspacePrChecksPanel({
             <div className="truncate text-sm font-medium text-foreground">
               {folderWorkspace.name}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {formatSummary(projection.summary)}
-            </div>
           </div>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -273,29 +270,5 @@ export default function FolderWorkspacePrChecksPanel({
         </div>
       )}
     </div>
-  )
-}
-
-function formatSummary(summary: {
-  attached: number
-  knownReview: number
-  failing: number
-  pending: number
-  passing: number
-  noPr: number
-  unknown: number
-}): string {
-  return translate(
-    'auto.components.rightSidebar.FolderWorkspacePrChecksPanel.summary',
-    '{{value0}} attached · {{value1}} with PR/MR · {{value2}} attention · {{value3}} pending · {{value4}} passing · {{value5}} no PR · {{value6}} unknown',
-    {
-      value0: summary.attached,
-      value1: summary.knownReview,
-      value2: summary.failing,
-      value3: summary.pending,
-      value4: summary.passing,
-      value5: summary.noPr,
-      value6: summary.unknown
-    }
   )
 }

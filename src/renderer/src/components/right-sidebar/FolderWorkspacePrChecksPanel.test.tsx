@@ -256,6 +256,15 @@ describe('FolderWorkspacePrChecksPanel', () => {
     expect(mockState.store.setRightSidebarTab).not.toHaveBeenCalled()
   })
 
+  it('keeps aggregate counts out of the compact panel header', () => {
+    renderPanel()
+
+    expect(container.textContent).toContain('Folder parent')
+    expect(container.textContent).not.toContain('1 attached')
+    expect(container.textContent).not.toContain('with PR/MR')
+    expect(container.textContent).not.toContain('unknown')
+  })
+
   it('opens external review links without activating the row', () => {
     renderPanel()
 
