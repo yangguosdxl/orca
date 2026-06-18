@@ -140,6 +140,11 @@ export function WorkspacePortScanner({ enabled = true }: { enabled?: boolean }):
     }
     generationRef.current += 1
     setWorkspacePortScan(null)
+    // Why: this effect only re-runs when the scan targets / active host actually
+    // change. We just cleared the published scan, so the install-time refresh
+    // below must be allowed to refill it immediately — reset the throttle window
+    // so a target change isn't suppressed by the prior poll's start time.
+    lastRefreshStartedAtRef.current = Number.NEGATIVE_INFINITY
 
     // Why: workspace port scans can cross runtime IPC or shell out remotely.
     // Keep the timer stopped while no UI can display the result; visibility
