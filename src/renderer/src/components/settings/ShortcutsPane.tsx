@@ -190,6 +190,7 @@ export function ShortcutsPane({
     if (shortcutFocusFrameRef.current !== null) {
       cancelAnimationFrame(shortcutFocusFrameRef.current)
     }
+    // Why: applying the query/filter can remount rows, so focus waits until the target exists.
     shortcutFocusFrameRef.current = requestAnimationFrame(() => {
       shortcutFocusFrameRef.current = requestAnimationFrame(() => {
         shortcutFocusFrameRef.current = null
