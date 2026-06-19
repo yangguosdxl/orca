@@ -11,10 +11,9 @@ import {
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useAppStore } from '@/store'
 import { useAllWorktrees, useRepoMap, useWorktreeMap } from '@/store/selectors'
-import { cn } from '@/lib/utils'
 import { RepoBadgeMark } from '@/components/repo/RepoBadgeLabel'
 import { branchDisplayName } from './WorktreeCardHelpers'
-import { getWorkspaceStatus, getWorkspaceStatusVisualMeta } from './workspace-status'
+import { WorktreeActivityStatusIndicator } from './WorktreeActivityStatusIndicator'
 import { getEligibleWorktreeParents } from './worktree-parent-candidates'
 import { translate } from '@/i18n/i18n'
 import type { Worktree } from '../../../../shared/types'
@@ -74,14 +73,11 @@ function WorktreeParentPickerRow({
   isCurrent: boolean
 }): React.JSX.Element {
   const repo = useRepoMap().get(candidate.repoId)
-  const workspaceStatuses = useAppStore((s) => s.workspaceStatuses)
-  const statusMeta = getWorkspaceStatusVisualMeta(getWorkspaceStatus(candidate, workspaceStatuses))
-  const StatusIcon = statusMeta.icon
   const branch = branchDisplayName(candidate.branch)
 
   return (
     <div className="flex min-w-0 flex-1 items-start gap-2">
-      <StatusIcon className={cn('mt-0.5 size-3.5 shrink-0', statusMeta.tone)} />
+      <WorktreeActivityStatusIndicator worktreeId={candidate.id} className="mt-0.5" />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{candidate.displayName}</span>
