@@ -629,7 +629,7 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(patch.activeTabIdByWorktree?.[WT]).toBe(mirroredId)
   })
 
-  it('preserves mirrored launch intent when a later host snapshot omits it', () => {
+  it('drops mirrored launch intent when a later host snapshot omits it', () => {
     const existingTab: TerminalTab = {
       id: toWebTerminalSurfaceTabId('host-tab-1'),
       ptyId: 'remote:web-env-1@@terminal-1',
@@ -666,9 +666,9 @@ describe('applyWebSessionTabsSnapshot', () => {
 
     expect(patch.tabsByWorktree?.[WT]?.[0]).toMatchObject({
       id: existingTab.id,
-      title: 'zsh',
-      launchAgent: 'codex'
+      title: 'zsh'
     })
+    expect(patch.tabsByWorktree?.[WT]?.[0]?.launchAgent).toBeUndefined()
   })
 
   it('preserves quick command labels from host terminal surfaces', () => {

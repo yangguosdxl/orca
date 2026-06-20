@@ -507,9 +507,7 @@ function buildMirroredTerminalTabs(
       surfaces.find((surface) => surface.quickCommandLabel?.trim())?.quickCommandLabel?.trim() ||
       existing?.quickCommandLabel?.trim()
     const launchAgent =
-      activeSurface.launchAgent ??
-      surfaces.find((surface) => surface.launchAgent)?.launchAgent ??
-      existing?.launchAgent
+      activeSurface.launchAgent ?? surfaces.find((surface) => surface.launchAgent)?.launchAgent
     // Why: tab color/pin echo back through host snapshots, so prefer the client's
     // own record (kept authoritative in tabsByWorktree by the pin/color setters)
     // and fall back to the host value only when this client has no prior tab —
@@ -533,9 +531,8 @@ function buildMirroredTerminalTabs(
         isPinned,
         sortOrder: sortOffset + index,
         createdAt: existing?.createdAt ?? now + index,
-        // Why: runtime snapshots can omit launchAgent after the process settles;
-        // keep the client-side launch intent so completed remote tabs do not
-        // briefly lose their provider icon between host status snapshots.
+        // Why: launchAgent is host-owned lifecycle metadata. If the host stops
+        // publishing it, mirrored clients must not resurrect stale startup intent.
         ...(launchAgent ? { launchAgent } : {})
       },
       hostTabId: parentTabId,
