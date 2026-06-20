@@ -434,9 +434,6 @@ export type BrowserApi = {
   onOpenLinkInOrcaTab: (
     callback: (event: { browserPageId: string; url: string }) => void
   ) => () => void
-  acceptDownload: (args: {
-    downloadId: string
-  }) => Promise<{ ok: true } | { ok: false; reason: string }>
   cancelDownload: (args: { downloadId: string }) => Promise<boolean>
   setGrabMode: (args: BrowserSetGrabModeArgs) => Promise<BrowserSetGrabModeResult>
   awaitGrabSelection: (args: BrowserAwaitGrabSelectionArgs) => Promise<BrowserGrabResult>

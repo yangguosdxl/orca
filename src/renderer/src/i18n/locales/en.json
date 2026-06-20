@@ -2322,8 +2322,7 @@
             "f3eeb1de13": "Copy",
             "c2f0b72b8d": "Insert",
             "925f49f210": "Expand Pane",
-            "df766809e0": "Collapse Pane",
-            "copyTerminalId": "Copy Terminal ID"
+            "df766809e0": "Collapse Pane"
           },
           "TerminalErrorToast": {
             "e4aa243f8c": "Restart daemon",
@@ -8469,8 +8468,8 @@
             "a1f2c8d901": "View"
           },
           "SourceControl": {
-            "conflictsSection": "Conflicts",
             "1406954883": "Clear all notes...",
+            "conflictsSection": "Conflicts",
             "cc05b2d088": "Open in File Explorer",
             "03194cfff4": "Local session state derived from a conflict you opened here.",
             "413a3ba113": "conflict",
@@ -9183,9 +9182,6 @@
                 "copyCommand": "Copy command"
               }
             }
-          },
-          "SourceControlEntryContextMenu": {
-            "a1f2c8d901": "View"
           }
         }
       },
@@ -11087,7 +11083,16 @@
             "ea6af700da": "{{value0}} annotation",
             "c13693fe27": "{{value0}} annotations",
             "074f0ed10b": "{{value0}} annotation ready. Select another element or copy all feedback.",
-            "a2164a6e5a": "{{value0}} annotations ready. Select another element or copy all feedback."
+            "a2164a6e5a": "{{value0}} annotations ready. Select another element or copy all feedback.",
+            "9f6f2e8c19": "The downloaded file path is unavailable.",
+            "0c79b7634d": "Could not open the downloaded file. It may have been moved or deleted.",
+            "397d9dc923": "Could not show the downloaded file. It may have been moved or deleted.",
+            "39c04fed61": "Downloading paused",
+            "5c3d530a68": "Downloaded",
+            "4bb7424d6b": "Canceled",
+            "6e776f9ef9": "Download failed",
+            "756bfc25c9": "Open",
+            "09a9489aa5": "Show"
           },
           "BrowserToolbarMenu": {
             "429ef481f9": "Cancel",

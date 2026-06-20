@@ -1587,8 +1587,6 @@ function createBrowserApi(): NonNullable<Partial<PreloadApi>['browser']> {
     onActivateView: () => noopUnsubscribe,
     onPaneFocus: () => noopUnsubscribe,
     onOpenLinkInOrcaTab: () => noopUnsubscribe,
-    acceptDownload: () =>
-      Promise.resolve({ ok: false, reason: 'Downloads are handled by the server browser.' }),
     cancelDownload: () => Promise.resolve(false),
     setGrabMode: () =>
       Promise.resolve({
