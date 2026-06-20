@@ -3,6 +3,7 @@ import type { Page } from '@stablyai/playwright-test'
 import { expect } from '@stablyai/playwright-test'
 import { sendToTerminal } from './helpers/terminal'
 import { nodeTerminalCommand } from './terminal-node-command'
+import { buildFreshShellProbeInputSequence } from './terminal-probe-input-sequence'
 
 type TerminalPtyReadinessWindow = Window & {
   __paneManagers?: Map<
@@ -83,14 +84,11 @@ export async function waitForPtyShellEcho(
   const deadline = Date.now() + timeoutMs
   await waitForPtyPaneMounted(page, ptyId, Math.min(10_000, timeoutMs))
   while (Date.now() < deadline) {
-    await sendToTerminal(page, ptyId, '\x03')
-    await page.waitForTimeout(50)
-    await sendToTerminal(page, ptyId, '\x15')
-    await page.waitForTimeout(50)
-
     // Why: terminal scrollback includes command echo. Encode the marker inside
     // the node snippet so seeing the plain marker proves the shell executed it.
-    await sendToTerminal(page, ptyId, encodedMarkerCommand(marker))
+    for (const input of buildFreshShellProbeInputSequence(encodedMarkerCommand(marker))) {
+      await sendToTerminal(page, ptyId, input)
+    }
 
     const probeDeadline = Date.now() + Math.min(3_000, Math.max(0, deadline - Date.now()))
     while (Date.now() < probeDeadline) {
