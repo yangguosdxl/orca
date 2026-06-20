@@ -409,7 +409,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
     linkedGitLabMR,
     linkedBitbucketPR,
     linkedAzureDevOpsPR,
-    linkedGiteaPR
+    linkedGiteaPR,
+    {
+      reviewHintKey: hostedReviewEntry?.linkedReviewHintKey
+    }
   )
   const issue: IssueInfo | null | undefined = worktree.linkedIssue
     ? issueEntry !== undefined

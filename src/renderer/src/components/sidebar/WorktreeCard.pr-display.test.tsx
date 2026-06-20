@@ -247,6 +247,30 @@ describe('WorktreeCard linked PR display', () => {
     expect(markup).not.toContain('Stale branch PR')
   })
 
+  it('shows branch-discovered GH PR status when the worktree has no linked PR', async () => {
+    settings = { experimentalNewWorktreeCardStyle: true }
+    hostedReviewCache = {
+      'local::repo-1::feature/local-branch': {
+        data: makeHostedReview({ number: 456, title: 'Branch PR', state: 'open' }),
+        fetchedAt: Date.now(),
+        linkedReviewHintKey: ''
+      }
+    }
+    const { default: WorktreeCard } = await import('./WorktreeCard')
+
+    const markup = renderWorktreeCardMarkup(
+      <WorktreeCard
+        worktree={makeWorktree({ linkedPR: null })}
+        repo={makeRepo()}
+        isActive={false}
+      />
+    )
+
+    expect(markup).toContain('PR checks: Passing')
+    expect(markup).toContain('text-emerald-500/80')
+    expect(markup).not.toContain('Branch')
+  })
+
   it('shows branch-discovered hosted review providers without linked worktree metadata', async () => {
     settings = { experimentalNewWorktreeCardStyle: true }
     hostedReviewCache = {
