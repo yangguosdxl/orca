@@ -164,11 +164,13 @@ import {
 import {
   getDriverForBrowserPage,
   onBrowserDriverChange,
+  useBrowserMobileDrivenPageIds,
   type BrowserDriverState
 } from '@/lib/pane-manager/browser-mobile-driver-state'
 import { shouldPollChromiumErrorPage } from './chromium-error-page-polling'
 import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
 import { translate } from '@/i18n/i18n'
+import { isBrowserPagePanePaintable } from './browser-page-paintability'
 
 type BrowserTabPageState = Partial<
   Pick<
@@ -767,6 +769,7 @@ export default function BrowserPane({
   const activeBrowserPageId = activeBrowserPage?.id ?? null
   const browserPageIds = useMemo(() => browserPages.map((page) => page.id), [browserPages])
   const automationVisiblePageIds = useBrowserAutomationVisiblePageIds(browserPageIds)
+  const mobileDrivenPageIds = useBrowserMobileDrivenPageIds(browserPageIds)
   // Why: inactive Electron webviews must stay mounted in their original DOM
   // parent. Parking them by unmounting/reparenting loses form text and SPA
   // state on normal tab switches.
@@ -843,6 +846,7 @@ export default function BrowserPane({
               sessionProfileId={browserTab.sessionProfileId ?? null}
               isActive={isActive && page.id === activeBrowserPage?.id}
               isAutomationVisible={automationVisiblePageIds.has(page.id)}
+              isMobileDriven={mobileDrivenPageIds.has(page.id)}
               inputLocked={activeBrowserDriver.kind === 'mobile'}
               onUpdatePageState={updateBrowserPageState}
               onSetUrl={setBrowserPageUrl}
@@ -2621,6 +2625,7 @@ function BrowserPagePane({
   sessionProfileId,
   isActive,
   isAutomationVisible,
+  isMobileDriven,
   inputLocked,
   onUpdatePageState,
   onSetUrl
@@ -2631,11 +2636,16 @@ function BrowserPagePane({
   sessionProfileId: string | null
   isActive: boolean
   isAutomationVisible: boolean
+  isMobileDriven: boolean
   inputLocked: boolean
   onUpdatePageState: (tabId: string, updates: BrowserTabPageState) => void
   onSetUrl: (tabId: string, url: string) => void
 }): React.JSX.Element {
-  const isPaintable = isActive || isAutomationVisible
+  const isPaintable = isBrowserPagePanePaintable({
+    isActive,
+    isAutomationVisible,
+    isMobileDriven
+  })
   const containerRef = useRef<HTMLDivElement | null>(null)
   const grabToastTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const annotationCopyTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -4561,8 +4571,8 @@ function BrowserPagePane({
             ? 'pointer-events-none z-0 opacity-0'
             : 'pointer-events-none hidden'
       )}
-      // Why: automation-visible webviews must remain mounted and paintable, but
-      // their hidden toolbar and guest content cannot stay keyboard-focusable.
+      // Why: automation-visible and mobile-driven webviews must stay paintable,
+      // but hidden toolbar and guest content cannot stay keyboard-focusable.
       inert={!isActive}
       aria-hidden={!isActive}
     >
