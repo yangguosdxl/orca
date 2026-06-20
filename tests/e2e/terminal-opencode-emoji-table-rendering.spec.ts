@@ -15,6 +15,7 @@ import {
   analyzeRasterCursorCells,
   type TerminalRasterProbeTarget
 } from './terminal-cursor-raster-probe'
+import { nodeTerminalCommand } from './terminal-node-command'
 
 type TerminalRenderState = {
   coreCursorHidden: boolean | null
@@ -270,7 +271,7 @@ test.describe('OpenCode emoji table terminal rendering', () => {
     const scriptPath = path.join(testRepoPath, `.orca-opencode-emoji-table-${runId}.mjs`)
     writeFileSync(scriptPath, emojiTableScript(marker))
     try {
-      await sendToTerminal(orcaPage, ptyId, `node ${JSON.stringify(scriptPath)}\r`)
+      await sendToTerminal(orcaPage, ptyId, `${nodeTerminalCommand([scriptPath])}\r`)
       await waitForTerminalOutput(orcaPage, marker, 10_000)
       await orcaPage.waitForTimeout(250)
       await forceCursorProbeTheme(orcaPage)

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Page } from '@stablyai/playwright-test'
 import { expect } from '@stablyai/playwright-test'
 import { sendToTerminal } from './helpers/terminal'
+import { nodeTerminalCommand } from './terminal-node-command'
 
 type TerminalPtyReadinessWindow = Window & {
   __paneManagers?: Map<
@@ -67,9 +68,10 @@ export async function waitForPtyPaneMounted(
 
 function encodedMarkerCommand(marker: string): string {
   const encoded = Buffer.from(marker, 'utf8').toString('base64')
-  return `node -e ${JSON.stringify(
+  return `${nodeTerminalCommand([
+    '-e',
     `console.log(Buffer.from('${encoded}', 'base64').toString('utf8'))`
-  )}\r`
+  ])}\r`
 }
 
 export async function waitForPtyShellEcho(

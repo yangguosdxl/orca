@@ -7,6 +7,7 @@ import {
   waitForPtyPaneMounted,
   waitForPtyShellEcho
 } from './terminal-pty-readiness'
+import { nodeTerminalCommand } from './terminal-node-command'
 
 type TerminalColumnProbeWindow = Window & {
   __store?: {
@@ -87,7 +88,10 @@ export async function waitForPtyColumnsAtMost(
     await sendToTerminal(
       page,
       ptyId,
-      `node -e ${JSON.stringify(`console.log('${marker}:' + (process.stdout.columns || 0))`)}\r`
+      `${nodeTerminalCommand([
+        '-e',
+        `console.log('${marker}:' + (process.stdout.columns || 0))`
+      ])}\r`
     )
     const probeDeadline = Date.now() + Math.min(5_000, Math.max(0, deadline - Date.now()))
     while (Date.now() < probeDeadline) {

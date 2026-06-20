@@ -21,6 +21,7 @@ import {
   waitForPtyColumnsAtMost,
   waitForRenderedTerminalColumnsAtMost
 } from './terminal-column-probes'
+import { nodeTerminalCommand } from './terminal-node-command'
 import { waitForPtyShellEcho } from './terminal-pty-readiness'
 
 type TerminalRenderDiagnostics = {
@@ -620,7 +621,7 @@ test.describe('Terminal long table scroll restore repro', () => {
     writeFileSync(scriptPath, longMarkdownTableScript(runId))
 
     try {
-      await sendToTerminal(orcaPage, ptyId, `node ${JSON.stringify(scriptPath)}\r`)
+      await sendToTerminal(orcaPage, ptyId, `${nodeTerminalCommand([scriptPath])}\r`)
       await orcaPage.waitForTimeout(80)
       await switchToWorktree(orcaPage, secondWorktreeId)
       await waitForActiveTerminalManager(orcaPage, 30_000)
@@ -689,7 +690,7 @@ test.describe('Terminal long table scroll restore repro', () => {
     writeFileSync(scriptPath, narrowSignerMarkdownTableScript(runId))
 
     try {
-      await sendToTerminal(orcaPage, ptyId, `node ${JSON.stringify(scriptPath)}\r`)
+      await sendToTerminal(orcaPage, ptyId, `${nodeTerminalCommand([scriptPath])}\r`)
       await orcaPage.waitForTimeout(80)
       await switchToWorktree(orcaPage, secondWorktreeId)
       await waitForActiveTerminalManager(orcaPage, 30_000)
@@ -770,7 +771,7 @@ test.describe('Terminal long table scroll restore repro', () => {
     writeFileSync(scriptPath, emojiFixtureMarkdownTableScript(EMOJI_TABLE_FIXTURE, runId))
 
     try {
-      await sendToTerminal(orcaPage, ptyId, `node ${JSON.stringify(scriptPath)}\r`)
+      await sendToTerminal(orcaPage, ptyId, `${nodeTerminalCommand([scriptPath])}\r`)
       await orcaPage.waitForTimeout(80)
       await switchToWorktree(orcaPage, secondWorktreeId)
       await waitForActiveTerminalManager(orcaPage, 30_000)
