@@ -15,24 +15,84 @@
 # manually against the imported cert — works with any team API key.
 
 require "base64"
+require "json"
 
 default_platform(:ios)
 
+APP_CONFIG_PATH = "app.json"
 WORKSPACE = "ios/Orca.xcworkspace"
 SCHEME = "Orca"
 BUNDLE_ID = "com.stably.orca.mobile"
 TESTFLIGHT_GROUPS = ["peeps"].freeze
 
+def app_store_connect_api_key_from_env
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_API_KEY_P8"),
+    is_key_content_base64: true,
+    in_house: false,
+  )
+end
+
+def load_mobile_app_config
+  JSON.parse(File.read(APP_CONFIG_PATH))
+end
+
+def write_mobile_app_config(config)
+  File.write(APP_CONFIG_PATH, "#{JSON.pretty_generate(config)}\n")
+end
+
+def current_mobile_version(config)
+  config.fetch("expo").fetch("version")
+end
+
+def truthy_option?(value)
+  %w[1 true yes on].include?(value.to_s.strip.downcase)
+end
+
+def bump_patch_version(version)
+  match = version.match(/\A(\d+)\.(\d+)\.(\d+)\z/)
+  UI.user_error!("Cannot bump non-semver mobile version '#{version}'") unless match
+
+  "#{match[1]}.#{match[2]}.#{match[3].to_i + 1}"
+end
+
+def resolve_requested_version(options, config)
+  requested = options[:version].to_s.strip
+  return requested unless requested.empty?
+
+  current_version = current_mobile_version(config)
+  truthy_option?(options[:bump_patch]) ? bump_patch_version(current_version) : current_version
+end
+
 platform :ios do
+  desc "Resolve the iOS release version and next TestFlight build number"
+  lane :prepare_release_version do |options|
+    api_key = app_store_connect_api_key_from_env
+    config = load_mobile_app_config
+    version = resolve_requested_version(options, config)
+
+    latest_build_number = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: BUNDLE_ID,
+      version: version,
+      initial_build_number: 0,
+    )
+    build_number = latest_build_number.to_i + 1
+
+    # Keep app.json authoritative because Expo prebuild copies these values into
+    # the native project and runtime manifest used by the About screen.
+    config.fetch("expo")["version"] = version
+    config.fetch("expo").fetch("ios")["buildNumber"] = build_number.to_s
+    write_mobile_app_config(config)
+
+    UI.message("Prepared Orca Mobile iOS #{version} (#{build_number})")
+  end
+
   desc "Build, sign, upload, and share Orca Mobile on TestFlight"
   lane :release do
-    api_key = app_store_connect_api_key(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      key_content: ENV.fetch("ASC_API_KEY_P8"),
-      is_key_content_base64: true,
-      in_house: false,
-    )
+    api_key = app_store_connect_api_key_from_env
 
     team_id = ENV.fetch("APPLE_TEAM_ID")
 
