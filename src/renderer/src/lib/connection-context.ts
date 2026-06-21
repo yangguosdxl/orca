@@ -1,7 +1,10 @@
 import { useAppStore } from '@/store'
 import { getRepoIdFromWorktreeId } from '../../../shared/worktree-id'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
-import { isPathInsideOrEqual } from '../../../shared/cross-platform-path'
+import {
+  isPathInsideOrEqual,
+  normalizeRuntimePathForComparison
+} from '../../../shared/cross-platform-path'
 import {
   getFolderWorkspaceCandidateRepos,
   getFolderWorkspaceConnectionId
@@ -64,12 +67,17 @@ function resolveConnectionIdForRepoPath(
 ): string | null | undefined {
   const matchingRepos = repos
     .filter((repo) => isPathInsideOrEqual(repo.path, filePath))
-    .sort((a, b) => b.path.length - a.path.length)
-  const longestPath = matchingRepos[0]?.path
-  if (!longestPath) {
+    .map((repo) => ({ repo, normalizedPath: normalizeRuntimePathForComparison(repo.path) }))
+    .sort((a, b) => b.normalizedPath.length - a.normalizedPath.length)
+  const longestPathLength = matchingRepos[0]?.normalizedPath.length
+  if (!longestPathLength) {
     return undefined
   }
-  const bestMatches = matchingRepos.filter((repo) => repo.path.length === longestPath.length)
-  const connectionIds = new Set(bestMatches.map((repo) => repo.connectionId ?? null))
+  // Why: containment normalizes separators/trailing slashes; ambiguity checks
+  // need the same representation or equal repo roots can be hidden.
+  const bestMatches = matchingRepos.filter(
+    (candidate) => candidate.normalizedPath.length === longestPathLength
+  )
+  const connectionIds = new Set(bestMatches.map(({ repo }) => repo.connectionId ?? null))
   return connectionIds.size === 1 ? ([...connectionIds][0] ?? null) : undefined
 }

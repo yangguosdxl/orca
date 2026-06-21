@@ -316,4 +316,60 @@ describe('getConnectionId', () => {
 
     expect(getConnectionId(folderWorkspaceKey('folder-workspace-1'))).toBe('ssh-1')
   })
+
+  it('keeps normalized same-path folder repo ambiguity when resolving files', () => {
+    const workspaceKey = folderWorkspaceKey('folder-workspace-1')
+    useAppStore.setState({
+      folderWorkspaces: [
+        {
+          id: 'folder-workspace-1',
+          projectGroupId: 'group-1',
+          name: 'Platform workspace',
+          folderPath: '/home/neil/platform',
+          linkedTask: null,
+          comment: '',
+          isArchived: false,
+          isUnread: false,
+          isPinned: false,
+          sortOrder: 1,
+          lastActivityAt: 0,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      projectGroups: [
+        {
+          id: 'group-1',
+          name: 'Platform',
+          parentPath: '/home/neil/platform',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      repos: [
+        makeRepo({
+          id: 'repo-ssh-1',
+          path: '/home/neil/platform/api',
+          projectGroupId: 'group-1',
+          connectionId: 'ssh-1'
+        }),
+        makeRepo({
+          id: 'repo-ssh-2',
+          path: '/home/neil/platform/api/',
+          projectGroupId: 'group-1',
+          connectionId: 'ssh-2'
+        })
+      ],
+      worktreesByRepo: {}
+    })
+
+    expect(
+      getConnectionIdForFile(workspaceKey, '/home/neil/platform/api/src/index.ts')
+    ).toBeUndefined()
+  })
 })
