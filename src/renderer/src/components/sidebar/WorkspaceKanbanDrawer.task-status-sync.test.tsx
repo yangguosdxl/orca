@@ -297,6 +297,7 @@ describe('WorkspaceKanbanDrawer task status sync wiring', () => {
     expect(sheet?.style.height).toBe('auto')
     expect(overlay?.style.top).toBe('36px')
     expect(overlay?.style.bottom).toBe('0px')
+    expect(overlay?.style.pointerEvents).toBe('none')
   })
 
   it('syncs Linear after a document-drop status move when the setting is enabled', () => {
