@@ -133,6 +133,7 @@ function createTestStore() {
         expandedDirs: {},
         gitStatusByWorktree: {},
         gitStatusHeadByWorktree: {},
+        gitStatusHugeByWorktree: {},
         gitIgnoredPathsByWorktree: {},
         gitConflictOperationByWorktree: {},
         trackedConflictPathsByWorktree: {},
@@ -144,6 +145,8 @@ function createTestStore() {
         activeBrowserTabIdByWorktree: {},
         browserTabsByWorktree: {},
         recentlyClosedBrowserTabsByWorktree: {},
+        recentlyClosedEditorTabsByWorktree: {},
+        remoteStatusesByWorktree: {},
         activeTabTypeByWorktree: {},
         rightSidebarTab: 'explorer' as const,
         rightSidebarTabByWorktree: {},
@@ -5003,6 +5006,11 @@ describe('migrateWorktreeIdentity', () => {
   const OLD = 'repo1::/ws/cunner'
   const NEW = 'repo1::/ws/worktree-creation-spinner'
   const CANONICAL = makeWorktreeKey({ hostId: 'local', repoId: 'repo1', path: '/ws/cunner' })
+  const WORKTREE_ID_VALUE_MIGRATED_KEYS = new Set([
+    'browserPagesByWorkspace',
+    'recentlyClosedBrowserPagesByWorkspace',
+    'sleepingAgentSessionsByPaneKey'
+  ])
 
   function makeMigrationMapValue(
     key: (typeof WORKTREE_ID_KEYED_MAP_KEYS)[number],
@@ -5026,10 +5034,23 @@ describe('migrateWorktreeIdentity', () => {
         return [{ id: 'unified1', worktreeId }]
       case 'groupsByWorktree':
         return [{ id: 'group1', worktreeId }]
+      case 'recentlyClosedEditorTabsByWorktree':
+        return [{ id: 'file1', worktreeId }]
       default:
         return { marker: key }
     }
   }
+
+  it('keeps the worktree-id keyed map list in sync with store fields', () => {
+    const declared = new Set<keyof AppState>(WORKTREE_ID_KEYED_MAP_KEYS)
+    const state = createTestStore().getState()
+    const uncovered = Object.keys(state)
+      .filter((key) => key.includes('ByWorktree'))
+      .filter((key) => !declared.has(key as keyof AppState))
+      .filter((key) => !WORKTREE_ID_VALUE_MIGRATED_KEYS.has(key))
+
+    expect(uncovered).toEqual([])
+  })
 
   it('re-keys worktree-scoped maps, pointers, the Set, and openFiles old->new', () => {
     const store = createTestStore()
@@ -5052,6 +5073,7 @@ describe('migrateWorktreeIdentity', () => {
       groupsByWorktree: { [OLD]: [{ id: 'group1', worktreeId: OLD }] },
       gitStatusByWorktree: { [OLD]: [{ path: 'a.ts' }] },
       gitStatusHeadByWorktree: { [OLD]: 'head-old' },
+      gitStatusHugeByWorktree: { [OLD]: { limit: 10_000 } },
       gitBranchCompareRequestStatusHeadByWorktree: { [OLD]: 'head-old' },
       lastVisitedAtByWorktreeId: { [OLD]: 123 },
       defaultTerminalTabsAppliedByWorktreeId: { [OLD]: true },
@@ -5095,12 +5117,12 @@ describe('migrateWorktreeIdentity', () => {
     expect(s.groupsByWorktree[NEW]?.[0]?.worktreeId).toBe(NEW)
     expect(s.gitStatusByWorktree[NEW]).toEqual([{ path: 'a.ts' }])
     expect(s.gitStatusHeadByWorktree[NEW]).toBe('head-old')
+    expect(s.gitStatusHugeByWorktree[NEW]).toEqual({ limit: 10_000 })
     expect(s.gitBranchCompareRequestStatusHeadByWorktree[NEW]).toBe('head-old')
     expect(s.rightSidebarExplorerViewByWorktree[OLD]).toBeUndefined()
     expect(s.rightSidebarExplorerViewByWorktree[NEW]).toBe('search')
     expect(s.lastVisitedAtByWorktreeId[NEW]).toBe(123)
     expect(s.defaultTerminalTabsAppliedByWorktreeId[NEW]).toBe(true)
-    // The two maps absent from the purge list are still re-keyed.
     expect(s.recentlyClosedEditorTabsByWorktree[NEW]).toEqual([{ id: 'f1', worktreeId: NEW }])
     expect(s.remoteStatusesByWorktree[NEW]).toEqual({ ahead: 1 })
     expect(s.everActivatedWorktreeIds.has(NEW)).toBe(true)
