@@ -470,6 +470,7 @@ describe('Store', () => {
     const settings = store.getSettings()
     expect(settings.branchPrefix).toBe('git-username')
     expect(settings.refreshLocalBaseRefOnWorktreeCreate).toBe(false)
+    expect(settings.sourceControlGroupOrder).toBe('changes-first')
     expect(settings.theme).toBe('system')
     expect(settings.appIcon).toBe('classic')
     expect(settings.appFontFamily).toBe('Geist')
@@ -508,6 +509,56 @@ describe('Store', () => {
     expect(ui.setupGuideSidebarDismissed).toBe(false)
     expect(ui.setupGuideBrowserMilestoneMigrated).toBe(true)
     expect(ui.setupGuideBrowserMilestoneLegacyComplete).toBe(false)
+  })
+
+  it('defaults minimizeToTrayOnClose to false when unset', async () => {
+    const store = await createStore()
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+  })
+
+  it('coerces loaded minimizeToTrayOnClose to false unless stored as true', async () => {
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      settings: {
+        minimizeToTrayOnClose: 'true' as unknown as boolean
+      }
+    })
+
+    const store = await createStore()
+
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+  })
+
+  it('persists minimizeToTrayOnClose true/false round-trip', async () => {
+    const store = await createStore()
+    store.updateSettings({ minimizeToTrayOnClose: true })
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(true)
+    store.flush()
+    expect((readDataFile() as PersistedState).settings.minimizeToTrayOnClose).toBe(true)
+    store.updateSettings({ minimizeToTrayOnClose: false })
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+  })
+
+  it('coerces non-boolean minimizeToTrayOnClose payloads to a strict boolean', async () => {
+    const store = await createStore()
+    // Why: a renderer-supplied non-bool must never persist as a truthy non-bool
+    // that would later read as "tray-minimize on".
+    store.updateSettings({ minimizeToTrayOnClose: 'true' as unknown as boolean })
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+    store.updateSettings({ minimizeToTrayOnClose: 1 as unknown as boolean })
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+    store.updateSettings({ minimizeToTrayOnClose: null as unknown as boolean })
+    expect(store.getSettings().minimizeToTrayOnClose).toBe(false)
+  })
+
+  it('defaults trayMinimizeNoticeShown to false and persists it strictly', async () => {
+    const store = await createStore()
+    expect(store.getUI().trayMinimizeNoticeShown).toBe(false)
+    store.updateUI({ trayMinimizeNoticeShown: true })
+    expect(store.getUI().trayMinimizeNoticeShown).toBe(true)
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getUI().trayMinimizeNoticeShown).toBe(true)
   })
 
   it('hides the setup guide sidebar entry for existing users backfilled as completed', async () => {
@@ -1999,6 +2050,21 @@ describe('Store', () => {
 
     const store = await createStore()
     expect(store.getSettings().terminalShortcutPolicy).toBe('orca-first')
+  })
+
+  it('normalizes malformed source control group order on load', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { sourceControlGroupOrder: 'tracked-first' },
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
   })
 
   it('repairs drifted task provider defaults on load', async () => {
@@ -3915,6 +3981,17 @@ describe('Store', () => {
     expect(store.getSettings().sourceControlViewMode).toBe('tree')
   })
 
+  it('updateSettings persists sourceControlGroupOrder as a user setting', async () => {
+    const store = await createStore()
+    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+
+    store.updateSettings({ sourceControlGroupOrder: 'staged-first' })
+    expect(store.getSettings().sourceControlGroupOrder).toBe('staged-first')
+
+    store.updateSettings({ sourceControlGroupOrder: 'tracked-first' as never })
+    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
+  })
+
   it('updateSettings normalizes terminal shortcut policy', async () => {
     const store = await createStore()
 
@@ -3970,16 +4047,18 @@ describe('Store', () => {
 
     const store = await createStore()
     expect(store.getSettings().sourceControlViewMode).toBe('list')
+    expect(store.getSettings().sourceControlGroupOrder).toBe('changes-first')
 
-    store.updateSettings({ sourceControlViewMode: 'tree' })
+    store.updateSettings({ sourceControlViewMode: 'tree', sourceControlGroupOrder: 'staged-first' })
     store.flush()
 
     const persisted = readDataFile() as {
-      settings?: { sourceControlViewMode?: string }
+      settings?: { sourceControlGroupOrder?: string; sourceControlViewMode?: string }
       workspaceSession?: typeof workspaceSession
       worktreeMeta?: Record<string, unknown>
     }
     expect(persisted.settings?.sourceControlViewMode).toBe('tree')
+    expect(persisted.settings?.sourceControlGroupOrder).toBe('staged-first')
     expect(persisted.workspaceSession).toEqual({
       ...getDefaultWorkspaceSession(),
       ...workspaceSession
@@ -3991,9 +4070,13 @@ describe('Store', () => {
     expect(collectPropertyPaths(persisted, 'sourceControlViewMode')).toEqual([
       'settings.sourceControlViewMode'
     ])
+    expect(collectPropertyPaths(persisted, 'sourceControlGroupOrder')).toEqual([
+      'settings.sourceControlGroupOrder'
+    ])
 
     const reloaded = await createStore()
     expect(reloaded.getSettings().sourceControlViewMode).toBe('tree')
+    expect(reloaded.getSettings().sourceControlGroupOrder).toBe('staged-first')
     expect(reloaded.getWorkspaceSession().activeWorktreeId).toBe('repo1::/worktree-a')
   })
 
@@ -5225,6 +5308,27 @@ describe('Store', () => {
     expect(store.getSettings().compactWorktreeCards).toBe(true)
     expect(store.getUI().worktreeCardProperties).toEqual(['status', 'unread'])
     expect(store.getUI().worktreeCardProperties).not.toContain('automation')
+  })
+
+  it('preserves the current defaulted Compact preset without expanding display toggles', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: { compactWorktreeCards: true, experimentalNewWorktreeCardStyle: true },
+      ui: {
+        worktreeCardProperties: ['status', 'unread'],
+        _worktreeCardModeDefaulted: true
+      },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+    const store = await createStore()
+
+    expect(store.getSettings().compactWorktreeCards).toBe(true)
+    expect(store.getUI().worktreeCardProperties).toEqual(['status', 'unread'])
+    expect(store.getUI().worktreeCardProperties).not.toContain('ports')
+    expect(store.getUI().worktreeCardProperties).not.toContain('inline-agents')
   })
 
   it.each([

@@ -5,12 +5,13 @@
  * co-locating the global handler maps that both the transport factory
  * and the eager-buffer reconnection logic share.
  */
-import type { ParsedAgentStatusPayload } from '../../../../shared/agent-status-types'
-import type { EventProps } from '../../../../shared/telemetry-events'
-import type { ProjectExecutionRuntimeResolution } from '../../../../shared/project-execution-runtime'
-import type { StartupCommandDelivery } from '../../../../shared/codex-startup-delivery'
 import { acquirePtyDeliveryInterest } from './pty-delivery-interest'
 import { ackPtyData, exposeE2eTerminalPtyAckGate } from './terminal-pty-ack-gate'
+import { clampUtf8Tail, type EagerBufferChunk } from './pty-eager-buffer-clamp'
+import type { StartupCommandDelivery } from '../../../../shared/codex-startup-delivery'
+import type { SleepingAgentLaunchConfig } from '../../../../shared/agent-session-resume'
+import type { TuiAgent } from '../../../../shared/types'
+export type { IpcPtyTransportOptions } from './pty-ipc-transport-options'
 
 // ── Singleton PTY event dispatcher ───────────────────────────────────
 // One global IPC listener per channel, routes events to transports by
@@ -34,6 +35,8 @@ export type PtyBufferSnapshot = {
   pendingDeliveryStartSeq?: number
   source?: 'headless' | 'renderer'
 }
+
+export type LocalPtySessionMetadata = { cwd?: string; shellOverride?: string }
 
 export const ptyDataHandlers = new Map<string, (data: string, meta?: PtyDataMeta) => void>()
 /** Sidecar subscriptions that observe PTY data without owning the primary
@@ -83,6 +86,13 @@ const ptyExitSidecars = new Map<string, Set<(code: number) => void>>()
 export const ptyTeardownHandlers = new Map<string, () => void>()
 let ptyDispatcherAttached = false
 
+export type PtyDataHandlerShutdownSnapshot = {
+  ptyId: string
+  dataHandler?: (data: string, meta?: PtyDataMeta) => void
+  replayHandler?: (data: string) => void
+  teardownHandler?: () => void
+}
+
 /**
  * Remove data and status handlers for the given PTY IDs so that any final
  * data flushed by the main process during PTY teardown cannot trigger
@@ -93,12 +103,36 @@ let ptyDispatcherAttached = false
  * Exit handlers are intentionally kept alive so the normal exit-cleanup
  * path (unregister, clear stale timers, update store) still runs.
  */
-export function unregisterPtyDataHandlers(ptyIds: string[]): void {
+export function unregisterPtyDataHandlers(ptyIds: string[]): PtyDataHandlerShutdownSnapshot[] {
+  const snapshots: PtyDataHandlerShutdownSnapshot[] = []
   for (const id of ptyIds) {
+    snapshots.push({
+      ptyId: id,
+      dataHandler: ptyDataHandlers.get(id),
+      replayHandler: ptyReplayHandlers.get(id),
+      teardownHandler: ptyTeardownHandlers.get(id)
+    })
     ptyDataHandlers.delete(id)
     ptyReplayHandlers.delete(id)
     ptyTeardownHandlers.get(id)?.()
     ptyTeardownHandlers.delete(id)
+  }
+  return snapshots
+}
+
+export function restorePtyDataHandlersAfterFailedShutdown(
+  snapshots: readonly PtyDataHandlerShutdownSnapshot[]
+): void {
+  for (const snapshot of snapshots) {
+    if (snapshot.dataHandler) {
+      ptyDataHandlers.set(snapshot.ptyId, snapshot.dataHandler)
+    }
+    if (snapshot.replayHandler) {
+      ptyReplayHandlers.set(snapshot.ptyId, snapshot.replayHandler)
+    }
+    if (snapshot.teardownHandler) {
+      ptyTeardownHandlers.set(snapshot.ptyId, snapshot.teardownHandler)
+    }
   }
 }
 
@@ -184,13 +218,6 @@ export function subscribeToPtyExit(ptyId: string, watcher: (code: number) => voi
 
 export type EagerPtyHandle = { flush: () => string; dispose: () => void }
 const eagerPtyHandles = new Map<string, EagerPtyHandle>()
-const eagerBufferTextEncoder = new TextEncoder()
-const eagerBufferTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true })
-
-type EagerBufferChunk = {
-  data: string
-  bytes: number
-}
 
 export function getEagerPtyBufferHandle(ptyId: string): EagerPtyHandle | undefined {
   return eagerPtyHandles.get(ptyId)
@@ -200,19 +227,6 @@ export function getEagerPtyBufferHandle(ptyId: string): EagerPtyHandle | undefin
 // serialization. Prevents unbounded memory growth if a restored shell
 // runs a long-lived command (e.g. tail -f) in a worktree the user never opens.
 const EAGER_BUFFER_MAX_BYTES = 512 * 1024
-
-function clampUtf8Tail(data: string, maxBytes: number): EagerBufferChunk {
-  const encoded = eagerBufferTextEncoder.encode(data)
-  if (encoded.byteLength <= maxBytes) {
-    return { data, bytes: encoded.byteLength }
-  }
-  let start = encoded.byteLength - maxBytes
-  while (start < encoded.byteLength && (encoded[start] & 0xc0) === 0x80) {
-    start += 1
-  }
-  const tail = eagerBufferTextDecoder.decode(encoded.subarray(start))
-  return { data: tail, bytes: encoded.byteLength - start }
-}
 
 export function registerEagerPtyBuffer(
   ptyId: string,
@@ -299,6 +313,7 @@ export function registerEagerPtyBuffer(
 
 export type PtyConnectResult = {
   id: string
+  launchConfig?: SleepingAgentLaunchConfig
   snapshot?: string
   snapshotCols?: number
   snapshotRows?: number
@@ -321,6 +336,12 @@ export type PtyTransport = {
      *  first byte and the gate + model responder own spawn-time queries.
      *  Ignored by remote-runtime transports (not gate-markable). */
     initiallyHidden?: boolean
+    command?: string
+    env?: Record<string, string>
+    launchConfig?: SleepingAgentLaunchConfig
+    launchToken?: string
+    launchAgent?: TuiAgent
+    startupCommandDelivery?: StartupCommandDelivery
     callbacks: {
       onConnect?: () => void
       onDisconnect?: () => void
@@ -359,56 +380,25 @@ export type PtyTransport = {
   disconnect: () => void
   sendInput: (data: string) => boolean
   sendInputAccepted?: (data: string) => Promise<boolean>
-  resize: (
-    cols: number,
-    rows: number,
-    meta?: { widthPx?: number; heightPx?: number; cellW?: number; cellH?: number }
-  ) => boolean
+  resize: (cols: number, rows: number, meta?: TerminalResizePixelMeta) => boolean
   isConnected: () => boolean
   getPtyId: () => string | null
   /** Drop cross-chunk parser carries (partial OSC-9999 prefix). Called when a
    *  model-restore marker reports dropped bytes — a carry spanning the gap
    *  would corrupt the next live chunk. IPC transports only. */
   resetCrossChunkParserState?: () => void
+  getConnectionId?: () => string | null | undefined
+  getLocalSessionMetadata?: () => LocalPtySessionMetadata | null
   serializeBuffer?: (opts?: { scrollbackRows?: number }) => Promise<PtyBufferSnapshot | null>
   preserve?: () => void
-  /** Unregister PTY handlers without killing the process, so a remounted
-   *  pane can reattach to the same running shell. */
+  /** Unregister PTY handlers without killing the process for pane remounts. */
   detach?: () => void
   destroy?: () => void | Promise<void>
 }
 
-export type IpcPtyTransportOptions = {
-  cwd?: string
-  env?: Record<string, string>
-  command?: string
-  startupCommandDelivery?: StartupCommandDelivery
-  connectionId?: string | null
-  /** Orca worktree identity for scoped shell history. */
-  worktreeId?: string
-  /** Why: closes the SIGKILL race documented in INVESTIGATION.md by letting
-   *  main patch + sync-flush the (worktreeId, tabId, leafId → ptyId) binding
-   *  before pty:spawn returns. Only the renderer's daemon-host path threads
-   *  these from the calling pane's (tabId, leafId). */
-  tabId?: string
-  leafId?: string
-  /** Whether renderer-backed runtime reveal should focus the created tab. */
-  activate?: boolean
-  /** Why: mirrors PtySpawnOptions.shellOverride — see types.ts for rationale. */
-  shellOverride?: string
-  projectRuntime?: ProjectExecutionRuntimeResolution
-  /** Telemetry metadata for the `agent_started` event. Forwarded verbatim
-   *  to `pty:spawn` so main can fire the event after confirmed launch. The
-   *  IPC handler re-validates the schema; this type is the renderer-side
-   *  contract. */
-  telemetry?: EventProps<'agent_started'>
-  onPtyExit?: (ptyId: string) => void
-  onTitleChange?: (title: string, rawTitle: string) => void
-  onPtySpawn?: (ptyId: string) => void
-  onBell?: () => void
-  onAgentBecameIdle?: (title: string) => void
-  onAgentBecameWorking?: () => void
-  onAgentExited?: () => void
-  /** Callback for OSC 9999 agent status payloads parsed from PTY output. */
-  onAgentStatus?: (payload: ParsedAgentStatusPayload) => void
+type TerminalResizePixelMeta = {
+  widthPx?: number
+  heightPx?: number
+  cellW?: number
+  cellH?: number
 }

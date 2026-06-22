@@ -5,11 +5,9 @@ import type { DashboardAgentRow as DashboardAgentRowData } from '@/components/da
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import { cn } from '@/lib/utils'
-import CommentMarkdown from './CommentMarkdown'
 import { getAgentDotState } from './worktree-card-agent-summary'
 import { translate } from '@/i18n/i18n'
-
-const MARKDOWN_IMAGE_PATTERN = /!\[[^\]\n]*\]\([^)]+\)/
+import { getAgentRowPrimaryText } from '@/lib/agent-row-primary-text'
 
 function formatShortTimeAgo(ts: number, now: number): string {
   const delta = now - ts
@@ -41,7 +39,7 @@ function lastEnteredDoneAt(agent: DashboardAgentRowData): number | null {
 }
 
 function getCompactAgentPrimary(agent: DashboardAgentRowData): string {
-  const prompt = agent.entry.prompt?.trim() ?? ''
+  const prompt = getAgentRowPrimaryText(agent.entry)
   return prompt || agentStateLabel(getAgentDotState(agent))
 }
 
@@ -116,12 +114,8 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
     typeof onToggleChildAgents === 'function'
   const dotState = getAgentDotState(agent)
   const primary = getCompactAgentPrimary(agent)
-  const assistantMessage = agent.entry.lastAssistantMessage?.trim() ?? ''
-  const hasAssistantImage = MARKDOWN_IMAGE_PATTERN.test(assistantMessage)
   const isLineageChild = agent.lineage?.depth === 1
-  const secondary = hasAssistantImage
-    ? formatAgentTypeLabel(agent.agentType)
-    : getCompactAgentSecondary(agent)
+  const secondary = getCompactAgentSecondary(agent)
   const shortTime = getCompactAgentTime(agent, now)
 
   const handleActivate = useCallback(
@@ -199,9 +193,11 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
       <span className="min-w-0 flex-1 truncate">
         {/* Why: the selected-row fill is strong enough to wash out the dimmed
             prompt/secondary text, so lift both toward full foreground when focused. */}
-        <span className={isFocusedPane ? 'text-foreground' : 'text-foreground/85'}>{primary}</span>
+        <span className={isFocusedPane ? 'text-foreground' : 'text-muted-foreground/90'}>
+          {primary}
+        </span>
         {secondary && (
-          <span className={isFocusedPane ? 'text-foreground/70' : 'text-muted-foreground/75'}>
+          <span className={isFocusedPane ? 'text-foreground/70' : 'text-muted-foreground/65'}>
             {' '}
             - {secondary}
           </span>
@@ -239,7 +235,7 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
         'text-muted-foreground worktree-agent-row-hover',
         hasChildDisclosure && 'worktree-agent-lineage-parent-row',
         isLineageChild && 'worktree-agent-lineage-child-row',
-        hasAssistantImage ? 'flex flex-col py-0.5' : 'flex h-6 items-center gap-1',
+        'flex h-6 items-center gap-1',
         isFocusedPane && 'bg-worktree-sidebar-accent',
         sendTargetStatus === 'sending' && 'cursor-progress opacity-75',
         sendTargetStatus === 'disabled' && 'cursor-default opacity-60'
@@ -256,17 +252,7 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
       aria-expanded={hasChildDisclosure ? childAgentsExpanded : undefined}
       title={sendTargetDisabledReason ?? `${primary}${secondary ? ` - ${secondary}` : ''}`}
     >
-      {hasAssistantImage ? (
-        <>
-          <div className="flex h-6 min-w-0 items-center gap-1">{rowBody}</div>
-          <CommentMarkdown
-            content={assistantMessage}
-            className="ml-5 max-h-36 max-w-full overflow-hidden text-[10px] leading-snug text-muted-foreground/80 [&_.comment-md-p]:block [&_.comment-md-p+.comment-md-p]:mt-1"
-          />
-        </>
-      ) : (
-        rowBody
-      )}
+      {rowBody}
     </div>
   )
 })

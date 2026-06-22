@@ -444,6 +444,7 @@ describe('terminal multiplex RPC', () => {
       binaryFrames.splice(0)
 
       const multibyteOutput = '界'.repeat(22_000)
+      const encodeSpy = vi.spyOn(TextEncoder.prototype, 'encode')
       dataListenerRef.current?.(multibyteOutput, {
         seq: multibyteOutput.length,
         rawLength: multibyteOutput.length
@@ -460,6 +461,8 @@ describe('terminal multiplex RPC', () => {
       expect(
         outputFrames.map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : '')).join('')
       ).toBe(multibyteOutput)
+      expect(encodeSpy).not.toHaveBeenCalledWith(multibyteOutput)
+      encodeSpy.mockRestore()
 
       cleanups.get('terminal-multiplex:conn-multibyte-output-batch')?.()
       await dispatchPromise

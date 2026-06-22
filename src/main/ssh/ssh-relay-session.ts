@@ -114,6 +114,7 @@ export class SshRelaySession {
   private _onReady: ((targetId: string) => void) | null = null
   private portScanner: PortScanner | null = null
   private currentConnection: SshConnection | null = null
+  private hostPlatform: RemoteHostPlatform | null = null
   private remoteCliBridgeEnv: RemoteCliBridgeEnv | null = null
 
   constructor(
@@ -179,6 +180,10 @@ export class SshRelaySession {
     return this.mux
   }
 
+  getHostPlatform(): RemoteHostPlatform | null {
+    return this.remoteCliBridgeEnv?.hostPlatform ?? this.hostPlatform
+  }
+
   getPortScanner(): PortScanner | null {
     return this.portScanner
   }
@@ -204,6 +209,7 @@ export class SshRelaySession {
     try {
       const { transport, remoteHome, remoteRelayDir, nodePath, sockPath, hostPlatform } =
         await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
+      this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
           ? {
@@ -330,6 +336,7 @@ export class SshRelaySession {
     try {
       const { transport, remoteHome, remoteRelayDir, nodePath, sockPath, hostPlatform } =
         await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
+      this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
           ? {
@@ -749,6 +756,7 @@ export class SshRelaySession {
       }
       const envelope = params as {
         paneKey?: unknown
+        launchToken?: unknown
         tabId?: unknown
         worktreeId?: unknown
         env?: unknown
@@ -774,6 +782,7 @@ export class SshRelaySession {
       agentHookServer.ingestRemote(
         {
           paneKey: envelope.paneKey,
+          launchToken: typeof envelope.launchToken === 'string' ? envelope.launchToken : undefined,
           tabId: typeof envelope.tabId === 'string' ? envelope.tabId : undefined,
           worktreeId: typeof envelope.worktreeId === 'string' ? envelope.worktreeId : undefined,
           env: typeof envelope.env === 'string' ? envelope.env : undefined,

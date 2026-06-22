@@ -22,6 +22,12 @@ export type AgentProviderSessionMetadata = {
   id: string
 }
 
+export type SleepingAgentLaunchConfig = {
+  agentCommand?: string
+  agentArgs: string
+  agentEnv: Record<string, string>
+}
+
 export type SleepingAgentSessionRecord = {
   paneKey: string
   tabId?: string
@@ -35,6 +41,7 @@ export type SleepingAgentSessionRecord = {
   terminalTitle?: string
   lastAssistantMessage?: string
   connectionId?: string | null
+  launchConfig?: SleepingAgentLaunchConfig
   /** How the record was captured. Worktree-sleep records (legacy records have
    *  no origin) are consumed by worktree activation, which opens a fresh tab.
    *  Quit/live records describe panes that still exist in the restored session,
@@ -107,7 +114,9 @@ export function extractAgentProviderSession(
     case 'claude':
     case 'codex':
     case 'gemini':
-    case 'droid': {
+    case 'droid':
+    // Why: Kimi Code posts a Claude-shaped `session_id` (e.g. session_<uuid>).
+    case 'kimi': {
       const id = readSessionId(payload, ['session_id'])
       return id ? { key: 'session_id', id } : null
     }

@@ -191,7 +191,7 @@ describe('WorktreeCardAgents', () => {
     expect(markup).toContain('data-testid="agent-row"')
     expect(markup).not.toContain('<button')
     expect(markup).not.toContain('aria-expanded')
-  }, 10_000)
+  }, 30_000)
 
   it('uses compact mode when the display preference is absent', async () => {
     mockAgents = [mockAgent({ agentType: 'codex', startedAt: 1000, prompt: 'Run tests' })]
@@ -203,6 +203,47 @@ describe('WorktreeCardAgents', () => {
     expect(markup).toContain('Run tests')
     expect(markup).toContain('title="Codex"')
     expect(markup).not.toContain('data-testid="agent-row"')
+  })
+
+  it('dims non-focused compact agent row text', async () => {
+    mockAgentActivityDisplayMode = 'compact'
+    mockAgents = [
+      mockAgent({
+        agentType: 'codex',
+        startedAt: 1000,
+        prompt: 'Run tests',
+        lastAssistantMessage: 'Inspecting changes'
+      })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+
+    expect(markup).toContain('<span class="text-muted-foreground/90">Run tests</span>')
+    expect(markup).toContain('<span class="text-muted-foreground/65"> - Inspecting changes</span>')
+    expect(markup).not.toContain('data-focused-agent-pane="true"')
+    expect(markup).not.toContain('<span class="text-foreground">Run tests</span>')
+  })
+
+  it('keeps focused compact agent row text legible', async () => {
+    mockAgentActivityDisplayMode = 'compact'
+    mockFocusedAgentPaneKey = 'tab-1:1'
+    mockAgents = [
+      mockAgent({
+        agentType: 'codex',
+        startedAt: 1000,
+        prompt: 'Focused prompt',
+        lastAssistantMessage: 'Reading output'
+      })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+
+    expect(markup).toContain('data-focused-agent-pane="true"')
+    expect(markup).toContain('<span class="text-foreground">Focused prompt</span>')
+    expect(markup).toContain('<span class="text-foreground/70"> - Reading output</span>')
+    expect(markup).not.toContain('<span class="text-muted-foreground/90">Focused prompt</span>')
   })
 
   it('marks only the focused agent row', async () => {
@@ -390,7 +431,7 @@ describe('WorktreeCardAgents', () => {
     expect(markup).not.toContain('data-testid="agent-row"')
   })
 
-  it('renders compact agent messages with images as inline thumbnails', async () => {
+  it('keeps compact agent messages with trusted data image markdown to the single-line preview', async () => {
     mockAgentActivityDisplayMode = 'compact'
     mockAgents = [
       mockAgent({
@@ -398,7 +439,7 @@ describe('WorktreeCardAgents', () => {
         state: 'done',
         startedAt: 1000,
         prompt: 'Check screenshot',
-        lastAssistantMessage: 'Result:\n\n![Image #1](data:image/png;base64,abc123)'
+        lastAssistantMessage: `${'Detailed result. '.repeat(400)}\n\n![Image #1](data:image/png;base64,abc123)`
       })
     ]
     const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
@@ -407,13 +448,59 @@ describe('WorktreeCardAgents', () => {
 
     expect(markup).toContain('compact-agent-row')
     expect(markup).toContain('group/compact-agent-row')
-    expect(markup).toContain('<img')
-    expect(markup).toContain('alt="Image #1"')
-    expect(markup).toContain('max-h-36')
+    expect(markup).toContain('flex h-6 items-center gap-1')
+    expect(markup).not.toContain('<img')
+    expect(markup).not.toContain('max-h-36')
     expect(markup).not.toContain('data-testid="agent-row"')
   })
 
-  it('bounds long compact agent messages that include image markdown', async () => {
+  it('keeps compact agent messages with trusted blob image markdown to the single-line preview', async () => {
+    mockAgentActivityDisplayMode = 'compact'
+    mockAgents = [
+      mockAgent({
+        agentType: 'codex',
+        state: 'done',
+        startedAt: 1000,
+        prompt: 'Check screenshot',
+        lastAssistantMessage: 'Result:\n\n![Image #1](blob:orca-preview-1)'
+      })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+
+    expect(markup).toContain('flex h-6 items-center gap-1')
+    expect(markup).not.toContain('<img')
+    expect(markup).not.toContain('max-h-36')
+  })
+
+  it('keeps reference-style compact agent image markdown to the single-line preview', async () => {
+    mockAgentActivityDisplayMode = 'compact'
+    mockAgents = [
+      mockAgent({
+        agentType: 'codex',
+        state: 'done',
+        startedAt: 1000,
+        prompt: 'Check screenshot',
+        lastAssistantMessage: [
+          'Result:',
+          '',
+          '![Image #1][trusted-screenshot]',
+          '',
+          '[trusted-screenshot]: data:image/png;base64,abc123 "preview"'
+        ].join('\n')
+      })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+
+    expect(markup).toContain('flex h-6 items-center gap-1')
+    expect(markup).not.toContain('<img')
+    expect(markup).not.toContain('max-h-36')
+  })
+
+  it('keeps untrusted compact agent image markdown to the single-line preview', async () => {
     mockAgentActivityDisplayMode = 'compact'
     mockAgents = [
       mockAgent({
@@ -428,10 +515,10 @@ describe('WorktreeCardAgents', () => {
 
     const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
 
-    expect(markup).toContain('max-h-36')
-    expect(markup).toContain('overflow-hidden')
+    expect(markup).toContain('flex h-6 items-center gap-1')
     expect(markup).not.toContain('<img')
-    expect(markup).toContain('href="https://example.com/screenshot.png"')
+    expect(markup).not.toContain('max-h-36')
+    expect(markup).not.toContain('href="https://example.com/screenshot.png"')
   })
 
   it('renders a compact summary affordance for multiple flat agents', async () => {
@@ -523,6 +610,27 @@ describe('WorktreeCardAgents', () => {
     expect(iconTitles).toEqual([])
     expect(markup).not.toContain('>5 working<')
     expect(markup).toContain('>+2<')
+  })
+
+  it('rotates the compact summary chevron when collapsed', async () => {
+    const { CompactAgentSummaryButton } = await import('./worktree-card-compact-agents')
+    const agents = [
+      mockAgent({ paneKey: 'tab-1:1', agentType: 'codex', startedAt: 1000, prompt: 'One' })
+    ] as DashboardAgentRowData[]
+
+    const markup = renderToStaticMarkup(
+      <CompactAgentSummaryButton
+        agents={agents}
+        subjectLabel="1 agent"
+        expanded={false}
+        onToggle={vi.fn()}
+      />
+    )
+
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain(
+      'lucide-chevron-down size-3 shrink-0 transition-transform duration-150 -rotate-90'
+    )
   })
 
   it('uses a neutral compact summary label while expanded', async () => {

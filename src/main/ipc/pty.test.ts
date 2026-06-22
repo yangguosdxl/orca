@@ -2,11 +2,16 @@
 one focused file because the registration helper is stateful and each spawn-path
 assertion reuses the same mocked IPC and node-pty harness. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, posix } from 'node:path'
+import {
+  TERMINAL_INPUT_CHUNK_MAX_BYTES,
+  TERMINAL_INPUT_MAX_BYTES
+} from '../../shared/terminal-input'
+import { CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS } from '../../shared/clipboard-text'
 
 const isWindowsHost = process.platform === 'win32'
 const posixOnlyIt = isWindowsHost ? it.skip : it
-const expectedOmpStatusExtension = join(
+const expectedOmpStatusExtension = posix.join(
   '/tmp/default-omp-agent',
   'extensions',
   'orca-agent-status.ts'
@@ -219,6 +224,10 @@ describe('registerPtyHandlers', () => {
       removeListener: vi.fn()
     }
   }
+  const mainWindowIpcEvent = { sender: mainWindow.webContents }
+  const foreignWindowIpcEvent = {
+    sender: { on: vi.fn(), send: vi.fn(), removeListener: vi.fn() }
+  }
 
   const savedOpenCodeConfigDir = process.env.OPENCODE_CONFIG_DIR
   const savedOrcaOpenCodeConfigDir = process.env.ORCA_OPENCODE_CONFIG_DIR
@@ -231,8 +240,15 @@ describe('registerPtyHandlers', () => {
   const savedOrcaOmpSourceAgentDir = process.env.ORCA_OMP_SOURCE_AGENT_DIR
   const savedOrcaOmpStatusExtension = process.env.ORCA_OMP_STATUS_EXTENSION
   const savedOrcaClaudeAgentStatusSettings = process.env.ORCA_CLAUDE_AGENT_STATUS_SETTINGS
+  const savedProcessPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
   beforeEach(() => {
+    // Why: most PTY spawn tests assert POSIX shell behavior; Windows-specific
+    // cases opt into win32 explicitly below.
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'darwin'
+    })
     delete process.env.OPENCODE_CONFIG_DIR
     delete process.env.ORCA_OPENCODE_SOURCE_CONFIG_DIR
     delete process.env.ORCA_OPENCODE_CONFIG_DIR
@@ -328,6 +344,9 @@ describe('registerPtyHandlers', () => {
     vi.useRealTimers()
     unregisterSshPtyProvider('ssh-1')
     setLocalPtyProvider(new LocalPtyProvider())
+    if (savedProcessPlatform) {
+      Object.defineProperty(process, 'platform', savedProcessPlatform)
+    }
     if (savedOpenCodeConfigDir !== undefined) {
       process.env.OPENCODE_CONFIG_DIR = savedOpenCodeConfigDir
     } else {
@@ -3224,7 +3243,9 @@ describe('registerPtyHandlers', () => {
       return call[1] as (event: unknown, args: unknown) => void
     }
 
-    expect(() => listenerFor('pty:write')(null, { id: 'remote-pty', data: 'x' })).not.toThrow()
+    expect(() =>
+      listenerFor('pty:write')(mainWindowIpcEvent, { id: 'remote-pty', data: 'x' })
+    ).not.toThrow()
     expect(() =>
       listenerFor('pty:resize')(null, { id: 'remote-pty', cols: 100, rows: 30 })
     ).not.toThrow()
@@ -3324,6 +3345,188 @@ describe('registerPtyHandlers', () => {
       'remote-pty',
       'term_remote'
     )
+  })
+
+  it('refreshes captured native Agent Teams env for renderer PTY spawns', async () => {
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const runtime = {
+      setPtyController: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_agent_teams'),
+      prepareClaudeAgentTeamsLeaderForHandle: vi.fn(async () => ({
+        env: {
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          PATH: `/tmp/fresh-agent-teams${delimiter}/usr/bin`,
+          TMUX: '/tmp/orca-claude-agent-teams/team-fresh,0,1',
+          TMUX_PANE: '%1',
+          ORCA_AGENT_TEAMS_TEAM_ID: 'team-fresh',
+          ORCA_AGENT_TEAMS_TOKEN: 'fresh-token'
+        }
+      })),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      registerPty: vi.fn(),
+      getDriver: vi.fn(() => ({ kind: 'host' })),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    const result = (await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      cwd: '/repo',
+      command: 'claude --teammate-mode auto --resume claude-session',
+      tabId: 'tab-1',
+      leafId,
+      worktreeId: 'wt-1',
+      env: {
+        ORCA_PANE_KEY: `tab-1:${leafId}`,
+        ORCA_TAB_ID: 'tab-1',
+        ORCA_WORKTREE_ID: 'wt-1',
+        CLAUDE_PROFILE: 'captured',
+        PATH: `/tmp/stale-agent-teams${delimiter}/usr/bin`,
+        TMUX: '/tmp/orca-claude-agent-teams/team-stale,0,1',
+        ORCA_AGENT_TEAMS_TEAM_ID: 'team-stale',
+        ORCA_AGENT_TEAMS_TOKEN: 'stale-token',
+        TERM_PROGRAM: 'Orca',
+        ORCA_ATTRIBUTION_SHIM_DIR: '/tmp/stale-attribution'
+      },
+      launchConfig: {
+        agentCommand: 'claude --teammate-mode auto',
+        agentArgs: '',
+        agentEnv: {
+          CLAUDE_PROFILE: 'captured',
+          ORCA_AGENT_TEAMS_TEAM_ID: 'team-stale',
+          ORCA_AGENT_TEAMS_TOKEN: 'stale-token'
+        }
+      },
+      launchAgent: 'claude'
+    })) as { launchConfig?: { agentEnv: Record<string, string> } }
+
+    const spawnOptions = spawnMock.mock.calls.at(-1)?.[2] as { env: Record<string, string> }
+    expect(runtime.prepareClaudeAgentTeamsLeaderForHandle).toHaveBeenCalledWith({
+      handle: 'term_agent_teams',
+      baseEnv: expect.objectContaining({
+        CLAUDE_PROFILE: 'captured',
+        ORCA_AGENT_TEAMS_TEAM_ID: 'team-stale'
+      })
+    })
+    expect(spawnOptions.env).toMatchObject({
+      CLAUDE_PROFILE: 'captured',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      ORCA_TERMINAL_HANDLE: 'term_agent_teams',
+      ORCA_AGENT_TEAMS_TEAM_ID: 'team-fresh',
+      ORCA_AGENT_TEAMS_TOKEN: 'fresh-token',
+      TMUX: '/tmp/orca-claude-agent-teams/team-fresh,0,1',
+      TMUX_PANE: '%1'
+    })
+    expect(spawnOptions.env.PATH.split(delimiter)[0]).toBe('/tmp/fresh-agent-teams')
+    expect(spawnOptions.env.TERM_PROGRAM).toBeUndefined()
+    expect(spawnOptions.env.ORCA_ATTRIBUTION_SHIM_DIR).toBeUndefined()
+    expect(result.launchConfig?.agentEnv).toMatchObject({
+      CLAUDE_PROFILE: 'captured',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      ORCA_AGENT_TEAMS_TEAM_ID: 'team-fresh',
+      ORCA_AGENT_TEAMS_TOKEN: 'fresh-token',
+      TMUX: '/tmp/orca-claude-agent-teams/team-fresh,0,1'
+    })
+    expect(runtime.registerPreAllocatedHandleForPty).toHaveBeenCalledWith(
+      expect.any(String),
+      'term_agent_teams'
+    )
+  })
+
+  it('refreshes native Agent Teams env when captured teammate mode lives in launch args', async () => {
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const runtime = {
+      setPtyController: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_agent_teams'),
+      prepareClaudeAgentTeamsLeaderForHandle: vi.fn(async () => ({
+        env: {
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          ORCA_AGENT_TEAMS_TEAM_ID: 'team-fresh',
+          ORCA_AGENT_TEAMS_TOKEN: 'fresh-token'
+        }
+      })),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      registerPty: vi.fn(),
+      getDriver: vi.fn(() => ({ kind: 'host' })),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    await handlers.get('pty:spawn')!(mainWindowIpcEvent, {
+      cols: 80,
+      rows: 24,
+      cwd: '/repo',
+      command: 'claude --resume claude-session',
+      tabId: 'tab-1',
+      leafId,
+      worktreeId: 'wt-1',
+      env: {
+        ORCA_PANE_KEY: `tab-1:${leafId}`,
+        ORCA_TAB_ID: 'tab-1',
+        ORCA_WORKTREE_ID: 'wt-1'
+      },
+      launchConfig: {
+        agentCommand: 'claude',
+        agentArgs: '--teammate-mode auto',
+        agentEnv: {}
+      },
+      launchAgent: 'claude'
+    })
+
+    expect(runtime.prepareClaudeAgentTeamsLeaderForHandle).toHaveBeenCalledWith({
+      handle: 'term_agent_teams',
+      baseEnv: expect.any(Object)
+    })
+  })
+
+  it('does not echo launch config for provider reattach results', async () => {
+    const spawn = vi.fn(async () => ({ id: 'ssh-reattach', isReattach: true }))
+    registerSshPtyProvider('ssh-reattach-1', {
+      spawn,
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn(),
+      acknowledgeDataEvent: vi.fn()
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_remote'),
+      registerPreAllocatedHandleForPty: vi.fn()
+    }
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      connectionId: 'ssh-reattach-1',
+      launchConfig: {
+        agentCommand: 'codex --model gpt-5',
+        agentArgs: '--model gpt-5',
+        agentEnv: { CODEX_PROFILE: 'captured' }
+      }
+    })) as { id: string; isReattach?: boolean; launchConfig?: unknown }
+
+    expect(result).toMatchObject({ id: 'ssh-reattach', isReattach: true })
+    expect(result.launchConfig).toBeUndefined()
   })
 
   it('reuses the runtime background handle in local PTY spawn env', async () => {
@@ -3917,7 +4120,7 @@ describe('registerPtyHandlers', () => {
     expect(store.upsertSshRemotePtyLease).not.toHaveBeenCalled()
     expect(store.removeSshRemotePtyLease).not.toHaveBeenCalled()
     expect(remoteShutdown).not.toHaveBeenCalled()
-    getPtyWriteListener()(null, {
+    getPtyWriteListener()(mainWindowIpcEvent, {
       id: 'ssh:ssh-reattach-fail@@relay-pty',
       data: 'echo should-not-route'
     })
@@ -4019,7 +4222,7 @@ describe('registerPtyHandlers', () => {
       expect(store.persistPtyBinding).not.toHaveBeenCalled()
       expect(openCodeClearPtyMock).toHaveBeenCalledWith(appPtyId)
       expect(piClearPtyMock).toHaveBeenCalledWith(appPtyId)
-      getPtyWriteListener()(null, { id: appPtyId, data: 'echo nope' })
+      getPtyWriteListener()(mainWindowIpcEvent, { id: appPtyId, data: 'echo nope' })
       expect(remoteWrite).not.toHaveBeenCalled()
     } finally {
       deletePtyOwnership(appPtyId)
@@ -5016,7 +5219,7 @@ describe('registerPtyHandlers', () => {
       })) as { id: string }
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -5050,7 +5253,7 @@ describe('registerPtyHandlers', () => {
       })
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: 'missing-pty',
         data: 'a'
       })
@@ -5075,7 +5278,7 @@ describe('registerPtyHandlers', () => {
       })) as { id: string }
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -5109,7 +5312,7 @@ describe('registerPtyHandlers', () => {
       })) as { id: string }
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -5146,7 +5349,7 @@ describe('registerPtyHandlers', () => {
       })) as { id: string }
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -5184,7 +5387,7 @@ describe('registerPtyHandlers', () => {
       mockProc.emitData(pendingOutput)
       expect(mainWindow.webContents.send).not.toHaveBeenCalled()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -5431,7 +5634,7 @@ describe('registerPtyHandlers', () => {
       expect(mainWindow.webContents.send).toHaveBeenCalledTimes(128)
       expect(vi.getTimerCount()).toBe(0)
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: interactiveSpawn.id,
         data: 'a'
       })
@@ -5446,7 +5649,7 @@ describe('registerPtyHandlers', () => {
       const reservePrefix = '\x1b[20;2H'
       const reserveChunk = `${reservePrefix}${'r'.repeat(16 * 1024 - reservePrefix.length)}`
       for (let index = 0; index < 16; index++) {
-        writeListener(null, {
+        writeListener(mainWindowIpcEvent, {
           id: interactiveSpawn.id,
           data: 'a'
         })
@@ -5454,7 +5657,7 @@ describe('registerPtyHandlers', () => {
       }
       expect(mainWindow.webContents.send).toHaveBeenCalledTimes(145)
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: interactiveSpawn.id,
         data: 'a'
       })
@@ -6325,7 +6528,7 @@ describe('registerPtyHandlers', () => {
       })) as { id: string }
       const writeListener = getPtyWriteListener()
 
-      writeListener(null, {
+      writeListener(mainWindowIpcEvent, {
         id: spawnResult.id,
         data: 'a'
       })
@@ -6438,15 +6641,109 @@ describe('registerPtyHandlers', () => {
       rows: 24
     })) as { id: string }
 
-    expect(handlers.get('pty:writeAccepted')!(null, { id: result.id, data: '\x03' })).toBe(true)
+    expect(
+      handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+        id: result.id,
+        data: '\x03'
+      })
+    ).toBe(true)
     expect(mockProc.proc.write).toHaveBeenCalledWith('\x03')
     expect(
-      handlers.get('pty:writeAccepted')!(null, {
+      handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
         id: 'missing-pty-for-write-ack',
         data: '\x03'
       })
     ).toBe(false)
     expect(mockProc.proc.write).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects malformed and cross-window pty write IPC before provider writes', async () => {
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+    const write = getPtyWriteListener() as (event: unknown, args: unknown) => void
+    const writeAccepted = handlers.get('pty:writeAccepted')! as (
+      event: unknown,
+      args: unknown
+    ) => unknown
+
+    write(mainWindowIpcEvent, null)
+    write(mainWindowIpcEvent, { id: '', data: 'x' })
+    write(mainWindowIpcEvent, { id: result.id, data: 1 })
+    write(foreignWindowIpcEvent, { id: result.id, data: 'x' })
+
+    expect(writeAccepted(mainWindowIpcEvent, null)).toBe(false)
+    expect(writeAccepted(mainWindowIpcEvent, { id: '', data: 'x' })).toBe(false)
+    expect(writeAccepted(mainWindowIpcEvent, { id: result.id, data: 1 })).toBe(false)
+    expect(writeAccepted(foreignWindowIpcEvent, { id: result.id, data: 'x' })).toBe(false)
+    expect(mockProc.proc.write).not.toHaveBeenCalled()
+  })
+
+  it('chunks large acknowledged pty writes before provider writes', async () => {
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+    const text = ['x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES), 'tail'].join('')
+
+    await expect(
+      handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, { id: result.id, data: text })
+    ).resolves.toBe(true)
+
+    expect(mockProc.proc.write).toHaveBeenNthCalledWith(
+      1,
+      'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES)
+    )
+    expect(mockProc.proc.write).toHaveBeenNthCalledWith(2, 'tail')
+  })
+
+  it('yields while validating accepted large acknowledged pty writes before provider writes', async () => {
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+    const text = 'é'.repeat(CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS + 1)
+
+    vi.useFakeTimers()
+    const writeResult = handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+      id: result.id,
+      data: text
+    })
+
+    expect(writeResult).toBeInstanceOf(Promise)
+    expect(mockProc.proc.write).not.toHaveBeenCalled()
+
+    await vi.runAllTimersAsync()
+    await expect(writeResult).resolves.toBe(true)
+    expect(mockProc.proc.write.mock.calls.map(([chunk]) => chunk).join('')).toBe(text)
+  })
+
+  it('rejects oversized acknowledged pty writes before provider writes', async () => {
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+
+    expect(
+      handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+        id: result.id,
+        data: 'x'.repeat(TERMINAL_INPUT_MAX_BYTES + 1)
+      })
+    ).toBe(false)
+    expect(mockProc.proc.write).not.toHaveBeenCalled()
   })
 
   it('seeds headless terminal state with cold-restore cwd metadata', async () => {

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Animated, AppState, Linking, type AppStateStatus } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
+import { File as FsFile, Paths } from 'expo-file-system'
 import {
   BackHandler,
   FlatList,
@@ -101,8 +103,16 @@ import {
   isTerminalLiveInputWithinByteLimit,
   scheduleTerminalLiveInputFocus
 } from '../../../../src/terminal/terminal-live-input'
+import {
+  getTerminalCommandKeyboardType,
+  getTerminalLiveInputKeyboardType
+} from '../../../../src/terminal/terminal-keyboard-type'
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import { countTerminalGestureInputSequences } from '../../../../src/terminal/terminal-gesture-input'
+import {
+  recoverActiveTerminalAfterForeground,
+  shouldRecoverTerminalOnAppStateChange
+} from '../../../../src/terminal/terminal-foreground-recovery'
 import { MobileBrowserPane } from '../../../../src/browser/MobileBrowserPane'
 import { isBlankBrowserUrl, normalizeBrowserUrl } from '../../../../src/browser/browser-url'
 import { StatusDot } from '../../../../src/components/StatusDot'
@@ -146,10 +156,13 @@ import {
 } from '../../../../src/session/mobile-new-tab-agent-options'
 import {
   buildMobileImagePastePayload,
-  saveMobileClipboardImageAsTempFile
+  prepareMobileClipboardImageBase64,
+  saveMobileClipboardImageAsTempFile,
+  type MobileClipboardImageResizer
 } from '../../../../src/session/mobile-clipboard-image'
 import { useMobileImageAttachment } from '../../../../src/session/use-mobile-image-attachment'
 import { classifyMobileArtifact } from '../../../../src/session/mobile-artifact-kind'
+import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
   buildMarkdownDiskFallbackDoc,
   shouldReadMarkdownFromDiskAfterReadTabFailure
@@ -203,6 +216,52 @@ import type {
   TerminalGestureInputBucket,
   TerminalGestureInputQueue
 } from './mobile-session-route-types'
+
+const CLIPBOARD_IMAGE_DATA_URL_PREFIX_RE = /^data:image\/[a-z0-9.+-]+;base64,/i
+
+// Why: clipboard images are re-encoded as lossless PNG, so high-res screenshots and
+// photos can exceed the upload byte budget; resize the raster down to fit before upload.
+// The image is staged to a temp file first because the iOS ImageManipulator loader
+// (Data(contentsOf:)) cannot decode large base64 data URIs — it needs a file:// URI.
+const resizeMobileClipboardImage: MobileClipboardImageResizer = async (source, target) => {
+  const base64 = source.replace(CLIPBOARD_IMAGE_DATA_URL_PREFIX_RE, '')
+  const file = new FsFile(Paths.cache, `orca-clip-resize-${Date.now()}.png`)
+  let context: ReturnType<typeof ImageManipulator.manipulate> | null = null
+  let rendered: Awaited<
+    ReturnType<ReturnType<typeof ImageManipulator.manipulate>['renderAsync']>
+  > | null = null
+  let resultUri: string | null = null
+  try {
+    file.create({ overwrite: true })
+    file.write(base64, { encoding: 'base64' })
+    context = ImageManipulator.manipulate(file.uri)
+    context.resize({ width: target.width, height: target.height })
+    rendered = await context.renderAsync()
+    const result = await rendered.saveAsync({ format: SaveFormat.PNG, base64: true })
+    resultUri = result.uri
+    // Why: empty base64 would pass the downstream base64 check and upload a corrupt
+    // image, so fail loudly here instead of silently sending an invalid payload.
+    if (!result.base64) {
+      throw new Error('Failed to encode resized clipboard image')
+    }
+    return { data: result.base64, width: result.width, height: result.height }
+  } finally {
+    rendered?.release()
+    context?.release()
+    if (resultUri) {
+      try {
+        new FsFile(resultUri).delete()
+      } catch {
+        // Best-effort cleanup; ImageManipulator saves into cache for every retry.
+      }
+    }
+    try {
+      file.delete()
+    } catch {
+      // Best-effort cleanup; the OS reclaims the cache directory regardless.
+    }
+  }
+}
 
 function getActiveTabIdForHandle(
   tabs: MobileSessionTab[],
@@ -783,7 +842,7 @@ export default function SessionScreen() {
   const {
     hostId,
     worktreeId,
-    name: worktreeName,
+    name: routeWorktreeName,
     created,
     warning: createdWarning
   } = useLocalSearchParams<{
@@ -802,6 +861,12 @@ export default function SessionScreen() {
   const reconnectAttempts = useReconnectAttempt(hostId)
   const lastConnectedAt = useLastConnectedAt(hostId)
   const forceReconnectHost = useForceReconnect()
+  const worktreeName = useLiveWorktreeName({
+    client,
+    connState,
+    routeName: routeWorktreeName,
+    worktreeId
+  })
   // Master-detail host state (U5/KTD2): on wide layouts a tapped panel docks beside the
   // session content; on narrow it stays null and the icons push full-screen routes.
   const { isWideLayout } = useResponsiveLayout()
@@ -974,6 +1039,7 @@ export default function SessionScreen() {
   // switching back to the terminal work). A ref breaks the callback dep cycle.
   const pendingBrowserFocusPageIdRef = useRef<string | null>(null)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
+  const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   // Why: handleTerminalOpenUrl is memoized on terminalLinkOpenMode, but
   // handleCreateBrowser is a per-render closure that captures the live `client`.
   // A terminal URL tap must run the CURRENT closure (the memoized one can hold a
@@ -2350,6 +2416,35 @@ export default function SessionScreen() {
     }
   }, [])
 
+  useEffect(() => {
+    let previousAppState: AppStateStatus | null = AppState.currentState
+    const sub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const shouldRecover = shouldRecoverTerminalOnAppStateChange(
+        previousAppState,
+        nextAppState,
+        Platform.OS
+      )
+      previousAppState = nextAppState
+      if (!shouldRecover) {
+        return
+      }
+      // Why: iOS can resume a live WKWebView with a blank xterm backing store
+      // without firing web-ready/reconnect; replay scrollback to repaint it.
+      recoverActiveTerminalAfterForeground({
+        activeHandleRef,
+        terminalRefs,
+        initializedHandlesRef,
+        connStateRef,
+        unsubscribeTerminal,
+        subscribeToTerminal,
+        schedule: scheduleDelayedAction
+      })
+    })
+    return () => {
+      sub.remove()
+    }
+  }, [scheduleDelayedAction, subscribeToTerminal, unsubscribeTerminal])
+
   // Why: viewport refits for layout changes outside the subscribe path
   // (tab strip toggling, fold/unfold, rotation) live in a dedicated hook —
   // see terminal-viewport-refit.ts for the full rationale.
@@ -2444,6 +2539,7 @@ export default function SessionScreen() {
     pendingActiveSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
     pendingBrowserFocusPageIdRef.current = null
+    pendingTerminalActivationAttemptRef.current = null
     initialEmptySessionAutoCreateRef.current = null
     for (const queued of terminalGestureInputQueuesRef.current.values()) {
       if (queued.timer) {
@@ -3474,7 +3570,8 @@ export default function SessionScreen() {
           return
         }
         const connectionId = await getActiveWorktreeConnectionId()
-        const imagePath = await saveMobileClipboardImageAsTempFile(client, image.data, {
+        const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
+        const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
           connectionId
         })
         payload = buildMobileImagePastePayload(imagePath)
@@ -3974,6 +4071,53 @@ export default function SessionScreen() {
     activeSessionTab?.type === 'terminal' && typeof activeSessionTab.terminal !== 'string'
       ? activeSessionTab
       : null
+
+  useEffect(() => {
+    if (!client || connState !== 'connected' || !activePendingTerminalTab) {
+      if (connState !== 'connected' || !activePendingTerminalTab) {
+        pendingTerminalActivationAttemptRef.current = null
+      }
+      return
+    }
+    const activationKey = `${worktreeId}:${activePendingTerminalTab.id}:${activePendingTerminalTab.leafId ?? ''}`
+    if (pendingTerminalActivationAttemptRef.current === activationKey) {
+      return
+    }
+    // Why: a hydrated headless/server-owned tab can already be active but still
+    // pending; activation is the RPC that materializes or focuses its PTY handle.
+    pendingTerminalActivationAttemptRef.current = activationKey
+    void client
+      .sendRequest('session.tabs.activate', {
+        worktree: `id:${worktreeId}`,
+        tabId: activePendingTerminalTab.id,
+        leafId: activePendingTerminalTab.leafId
+      })
+      .then((response) => {
+        if (!response.ok) {
+          if (pendingTerminalActivationAttemptRef.current === activationKey) {
+            pendingTerminalActivationAttemptRef.current = null
+          }
+          return
+        }
+        applySessionTabs((response as RpcSuccess).result as SessionTabsResult)
+        scheduleDelayedAction(() => void fetchSessionTabs(), 300)
+        scheduleDelayedAction(() => void fetchSessionTabs(), 1200)
+      })
+      .catch(() => {
+        if (pendingTerminalActivationAttemptRef.current === activationKey) {
+          pendingTerminalActivationAttemptRef.current = null
+        }
+      })
+  }, [
+    activePendingTerminalTab,
+    applySessionTabs,
+    client,
+    connState,
+    fetchSessionTabs,
+    scheduleDelayedAction,
+    worktreeId
+  ])
+
   const showLoadingState = connState === 'connected' && !terminalsLoaded && visibleTabs.length === 0
   const showEmptyState =
     connState === 'connected' && terminalsLoaded && visibleTabs.length === 0 && !activeHandle
@@ -4724,7 +4868,7 @@ export default function SessionScreen() {
                       autoCorrect={false}
                       spellCheck={false}
                       smartInsertDelete={false}
-                      keyboardType={Platform.OS === 'ios' ? 'ascii-capable' : 'visible-password'}
+                      keyboardType={getTerminalLiveInputKeyboardType(Platform.OS)}
                       returnKeyType="default"
                       blurOnSubmit={false}
                       editable={canSend}
@@ -4755,15 +4899,12 @@ export default function SessionScreen() {
                       autoCorrect={autocompleteEnabled}
                       spellCheck={autocompleteEnabled}
                       smartInsertDelete={false}
-                      // Why: the default keyboard exposes autocomplete/autocorrect;
-                      // ascii-capable (iOS) / visible-password (Android) suppress it.
-                      keyboardType={
+                      // Why: Android's default keyboard is required for CJK IME
+                      // composition; iOS can still use ASCII when autocomplete is off.
+                      keyboardType={getTerminalCommandKeyboardType(
+                        Platform.OS,
                         autocompleteEnabled
-                          ? 'default'
-                          : Platform.OS === 'ios'
-                            ? 'ascii-capable'
-                            : 'visible-password'
-                      }
+                      )}
                       returnKeyType="send"
                       editable={canSend}
                       onSubmitEditing={() => void handleSend()}

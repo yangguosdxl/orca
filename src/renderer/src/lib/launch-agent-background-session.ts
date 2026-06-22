@@ -11,8 +11,6 @@ import {
   resolveTuiAgentLaunchEnv
 } from '../../../shared/tui-agent-launch-defaults'
 import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
-import type { TuiAgent } from '../../../shared/types'
-import type { LaunchSource } from '../../../shared/telemetry-events'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import {
   registerEagerPtyBuffer,
@@ -30,29 +28,17 @@ import {
   toRemoteRuntimePtyId
 } from '@/runtime/runtime-terminal-stream'
 import { createAgentStatusOscProcessor } from '../../../shared/agent-status-osc'
-import type { ParsedAgentStatusPayload } from '../../../shared/agent-status-types'
 import type { RuntimeTerminalCreate } from '../../../shared/runtime-types'
 import { isMainTerminalSideEffectAuthorityForPty } from '@/components/terminal-pane/terminal-side-effect-facts-handler'
 import { translate } from '@/i18n/i18n'
 import { createSshBackgroundStartupDelivery } from '@/lib/ssh-background-startup-delivery'
 import { shouldUseShellReadyStartupDelivery } from '../../../shared/codex-startup-delivery'
+import type {
+  LaunchAgentBackgroundSessionArgs,
+  LaunchAgentBackgroundSessionResult
+} from '@/lib/launch-agent-background-session-types'
 
-export type LaunchAgentBackgroundSessionArgs = {
-  agent: TuiAgent
-  worktreeId: string
-  prompt?: string
-  launchSource?: LaunchSource
-  title?: string
-  onData?: (chunk: string) => void
-  onExit?: (ptyId: string, code: number) => void
-  onAgentStatus?: (payload: ParsedAgentStatusPayload) => void
-}
-
-export type LaunchAgentBackgroundSessionResult = {
-  tabId: string
-  ptyId: string
-  startupPlan: AgentStartupPlan
-}
+export type { LaunchAgentBackgroundSessionArgs, LaunchAgentBackgroundSessionResult }
 
 export async function launchAgentBackgroundSession(
   args: LaunchAgentBackgroundSessionArgs
@@ -131,6 +117,13 @@ export async function launchAgentBackgroundSession(
   // browser contexts — the LAN web client served over plain HTTP.
   const leafId = createBrowserUuid()
   const paneKey = makePaneKey(tab.id, leafId)
+  const launchToken = createBrowserUuid()
+  store.registerAgentLaunchConfig(paneKey, startupPlan.launchConfig, {
+    agentType: agent,
+    launchToken,
+    tabId: tab.id,
+    leafId
+  })
   // Why: `title` labels the tab/worktree entry. Pane titles render as an
   // in-terminal title row, so background sessions must not persist it there.
   store.setTabLayout(tab.id, singlePaneLayoutSnapshot(leafId))
@@ -138,7 +131,8 @@ export async function launchAgentBackgroundSession(
     ...startupPlan.env,
     ORCA_PANE_KEY: paneKey,
     ORCA_TAB_ID: tab.id,
-    ORCA_WORKTREE_ID: worktreeId
+    ORCA_WORKTREE_ID: worktreeId,
+    ORCA_AGENT_LAUNCH_TOKEN: launchToken
   }
   const sshConnectionId = repo?.connectionId ?? null
   const sshStartupDelivery = createSshBackgroundStartupDelivery({
@@ -167,6 +161,9 @@ export async function launchAgentBackgroundSession(
         {
           worktree: toRuntimeWorktreeSelector(worktreeId),
           command: startupPlan.launchCommand,
+          launchConfig: startupPlan.launchConfig,
+          launchToken,
+          launchAgent: agent,
           ...(startupPlan.startupCommandDelivery
             ? { startupCommandDelivery: startupPlan.startupCommandDelivery }
             : {}),
@@ -189,6 +186,9 @@ export async function launchAgentBackgroundSession(
           ? {}
           : { startupCommandDelivery: startupPlan.startupCommandDelivery }),
         env: paneEnv,
+        launchConfig: startupPlan.launchConfig,
+        launchToken,
+        launchAgent: agent,
         connectionId: sshConnectionId,
         worktreeId,
         tabId: tab.id,
@@ -200,6 +200,14 @@ export async function launchAgentBackgroundSession(
         }
       })
       ptyId = result.id
+      if (result.launchConfig) {
+        store.registerAgentLaunchConfig(paneKey, result.launchConfig, {
+          agentType: agent,
+          launchToken,
+          tabId: tab.id,
+          leafId
+        })
+      }
     }
   } catch (error) {
     store.closeTab(tab.id, { recordInteraction: false })
@@ -210,11 +218,18 @@ export async function launchAgentBackgroundSession(
   if (agent === 'command-code' && hasPrompt && !isFollowupPath) {
     // Why: Command Code does not expose a prompt-start hook; seed working for
     // hidden prompt launches so sidebar/activity surfaces do not stay idle.
-    store.setAgentStatus(paneKey, {
-      state: 'working',
-      prompt: trimmedPrompt,
-      agentType: agent
-    })
+    store.setAgentStatus(
+      paneKey,
+      {
+        state: 'working',
+        prompt: trimmedPrompt,
+        agentType: agent
+      },
+      undefined,
+      undefined,
+      undefined,
+      { launchConfig: startupPlan.launchConfig, launchToken }
+    )
   }
   let exitHandled = false
   let unsubscribeExit = (): void => {}
@@ -228,14 +243,12 @@ export async function launchAgentBackgroundSession(
     unsubscribeData()
     sshStartupDelivery.clear()
     useAppStore.getState().clearTabPtyId(tab.id, ptyId)
+    useAppStore.getState().clearAgentLaunchConfig(paneKey)
     onExit?.(ptyId, code)
   }
-  // Why: for local/SSH PTYs main already parses OSC 9999 and routes it through
-  // the hook server (agentStatus:set → store), so a second store write here
-  // would race/duplicate the authoritative path. Remote-runtime bytes never
-  // transit local main; the kill switch restores the legacy write. The
-  // onAgentStatus callback always fires — automation completion tracking is
-  // this sidecar's own responsibility, not a store side effect.
+  // Why: local/SSH PTYs already get main-routed OSC 9999 store writes. Remote
+  // runtime bytes still need this renderer path; the callback always fires for
+  // this sidecar's own automation completion tracking.
   const mainOwnsAgentStatusWrites = isMainTerminalSideEffectAuthorityForPty({
     settings: store.settings,
     runtimeEnvironmentId: runtimeTarget.kind === 'environment' ? runtimeTarget.environmentId : null
@@ -248,7 +261,10 @@ export async function launchAgentBackgroundSession(
     const processed = processAgentStatus(data)
     for (const payload of processed.payloads) {
       if (!mainOwnsAgentStatusWrites) {
-        useAppStore.getState().setAgentStatus(paneKey, payload, undefined)
+        const opts = { launchToken }
+        useAppStore
+          .getState()
+          .setAgentStatus(paneKey, payload, undefined, undefined, undefined, opts)
       }
       onAgentStatus?.(payload)
     }
