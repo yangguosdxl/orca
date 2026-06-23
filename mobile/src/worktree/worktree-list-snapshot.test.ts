@@ -96,6 +96,19 @@ describe('areWorktreeListsEqual', () => {
     ).toBe(false)
   })
 
+  it('detects lineage changes', () => {
+    const base = worktree({ worktreeId: 'child', parentWorktreeId: 'parent-a' })
+    const changedParent = worktree({ worktreeId: 'child', parentWorktreeId: 'parent-b' })
+    const changedChildren = worktree({
+      worktreeId: 'child',
+      parentWorktreeId: 'parent-a',
+      childWorktreeIds: ['grandchild']
+    })
+
+    expect(areWorktreeListsEqual([base], [changedParent])).toBe(false)
+    expect(areWorktreeListsEqual([base], [changedChildren])).toBe(false)
+  })
+
   it('detects agent status changes', () => {
     const first = [worktree({ agents: [agent({ state: 'working' })] })]
     const second = [worktree({ agents: [agent({ state: 'waiting' })] })]

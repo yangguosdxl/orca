@@ -83,6 +83,7 @@ import {
   type Worktree
 } from '../../../src/worktree/workspace-list-sections'
 import { useWorkspaceSections } from '../../../src/worktree/use-workspace-sections'
+import { getMobileWorkspaceLineageGroupKey } from '../../../src/worktree/mobile-workspace-lineage'
 import { areWorktreeListsEqual } from '../../../src/worktree/worktree-list-snapshot'
 import { repoColor } from '../../../src/worktree/repo-color'
 import {
@@ -1169,7 +1170,6 @@ export function HostScreen({
         </View>
       )}
 
-      {/* Worktree list */}
       {sections.length > 0 && (
         <SectionList
           ref={sectionListRef}
@@ -1232,12 +1232,14 @@ export function HostScreen({
               hideRepo={groupMode === 'repo'}
               onPress={openWorktreeSession}
               onLongPress={item.workspaceKind === 'folder-workspace' ? undefined : setActionTarget}
+              onToggleLineage={(row) =>
+                toggleCollapsed(getMobileWorkspaceLineageGroupKey(row.worktreeId))
+              }
             />
           )}
         />
       )}
 
-      {/* Sort picker modal */}
       <PickerModal
         visible={showSortPicker}
         title="Sort By"
@@ -1247,7 +1249,6 @@ export function HostScreen({
         onClose={() => setShowSortPicker(false)}
       />
 
-      {/* Group picker modal */}
       <PickerModal
         visible={showGroupPicker}
         title="Group By"
@@ -1257,7 +1258,6 @@ export function HostScreen({
         onClose={() => setShowGroupPicker(false)}
       />
 
-      {/* Filter modal — matches desktop's Status + Repositories dropdown */}
       <BottomDrawer visible={showFilterModal} onClose={() => setShowFilterModal(false)}>
         <View style={styles.filterModalHeader}>
           <Text style={styles.filterModalTitle}>Filter</Text>

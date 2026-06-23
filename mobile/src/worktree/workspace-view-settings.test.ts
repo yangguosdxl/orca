@@ -60,6 +60,12 @@ describe('applyDesktopViewSettings', () => {
     expect(applyDesktopViewSettings(base, {})).toEqual(base)
   })
 
+  it('keeps renderable workspace statuses when desktop sends an empty catalog', () => {
+    const next = applyDesktopViewSettings(base, { workspaceStatuses: [] })
+
+    expect(next.workspaceStatuses).toBe(DEFAULT_MOBILE_WORKSPACE_STATUSES)
+  })
+
   it('preserves current host visibility when desktop omits host fields', () => {
     const current: MobileViewState = {
       ...base,

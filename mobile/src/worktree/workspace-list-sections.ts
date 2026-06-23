@@ -1,70 +1,30 @@
-// Pure data transforms for the host workspaces list: status derivation,
-// filtering, sorting, and grouping into SectionList sections. Kept out of the
-// screen component so the screen stays under its line cap and the logic is
-// unit-testable in isolation.
-
-import type { RuntimeWorktreeAgentRow } from '../../../src/shared/runtime-types'
 import type { WorkspaceStatusDefinition } from '../../../src/shared/types'
 import {
   DEFAULT_MOBILE_WORKSPACE_STATUSES,
+  coerceMobileWorkspaceStatuses,
   getMobileWorkspaceStatus,
   getMobileWorkspaceStatusGroupKey
 } from './mobile-workspace-statuses'
+import { applyMobileWorkspaceLineage } from './mobile-workspace-lineage'
+import { getPRGroupKey, PR_GROUP_LABELS, PR_GROUP_ORDER } from './workspace-pr-status-groups'
+import type { FilterState, Section, Worktree } from './workspace-list-types'
 import type { MobileGroupMode, MobileSortMode } from './workspace-view-settings'
 
-export type Worktree = {
-  sectionListKey?: string
-  workspaceKind?: 'git' | 'folder-workspace'
-  worktreeId: string
-  repoId: string
-  repo: string
-  branch: string
-  displayName: string
-  workspaceStatus?: string
-  sortOrder?: number
-  manualOrder?: number
-  // Why: on-disk worktree directory path. Needed by NewWorktreeModal so the
-  // marine-creature fallback dedupes against the actual filesystem basenames
-  // (matching the desktop's collision check), not against displayName which
-  // the user may have renamed.
-  path: string
-  isArchived?: boolean
-  isMainWorktree?: boolean
-  hasHostSidebarActivity?: boolean
-  liveTerminalCount: number
-  hasAttachedPty: boolean
-  preview: string
-  unread: boolean
-  lastOutputAt?: number
-  isPinned: boolean
-  isActive?: boolean
-  linkedPR: { number: number; state: string } | null
-  linkedIssue?: number | null
-  linkedLinearIssue?: string | null
-  linkedGitLabMR?: number | null
-  linkedGitLabIssue?: number | null
-  comment?: string
-  status?: 'working' | 'active' | 'permission' | 'done' | 'inactive'
-  agents?: RuntimeWorktreeAgentRow[]
-}
+export type { FilterState, Section, Worktree } from './workspace-list-types'
 
-// Desktop's filter model (shared via PersistedUIState): repos selected by id,
-// plus two hide toggles. There is no "active only" — hideSleeping is the
-// inverse intent.
-export type FilterState = {
-  filterRepoIds: Set<string>
-  hideSleeping: boolean
-  hideDefaultBranch: boolean
-}
-
-export type Section = { key: string; title: string; icon?: 'pin'; data: Worktree[] }
-
-function makeSection(key: string, title: string, data: Worktree[], icon?: 'pin'): Section {
+function makeSection(
+  key: string,
+  title: string,
+  data: Worktree[],
+  icon?: 'pin',
+  collapsedGroups?: ReadonlySet<string>
+): Section {
+  const rows = collapsedGroups ? applyMobileWorkspaceLineage(data, collapsedGroups) : data
   return {
     key,
     title,
     ...(icon ? { icon } : {}),
-    data: data.map((worktree) => ({
+    data: rows.map((worktree) => ({
       ...worktree,
       sectionListKey: `${key}:${worktree.worktreeId}`
     }))
@@ -137,6 +97,7 @@ export function sortWorktrees(worktrees: Worktree[], mode: MobileSortMode): Work
       const aRank = getManualSortRank(a)
       const bRank = getManualSortRank(b)
       if (aRank !== null && bRank !== null && aRank !== bRank) {
+        // Why: desktop assigns higher sort/manual ranks to earlier list positions.
         return bRank - aRank
       }
       if (aRank !== null && bRank === null) {
@@ -159,7 +120,6 @@ export function sortWorktrees(worktrees: Worktree[], mode: MobileSortMode): Work
       const repoComparison = a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' })
       return repoComparison || (a.displayName || a.repo).localeCompare(b.displayName || b.repo)
     }
-    // 'smart' — attention-first
     if (a.unread !== b.unread) {
       return a.unread ? -1 : 1
     }
@@ -203,36 +163,6 @@ export function filterWorktrees(
   return result
 }
 
-// Why: matches desktop's PR_GROUP_META naming from worktree-list-groups.ts.
-// no PR/draft/unknown → "In Progress", open → "In Review", merged → "Done", closed → "Closed"
-type PRGroupKey = 'done' | 'in-review' | 'in-progress' | 'closed'
-
-const PR_GROUP_LABELS: Record<PRGroupKey, string> = {
-  done: 'Done',
-  'in-review': 'In Review',
-  'in-progress': 'In Progress',
-  closed: 'Closed'
-}
-
-const PR_GROUP_ORDER: PRGroupKey[] = ['done', 'in-review', 'in-progress', 'closed']
-
-function getPRGroupKey(w: Worktree): PRGroupKey {
-  if (!w.linkedPR) {
-    return 'in-progress'
-  }
-  const s = w.linkedPR.state.toLowerCase()
-  if (s === 'merged') {
-    return 'done'
-  }
-  if (s === 'closed') {
-    return 'closed'
-  }
-  if (s === 'draft') {
-    return 'in-progress'
-  }
-  return 'in-review'
-}
-
 export function isWorktreePinned(w: Worktree, localPins: Set<string>): boolean {
   return w.isPinned || localPins.has(w.worktreeId)
 }
@@ -245,7 +175,8 @@ export function buildSections(
   groupMode: MobileGroupMode,
   pinnedIds: Set<string>,
   repoIdsByName: ReadonlyMap<string, string> = new Map(),
-  workspaceStatuses: readonly WorkspaceStatusDefinition[] = DEFAULT_MOBILE_WORKSPACE_STATUSES
+  workspaceStatuses: readonly WorkspaceStatusDefinition[] = DEFAULT_MOBILE_WORKSPACE_STATUSES,
+  collapsedGroups: ReadonlySet<string> = new Set()
 ): Section[] {
   const filtered = filterWorktrees(worktrees, filters, search)
   const sorted = sortWorktrees(filtered, sortMode)
@@ -265,13 +196,17 @@ export function buildSections(
 
   if (groupMode === 'none') {
     if (active.length > 0) {
-      // Why: without explicit grouping, mobile's primary workflow is jumping
-      // back into running sessions before browsing the full worktree archive.
-      sections.push(makeSection('all-active', 'Active', active))
+      sections.push(makeSection('all-active', 'Active', active, undefined, collapsedGroups))
     }
     if (inactive.length > 0) {
       sections.push(
-        makeSection('all', pinned.length > 0 || active.length > 0 ? 'All' : '', inactive)
+        makeSection(
+          'all',
+          pinned.length > 0 || active.length > 0 ? 'All' : '',
+          inactive,
+          undefined,
+          collapsedGroups
+        )
       )
     }
   } else if (groupMode === 'repo') {
@@ -303,12 +238,13 @@ export function buildSections(
     }
     for (const [repo, items] of byRepo) {
       const key = `repo:${repoIdsByName.get(repo) ?? repo}`
-      sections.push(makeSection(key, repo, items))
+      sections.push(makeSection(key, repo, items, undefined, collapsedGroups))
     }
   } else if (groupMode === 'workspaceStatus') {
+    const renderableWorkspaceStatuses = coerceMobileWorkspaceStatuses(workspaceStatuses)
     const byStatus = new Map<string, Worktree[]>()
     for (const w of canonicalGroupWorktrees) {
-      const key = getMobileWorkspaceStatus(w, workspaceStatuses)
+      const key = getMobileWorkspaceStatus(w, renderableWorkspaceStatuses)
       const list = byStatus.get(key)
       if (list) {
         list.push(w)
@@ -316,14 +252,22 @@ export function buildSections(
         byStatus.set(key, [w])
       }
     }
-    for (const status of workspaceStatuses) {
+    for (const status of renderableWorkspaceStatuses) {
       const items = byStatus.get(status.id)
       if (items && items.length > 0) {
-        sections.push(makeSection(getMobileWorkspaceStatusGroupKey(status.id), status.label, items))
+        sections.push(
+          makeSection(
+            getMobileWorkspaceStatusGroupKey(status.id),
+            status.label,
+            items,
+            undefined,
+            collapsedGroups
+          )
+        )
       }
     }
   } else if (groupMode === 'prStatus') {
-    const byGroup = new Map<PRGroupKey, Worktree[]>()
+    const byGroup = new Map<string, Worktree[]>()
     for (const w of canonicalGroupWorktrees) {
       const key = getPRGroupKey(w)
       const list = byGroup.get(key)
@@ -336,7 +280,15 @@ export function buildSections(
     for (const groupKey of PR_GROUP_ORDER) {
       const items = byGroup.get(groupKey)
       if (items && items.length > 0) {
-        sections.push(makeSection(`pr:${groupKey}`, PR_GROUP_LABELS[groupKey], items))
+        sections.push(
+          makeSection(
+            `pr:${groupKey}`,
+            PR_GROUP_LABELS[groupKey],
+            items,
+            undefined,
+            collapsedGroups
+          )
+        )
       }
     }
   }

@@ -193,7 +193,8 @@ export function useWorkspaceSections(args: {
         groupMode,
         pinnedIds,
         visibleRepoIdsByName,
-        workspaceStatuses
+        workspaceStatuses,
+        collapsedGroups
       ),
     [
       hostScopedWorktrees,
@@ -203,7 +204,8 @@ export function useWorkspaceSections(args: {
       groupMode,
       pinnedIds,
       visibleRepoIdsByName,
-      workspaceStatuses
+      workspaceStatuses,
+      collapsedGroups
     ]
   )
 

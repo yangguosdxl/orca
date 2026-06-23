@@ -29,7 +29,16 @@ function worktree(overrides: Partial<Worktree> = {}): Worktree {
 function withoutSectionListKeys(sections: ReturnType<typeof buildSections>) {
   return sections.map((section) => ({
     ...section,
-    data: section.data.map(({ sectionListKey: _sectionListKey, ...item }) => item)
+    data: section.data.map(
+      ({
+        sectionListKey: _sectionListKey,
+        lineageDepth: _lineageDepth,
+        lineageChildCount: _lineageChildCount,
+        lineageCollapsed: _lineageCollapsed,
+        isLastLineageChild: _isLastLineageChild,
+        ...item
+      }) => item
+    )
   }))
 }
 
@@ -274,6 +283,30 @@ describe('buildSections', () => {
     ])
   })
 
+  it('falls back to the default status catalog when desktop sends none', () => {
+    const progress = worktree({
+      worktreeId: 'progress',
+      workspaceStatus: 'in-progress',
+      status: 'working'
+    })
+
+    const sections = buildSections(
+      [progress],
+      'manual',
+      { filterRepoIds: new Set(), hideSleeping: false, hideDefaultBranch: false },
+      '',
+      'workspaceStatus',
+      new Set(),
+      new Map(),
+      []
+    )
+
+    expect(sections.map((section) => ({ key: section.key, title: section.title }))).toEqual([
+      { key: 'workspace-status:in-progress', title: 'In progress' }
+    ])
+    expect(sections[0]?.data.map((worktree) => worktree.worktreeId)).toEqual(['progress'])
+  })
+
   it('does not duplicate pinned worktrees in their canonical status group', () => {
     const pinned = worktree({
       worktreeId: 'pinned',
@@ -295,5 +328,63 @@ describe('buildSections', () => {
     expect(withoutSectionListKeys(sections)).toEqual([
       { key: 'pinned', title: 'Pinned', icon: 'pin', data: [pinned] }
     ])
+  })
+
+  it('nests child workspaces under visible parents in grouped sections', () => {
+    const parent = worktree({
+      worktreeId: 'parent',
+      displayName: 'parent',
+      workspaceStatus: 'in-progress'
+    })
+    const child = worktree({
+      worktreeId: 'child',
+      displayName: 'child',
+      parentWorktreeId: 'parent',
+      workspaceStatus: 'in-progress'
+    })
+
+    const sections = buildSections(
+      [child, parent],
+      'manual',
+      { filterRepoIds: new Set(), hideSleeping: false, hideDefaultBranch: false },
+      '',
+      'workspaceStatus',
+      new Set(),
+      new Map(),
+      DEFAULT_MOBILE_WORKSPACE_STATUSES
+    )
+
+    expect(sections[0]?.data.map((worktree) => worktree.worktreeId)).toEqual(['parent', 'child'])
+    expect(sections[0]?.data.map((worktree) => worktree.lineageDepth)).toEqual([0, 1])
+  })
+
+  it('collapses child workspaces under lineage parent rows', () => {
+    const parent = worktree({
+      worktreeId: 'parent',
+      displayName: 'parent',
+      workspaceStatus: 'in-progress'
+    })
+    const child = worktree({
+      worktreeId: 'child',
+      displayName: 'child',
+      parentWorktreeId: 'parent',
+      workspaceStatus: 'in-progress'
+    })
+
+    const sections = buildSections(
+      [child, parent],
+      'manual',
+      { filterRepoIds: new Set(), hideSleeping: false, hideDefaultBranch: false },
+      '',
+      'workspaceStatus',
+      new Set(),
+      new Map(),
+      DEFAULT_MOBILE_WORKSPACE_STATUSES,
+      new Set(['workspace-lineage:parent'])
+    )
+
+    expect(sections[0]?.data.map((worktree) => worktree.worktreeId)).toEqual(['parent'])
+    expect(sections[0]?.data[0]?.lineageChildCount).toBe(1)
+    expect(sections[0]?.data[0]?.lineageCollapsed).toBe(true)
   })
 })

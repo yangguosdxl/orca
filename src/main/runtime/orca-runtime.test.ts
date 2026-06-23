@@ -14716,6 +14716,8 @@ describe('OrcaRuntimeService', () => {
           parentWorktreeId: null,
           childWorktreeIds: [],
           displayName: 'foo',
+          workspaceStatus: 'in-progress',
+          sortOrder: 0,
           linkedIssue: 123,
           linkedPR: null,
           linkedLinearIssue: null,

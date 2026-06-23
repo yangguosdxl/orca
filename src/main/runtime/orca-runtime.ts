@@ -8518,6 +8518,8 @@ export class OrcaRuntimeService {
         linkedPR = { number: meta.linkedPR, state: 'unknown' }
       }
       summaries.set(worktree.id, {
+        // Why: mobile mirrors desktop workspace grouping/order from persisted
+        // metadata, while older runtimes may not have hydrated every field yet.
         workspaceKind: 'git',
         worktreeId: worktree.id,
         repoId: worktree.repoId,
@@ -8561,6 +8563,8 @@ export class OrcaRuntimeService {
       }
       const worktree = folderWorkspaceToWorktree(folderWorkspace)
       summaries.set(worktree.id, {
+        // Why: folder workspaces use the same mobile grouping/order contract as
+        // git worktrees, but legacy records may be missing order metadata.
         workspaceKind: 'folder-workspace',
         worktreeId: worktree.id,
         repoId: worktree.repoId,
@@ -8574,7 +8578,7 @@ export class OrcaRuntimeService {
         childWorktreeIds: [],
         displayName: worktree.displayName,
         workspaceStatus: worktree.workspaceStatus ?? DEFAULT_WORKSPACE_STATUS_ID,
-        sortOrder: worktree.sortOrder,
+        sortOrder: worktree.sortOrder ?? 0,
         ...(worktree.manualOrder !== undefined ? { manualOrder: worktree.manualOrder } : {}),
         linkedIssue: worktree.linkedIssue ?? null,
         linkedPR: null,

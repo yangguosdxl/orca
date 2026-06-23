@@ -14,20 +14,27 @@ export const DEFAULT_MOBILE_WORKSPACE_STATUSES = [
   { id: 'todo', label: 'Todo', color: 'neutral', icon: 'circle' }
 ] as const satisfies readonly WorkspaceStatusDefinition[]
 
+export function coerceMobileWorkspaceStatuses(
+  statuses: readonly WorkspaceStatusDefinition[]
+): readonly WorkspaceStatusDefinition[] {
+  return statuses.length > 0 ? statuses : DEFAULT_MOBILE_WORKSPACE_STATUSES
+}
+
 export function getMobileWorkspaceStatus(
   worktree: { workspaceStatus?: string | null },
   statuses: readonly WorkspaceStatusDefinition[]
 ): string {
+  const availableStatuses = coerceMobileWorkspaceStatuses(statuses)
   if (
     worktree.workspaceStatus &&
-    statuses.some((status) => status.id === worktree.workspaceStatus)
+    availableStatuses.some((status) => status.id === worktree.workspaceStatus)
   ) {
     return worktree.workspaceStatus
   }
-  if (statuses.some((status) => status.id === DEFAULT_MOBILE_WORKSPACE_STATUS_ID)) {
+  if (availableStatuses.some((status) => status.id === DEFAULT_MOBILE_WORKSPACE_STATUS_ID)) {
     return DEFAULT_MOBILE_WORKSPACE_STATUS_ID
   }
-  return statuses[0]?.id ?? DEFAULT_MOBILE_WORKSPACE_STATUS_ID
+  return availableStatuses[0]?.id ?? DEFAULT_MOBILE_WORKSPACE_STATUS_ID
 }
 
 export function getMobileWorkspaceStatusGroupKey(status: string): string {
