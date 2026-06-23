@@ -1329,6 +1329,8 @@ async function getRemoteLocalBaseRefUpdateSuggestionForWorktreeCreate(
 }
 
 export function notifyWorktreesChanged(mainWindow: BrowserWindow, repoId: string): void {
+  // Why: invalidate detected-worktree caches before renderer observers react,
+  // so follow-up listDetected reads post-change state.
   runWorktreeChangeInvalidators(repoId)
   if (!mainWindow.isDestroyed()) {
     mainWindow.webContents.send('worktrees:changed', { repoId })

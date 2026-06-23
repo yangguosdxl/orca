@@ -218,6 +218,8 @@ function registerRuntimeWindowLifecycle(
   }
   runtime.setNotifier({
     worktreesChanged: (repoId, renamed) => {
+      // Why: clear detected-worktree scan caches before renderer listeners
+      // handle this event, preventing stale TTL reads after mutations.
       runWorktreeChangeInvalidators(repoId)
       send('worktrees:changed', renamed ? { repoId, renamed } : { repoId })
     },

@@ -434,9 +434,8 @@ async function listDetectedGitWorktrees(
     }
   }
 
-  const now = Date.now()
   const cached = detectedWorktreeScanCache.get(repo.id)
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > Date.now()) {
     return { gitWorktrees: cached.worktrees, fresh: false }
   }
 
@@ -456,7 +455,7 @@ async function listDetectedGitWorktrees(
     if (isCurrentGeneration) {
       detectedWorktreeScanCache.set(repo.id, {
         worktrees: gitWorktrees,
-        expiresAt: now + DETECTED_WORKTREE_SCAN_CACHE_TTL_MS
+        expiresAt: Date.now() + DETECTED_WORKTREE_SCAN_CACHE_TTL_MS
       })
     }
     return { gitWorktrees, fresh: isCurrentGeneration }

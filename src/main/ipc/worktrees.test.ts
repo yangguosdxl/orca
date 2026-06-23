@@ -2151,6 +2151,59 @@ describe('registerWorktreeHandlers', () => {
     }
   })
 
+  it('starts the detected scan cache TTL after a slow scan completes', async () => {
+    vi.useFakeTimers()
+    try {
+      listWorktreesMock
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              setTimeout(
+                () =>
+                  resolve([
+                    {
+                      path: '/workspace/repo',
+                      head: 'main-head',
+                      branch: 'refs/heads/main',
+                      isBare: false,
+                      isMainWorktree: true
+                    }
+                  ]),
+                6_000
+              )
+            })
+        )
+        .mockResolvedValueOnce([
+          {
+            path: '/workspace/repo',
+            head: 'main-head',
+            branch: 'refs/heads/main',
+            isBare: false,
+            isMainWorktree: true
+          },
+          {
+            path: '/workspace/new-worktree',
+            head: 'feature-head',
+            branch: 'refs/heads/feature',
+            isBare: false,
+            isMainWorktree: false
+          }
+        ])
+
+      const first = handlers['worktrees:listDetected'](null, { repoId: 'repo-1' })
+      await vi.advanceTimersByTimeAsync(6_000)
+      await first
+      const second = (await handlers['worktrees:listDetected'](null, {
+        repoId: 'repo-1'
+      })) as { worktrees: Worktree[] }
+
+      expect(second.worktrees.map((worktree) => worktree.path)).toEqual(['/workspace/repo'])
+      expect(listWorktreesMock).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('invalidates the detected scan cache before worktree change notifications', async () => {
     listWorktreesMock
       .mockResolvedValueOnce([
