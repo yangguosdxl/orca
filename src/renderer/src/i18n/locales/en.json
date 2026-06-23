@@ -1272,7 +1272,10 @@
         "2b4fdb880c": "Unmark viewed",
         "56ec6eafb7": "Open the PR details to view current reviewers.",
         "7f964a365a": "Remove reviewer",
-        "commentTooLarge": "Comment is too large to submit safely."
+        "commentTooLarge": "Comment is too large to submit safely.",
+        "8ff5ae8866": "Assignees",
+        "82c87eceb9": "Edit assignees",
+        "1ff5d979df": "No one assigned"
       },
       "QuickOpen": {
         "1dbd3f59ff": "Move",

@@ -1272,7 +1272,10 @@
         "2b4fdb880c": "閲覧済みのマークを外す",
         "56ec6eafb7": "PR の詳細を開いて、現在のレビュアーを表示します。",
         "7f964a365a": "レビュアーを削除",
-        "commentTooLarge": "Comment is too large to submit safely."
+        "commentTooLarge": "Comment is too large to submit safely.",
+        "8ff5ae8866": "Assignees",
+        "82c87eceb9": "Edit assignees",
+        "1ff5d979df": "No one assigned"
       },
       "QuickOpen": {
         "1dbd3f59ff": "移動",

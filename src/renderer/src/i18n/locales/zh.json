@@ -1272,7 +1272,10 @@
         "2b4fdb880c": "取消标记已查看",
         "56ec6eafb7": "打开 PR 详情以查看当前评审人。",
         "7f964a365a": "移除评审人",
-        "commentTooLarge": "评论过长，无法安全提交。"
+        "commentTooLarge": "评论过长，无法安全提交。",
+        "8ff5ae8866": "Assignees",
+        "82c87eceb9": "Edit assignees",
+        "1ff5d979df": "No one assigned"
       },
       "QuickOpen": {
         "1dbd3f59ff": "手机",
