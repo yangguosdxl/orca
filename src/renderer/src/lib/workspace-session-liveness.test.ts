@@ -57,6 +57,68 @@ describe('workspace session live PTY persistence', () => {
     expect(payload.activeWorktreeIdsOnShutdown).toEqual([])
   })
 
+  it('keeps a restored-but-not-yet-opened inactive worktree reconnectable on the next restart', () => {
+    // Why: reconnectPersistedTerminals only advertises live PTYs (ptyIdsByTabId)
+    // for the active worktree. Inactive restored worktrees keep their reconnect
+    // wake hint on tab.ptyId plus the unconsumed pendingActivationSpawn flag set
+    // at hydration. A normal session save must not drop them from the persisted
+    // reconnect lists, or the following restart spawns fresh shells instead of
+    // reattaching the live session.
+    const payload = buildWorkspaceSessionPayload(
+      createSnapshot({
+        tabsByWorktree: {
+          'wt-inactive': [
+            {
+              id: 'tab-inactive',
+              title: 'shell',
+              ptyId: 'wake-hint-session',
+              pendingActivationSpawn: true,
+              worktreeId: 'wt-inactive'
+            } as never
+          ]
+        },
+        ptyIdsByTabId: { 'tab-inactive': [] }
+      })
+    )
+
+    expect(payload.activeWorktreeIdsOnShutdown).toEqual(['wt-inactive'])
+  })
+
+  it('carries a restored-but-not-yet-opened SSH worktree relay session id forward', () => {
+    const payload = buildWorkspaceSessionPayload(
+      createSnapshot({
+        tabsByWorktree: {
+          'wt-ssh': [
+            {
+              id: 'tab-ssh',
+              title: 'remote',
+              ptyId: 'relay-sess-77',
+              pendingActivationSpawn: true,
+              worktreeId: 'wt-ssh'
+            } as never
+          ]
+        },
+        ptyIdsByTabId: { 'tab-ssh': [] },
+        repos: [
+          {
+            id: 'repo-ssh',
+            path: '/repo-ssh',
+            displayName: 'SSH',
+            badgeColor: '#fff',
+            addedAt: 1,
+            connectionId: 'conn-1'
+          }
+        ],
+        worktreesByRepo: {
+          'repo-ssh': [{ id: 'wt-ssh', repoId: 'repo-ssh' } as never]
+        }
+      })
+    )
+
+    expect(payload.activeWorktreeIdsOnShutdown).toEqual(['wt-ssh'])
+    expect(payload.remoteSessionIdsByTabId).toEqual({ 'tab-ssh': 'relay-sess-77' })
+  })
+
   it('does not persist remote session ids for slept SSH tabs', () => {
     const payload = buildWorkspaceSessionPayload(
       createSnapshot({

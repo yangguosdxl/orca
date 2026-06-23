@@ -270,8 +270,27 @@ export function buildTerminalSessionData(
   // as a wake hint after clearing ptyIdsByTabId, so that shape must not count
   // as active on restart.
   const lastKnown = snapshot.lastKnownRelayPtyIdByTabId
-  const hasReconnectableSession = (tab: { id: string; ptyId: string | null }): boolean =>
-    hasLivePty(tab.id) || (!tab.ptyId && Boolean(lastKnown[tab.id]))
+  // Why: a worktree restored from the previous session but not yet opened keeps
+  // its reconnect wake hint on tab.ptyId while ptyIdsByTabId stays empty
+  // (reconnectPersistedTerminals only advertises live PTYs for the active
+  // worktree). That shape is identical to a slept tab EXCEPT it still carries
+  // the unconsumed pendingActivationSpawn flag set at hydration — consumed only
+  // when the user first opens the worktree. Treating that flagged wake hint as
+  // reconnectable keeps inactive restored worktrees in the persisted reconnect
+  // lists so a subsequent restart still eagerly reattaches their live sessions,
+  // while genuinely slept tabs (flag already consumed) stay excluded.
+  const hasPendingReconnectWakeHint = (tab: {
+    ptyId: string | null
+    pendingActivationSpawn?: boolean | number
+  }): boolean => Boolean(tab.ptyId) && Boolean(tab.pendingActivationSpawn)
+  const hasReconnectableSession = (tab: {
+    id: string
+    ptyId: string | null
+    pendingActivationSpawn?: boolean | number
+  }): boolean =>
+    hasLivePty(tab.id) ||
+    hasPendingReconnectWakeHint(tab) ||
+    (!tab.ptyId && Boolean(lastKnown[tab.id]))
 
   const activeWorktreeIdsOnShutdown = Object.entries(tabsByWorktree)
     .filter(([, tabs]) => tabs.some(hasReconnectableSession))
