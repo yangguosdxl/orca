@@ -62,4 +62,70 @@ describe('sendFollowupPromptWhenAgentReady', () => {
     await expect(promise).resolves.toBe(false)
     expect(sendRuntimePtyInputVerified).not.toHaveBeenCalled()
   })
+
+  it('ignores transient inspection failures while budget remains and sends once after a match', async () => {
+    vi.mocked(inspectRuntimeTerminalProcess)
+      .mockRejectedValueOnce(new Error('runtime unavailable'))
+      .mockRejectedValueOnce(new Error('pty not ready'))
+      .mockResolvedValue({
+        foregroundProcess: 'codex',
+        hasChildProcesses: true
+      })
+
+    const promise = sendFollowupPromptWhenAgentReady({
+      ptyId: 'pty-1',
+      expectedProcess: 'codex',
+      prompt: 'review this',
+      settings: { activeRuntimeEnvironmentId: 'runtime-1' }
+    })
+
+    await vi.advanceTimersByTimeAsync(300)
+
+    await expect(promise).resolves.toBe(true)
+    expect(inspectRuntimeTerminalProcess).toHaveBeenCalledTimes(3)
+    expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(1)
+    expect(sendRuntimePtyInputVerified).toHaveBeenCalledWith(
+      { activeRuntimeEnvironmentId: 'runtime-1' },
+      'pty-1',
+      'review this\r'
+    )
+  })
+
+  it.each([
+    {
+      name: 'repeated transient failures',
+      setupInspection: () => {
+        vi.mocked(inspectRuntimeTerminalProcess).mockRejectedValue(new Error('runtime unavailable'))
+      }
+    },
+    {
+      name: 'non-matching foreground processes',
+      setupInspection: () => {
+        vi.mocked(inspectRuntimeTerminalProcess).mockResolvedValue({
+          foregroundProcess: 'bash',
+          hasChildProcesses: false
+        })
+      }
+    }
+  ])(
+    'returns false by the deadline for $name and never writes to the PTY',
+    async ({ setupInspection }) => {
+      setupInspection()
+
+      const promise = sendFollowupPromptWhenAgentReady({
+        ptyId: 'pty-1',
+        expectedProcess: 'codex',
+        prompt: 'review this',
+        settings: { activeRuntimeEnvironmentId: 'runtime-1' }
+      })
+
+      await vi.advanceTimersByTimeAsync(4499)
+      expect(sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1)
+
+      await expect(promise).resolves.toBe(false)
+      expect(sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+    }
+  )
 })
