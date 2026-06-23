@@ -1959,9 +1959,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                               {badgeLabel}
                             </span>
                           </div>
-                          <div className="mt-1 truncate text-[12px] leading-5 text-muted-foreground/88">
-                            {result.description}
-                          </div>
                         </div>
                         {isProject ? (
                           <div className="flex shrink-0 items-center gap-1.5">
