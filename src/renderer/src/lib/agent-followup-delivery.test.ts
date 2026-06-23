@@ -54,9 +54,11 @@ describe('sendFollowupPromptWhenAgentReady', () => {
       settings: { activeRuntimeEnvironmentId: 'runtime-1' }
     })
 
-    await vi.advanceTimersByTimeAsync(4499)
+    // Why: stay just under the 4.5s readiness budget; delivery must not resolve early.
+    await vi.advanceTimersByTimeAsync(4_499)
     expect(sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
+    // Why: crossing the budget boundary must resolve false without writing.
     await vi.advanceTimersByTimeAsync(1)
 
     await expect(promise).resolves.toBe(false)
@@ -119,9 +121,11 @@ describe('sendFollowupPromptWhenAgentReady', () => {
         settings: { activeRuntimeEnvironmentId: 'runtime-1' }
       })
 
-      await vi.advanceTimersByTimeAsync(4499)
+      // Why: stay just under the 4.5s readiness budget; delivery must not resolve early.
+      await vi.advanceTimersByTimeAsync(4_499)
       expect(sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
+      // Why: crossing the budget boundary must resolve false without writing.
       await vi.advanceTimersByTimeAsync(1)
 
       await expect(promise).resolves.toBe(false)
