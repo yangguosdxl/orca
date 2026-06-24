@@ -260,11 +260,15 @@ export function setWorktreeBaseDirectoryWatcherSyncContext(
   mainWindow: BrowserWindow
 ): void {
   latestSyncContext = { store, mainWindow }
-  mainWindow.once('closed', () => {
-    if (latestSyncContext?.mainWindow === mainWindow) {
-      latestSyncContext = null
-    }
-  })
+  // Why: older integration tests use lean BrowserWindow stubs; real windows still
+  // clear this context on close so stale watcher syncs cannot target dead chrome.
+  if (typeof mainWindow.once === 'function') {
+    mainWindow.once('closed', () => {
+      if (latestSyncContext?.mainWindow === mainWindow) {
+        latestSyncContext = null
+      }
+    })
+  }
 }
 
 export function scheduleWorktreeBaseDirectoryWatcherSync(
