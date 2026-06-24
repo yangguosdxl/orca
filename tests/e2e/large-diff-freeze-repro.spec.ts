@@ -184,6 +184,8 @@ test.describe('Large diff freeze repro', () => {
             throw new Error(`staged locale fixture missing entries: ${missing.join(', ')}`)
           }
 
+          // Why: reproduce stale snapshot behavior by opening combined diffs
+          // as "unstaged" using entries captured from the staged status snapshot.
           const staleUnstagedEntries = entries.map((entry) => ({ ...entry, area: 'unstaged' }))
           const intervalMs = 50
           const samples: number[] = []
@@ -202,17 +204,22 @@ test.describe('Large diff freeze repro', () => {
 
           let editorCount = 0
           let fallbackCount = 0
-          while (performance.now() - startedAt < 30_000) {
-            await new Promise((resolve) => window.setTimeout(resolve, 50))
-            editorCount = document.querySelectorAll('.monaco-diff-editor').length
-            fallbackCount = document.querySelectorAll('[data-testid="large-diff-fallback"]').length
-            if (editorCount + fallbackCount >= Math.min(entries.length, 5)) {
-              await new Promise((resolve) => window.setTimeout(resolve, 1_000))
-              break
+          try {
+            while (performance.now() - startedAt < 30_000) {
+              await new Promise((resolve) => window.setTimeout(resolve, 50))
+              editorCount = document.querySelectorAll('.monaco-diff-editor').length
+              fallbackCount = document.querySelectorAll(
+                '[data-testid="large-diff-fallback"]'
+              ).length
+              if (editorCount + fallbackCount >= Math.min(entries.length, 5)) {
+                await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+                break
+              }
             }
+          } finally {
+            window.clearInterval(timer)
           }
 
-          window.clearInterval(timer)
           const classHits = Array.from(
             document.querySelectorAll(
               '.monaco-diff-editor .line-insert, .monaco-diff-editor .line-delete, .monaco-diff-editor .char-insert, .monaco-diff-editor .char-delete'

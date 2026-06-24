@@ -69,10 +69,12 @@ export function createIsolatedStagedLocaleDiffRepo(): IsolatedStagedLocaleDiffRe
   runGit(repoPath, ['config', 'user.name', 'E2E Test'])
 
   mkdirSync(path.join(repoPath, 'src', 'locales'), { recursive: true })
+  const toAbsoluteFsPath = (relativePosixPath: string): string =>
+    path.join(repoPath, ...relativePosixPath.split(path.posix.sep))
   const relativePaths: string[] = []
   for (let fileIndex = 0; fileIndex < 5; fileIndex += 1) {
-    const relativePath = `src/locales/locale-${fileIndex}.json`
-    const absolutePath = path.join(repoPath, ...relativePath.split('/'))
+    const relativePath = path.posix.join('src', 'locales', `locale-${fileIndex}.json`)
+    const absolutePath = toAbsoluteFsPath(relativePath)
     const original = buildLocaleLikeJson(fileIndex, 3600)
     writeFileSync(absolutePath, original)
     relativePaths.push(relativePath)
@@ -81,7 +83,7 @@ export function createIsolatedStagedLocaleDiffRepo(): IsolatedStagedLocaleDiffRe
   runGit(repoPath, ['commit', '-m', 'Initial locale fixture'])
 
   for (let fileIndex = 0; fileIndex < relativePaths.length; fileIndex += 1) {
-    const absolutePath = path.join(repoPath, ...relativePaths[fileIndex].split('/'))
+    const absolutePath = toAbsoluteFsPath(relativePaths[fileIndex])
     const original = buildLocaleLikeJson(fileIndex, 3600)
     writeFileSync(absolutePath, modifyLocaleLikeJson(original, fileIndex))
   }

@@ -145,6 +145,18 @@ describe('resolveCombinedUncommittedSnapshotEntries', () => {
     )
   })
 
+  it('does not remap duplicate-path snapshots to a retained fallback area', () => {
+    const snapshotEntries: GitStatusEntry[] = [
+      { path: 'src/file.ts', status: 'modified', area: 'staged', added: 4 },
+      { path: 'src/file.ts', status: 'modified', area: 'unstaged', added: 2 }
+    ]
+    const retained: GitStatusEntry[] = [{ path: 'src/file.ts', status: 'modified', area: 'staged' }]
+
+    expect(resolveCombinedUncommittedSnapshotEntries(snapshotEntries, [], retained)).toEqual([
+      { path: 'src/file.ts', status: 'modified', area: 'staged', added: 4 }
+    ])
+  })
+
   it('does not let a retained stale area duplicate an original target area', () => {
     const snapshotEntries: GitStatusEntry[] = [
       { path: 'src/file.ts', status: 'modified', area: 'unstaged', added: 2 },
