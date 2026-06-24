@@ -78,6 +78,7 @@ import { getSshGitUsername } from '../git/git-username'
 import { getActiveMultiplexer } from './ssh'
 import { normalizeSparseDirectories } from './sparse-checkout-directories'
 import { track } from '../telemetry/client'
+import { scheduleWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import type { RepoMethod } from '../../shared/telemetry-events'
 import { detectRepoIconAndUpstream } from '../repo-icon-autodetect'
@@ -91,6 +92,8 @@ import {
 } from '../project-groups/folder-workspace-path-status'
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
+
+let latestRepoWatcherSyncContext: { mainWindow: BrowserWindow; store: Store } | null = null
 
 // Why: `method` answers "which entry point did the user take?", not "what did
 // they add?" — so the IPC the renderer invoked IS the method. We never send
@@ -1090,6 +1093,12 @@ async function runNestedRepoScanForIpc(
 }
 
 export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): void {
+  latestRepoWatcherSyncContext = { mainWindow, store }
+  mainWindow.once('closed', () => {
+    if (latestRepoWatcherSyncContext?.mainWindow === mainWindow) {
+      latestRepoWatcherSyncContext = null
+    }
+  })
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
   ipcMain.removeHandler('repos:list')
@@ -2485,6 +2494,12 @@ async function searchBaseRefDetailsForRepo(
 function notifyReposChanged(mainWindow: BrowserWindow): void {
   if (!mainWindow.isDestroyed()) {
     mainWindow.webContents.send('repos:changed')
+  }
+  if (latestRepoWatcherSyncContext?.mainWindow === mainWindow) {
+    scheduleWorktreeBaseDirectoryWatcherSync(
+      latestRepoWatcherSyncContext.store,
+      latestRepoWatcherSyncContext.mainWindow
+    )
   }
 }
 

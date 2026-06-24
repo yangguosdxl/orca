@@ -18,6 +18,7 @@ import { normalizeUiLanguage } from '../../shared/ui-language'
 import { applyAppIcon } from '../app-icon'
 import { normalizeTerminalCustomThemes } from '../../shared/terminal-custom-themes'
 import { prepareLocalWorktreeRootsForRepos } from '../worktree-root-preparation'
+import { scheduleWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 
 // Why: the whitelist is the source-of-truth for which keys we emit on. Casting
 // to a Set once at module load lets the IPC handler's per-key membership
@@ -114,6 +115,12 @@ export function registerSettingsHandlers(
       ('nestWorkspaces' in sanitizedArgs && before.nestWorkspaces !== result.nestWorkspaces)
     ) {
       void prepareLocalWorktreeRootsForRepos(store)
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          scheduleWorktreeBaseDirectoryWatcherSync(store, window)
+          break
+        }
+      }
     }
     if (APPEARANCE_MENU_KEYS.some((key) => key in sanitizedArgs)) {
       rebuildAppMenu()
