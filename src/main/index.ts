@@ -974,12 +974,16 @@ function shutdownWatchersOnce(): Promise<void> {
   if (!watcherShutdownPromise) {
     // Why: @parcel/watcher tears down native async work during unsubscribe.
     // Electron must wait for that cleanup before Node's environment exits.
-    watcherShutdownPromise = Promise.all([
+    watcherShutdownPromise = Promise.allSettled([
       closeAllWatchers(),
       disposeWorktreeBaseDirectoryWatchers()
     ])
-      .catch((error) => {
-        console.error('[filesystem-watcher] shutdown failed:', error)
+      .then((results) => {
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            console.error('[filesystem-watcher] shutdown failed:', result.reason)
+          }
+        }
       })
       .then(() => {
         watcherShutdownDone = true

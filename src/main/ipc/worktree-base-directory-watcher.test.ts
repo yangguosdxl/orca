@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { join, sep } from 'path'
 import type { Event as WatcherEvent, SubscribeCallback } from '@parcel/watcher'
 import type { GlobalSettings, Repo } from '../../shared/types'
 
@@ -28,16 +29,20 @@ type WatcherCallback = SubscribeCallback
 
 const watcherCallbacks = new Map<string, WatcherCallback>()
 const unsubscribeMocks = new Map<string, ReturnType<typeof vi.fn>>()
+const absolutePath = (...parts: string[]): string => join(sep, ...parts)
+const WORKTREE_ROOT = absolutePath('workspace', 'worktrees')
+const PROJECT_ROOT = absolutePath('workspace', 'projects', 'project')
+const PROJECT_GIT_COMMON_DIR = join(PROJECT_ROOT, '.git')
 
 const settings = {
-  workspaceDir: '/workspace/worktrees',
+  workspaceDir: WORKTREE_ROOT,
   nestWorkspaces: true
 } as GlobalSettings
 
 function makeRepo(overrides: Partial<Repo> = {}): Repo {
   return {
     id: 'repo-1',
-    path: '/workspace/projects/project',
+    path: PROJECT_ROOT,
     displayName: 'Project',
     badgeColor: '#000000',
     addedAt: 1,
@@ -89,9 +94,9 @@ describe('worktree base directory watcher', () => {
   it('coalesces nested worktree completion events into one targeted notification', async () => {
     await syncWorktreeBaseDirectoryWatchers(makeStore([makeRepo()]) as never, makeWindow() as never)
 
-    emit('/workspace/worktrees', [
-      { type: 'create', path: '/workspace/worktrees/project/external-5104' },
-      { type: 'create', path: '/workspace/worktrees/project/external-5104/.git' }
+    emit(WORKTREE_ROOT, [
+      { type: 'create', path: join(WORKTREE_ROOT, 'project', 'external-5104') },
+      { type: 'create', path: join(WORKTREE_ROOT, 'project', 'external-5104', '.git') }
     ] as WatcherEvent[])
 
     await vi.advanceTimersByTimeAsync(300)
@@ -103,8 +108,8 @@ describe('worktree base directory watcher', () => {
   it('ignores deep checkout churn below candidate roots', async () => {
     await syncWorktreeBaseDirectoryWatchers(makeStore([makeRepo()]) as never, makeWindow() as never)
 
-    emit('/workspace/worktrees', [
-      { type: 'update', path: '/workspace/worktrees/project/existing/src/file.ts' }
+    emit(WORKTREE_ROOT, [
+      { type: 'update', path: join(WORKTREE_ROOT, 'project', 'existing', 'src', 'file.ts') }
     ] as WatcherEvent[])
     await vi.advanceTimersByTimeAsync(300)
 
@@ -114,8 +119,8 @@ describe('worktree base directory watcher', () => {
   it('uses Git common-dir worktree metadata as a low-churn completion signal', async () => {
     await syncWorktreeBaseDirectoryWatchers(makeStore([makeRepo()]) as never, makeWindow() as never)
 
-    emit('/workspace/projects/project/.git', [
-      { type: 'create', path: '/workspace/projects/project/.git/worktrees/external-5104/gitdir' }
+    emit(PROJECT_GIT_COMMON_DIR, [
+      { type: 'create', path: join(PROJECT_GIT_COMMON_DIR, 'worktrees', 'external-5104', 'gitdir') }
     ] as WatcherEvent[])
     await vi.advanceTimersByTimeAsync(300)
 
@@ -140,31 +145,55 @@ describe('worktree base directory watcher', () => {
     const store = makeStore([repo])
     await syncWorktreeBaseDirectoryWatchers(store as never, makeWindow() as never)
 
-    repo.worktreeBasePath = '/workspace/other-worktrees'
+    const otherRoot = absolutePath('workspace', 'other-worktrees')
+    repo.worktreeBasePath = otherRoot
     await syncWorktreeBaseDirectoryWatchers(store as never, makeWindow() as never)
 
-    expect(unsubscribeMocks.get('/workspace/worktrees')).toHaveBeenCalled()
-    expect(watcherCallbacks.has('/workspace/other-worktrees')).toBe(true)
+    expect(unsubscribeMocks.get(WORKTREE_ROOT)).toHaveBeenCalled()
+    expect(watcherCallbacks.has(otherRoot)).toBe(true)
+  })
+
+  it('unsubscribes a watcher that finishes installing after disposal starts', async () => {
+    let resolveSubscribe: (subscription: { unsubscribe: () => Promise<void> }) => void = () => {}
+    const unsubscribe = vi.fn(async () => {})
+    vi.mocked(subscribe).mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveSubscribe = resolve
+        })
+    )
+
+    const syncPromise = syncWorktreeBaseDirectoryWatchers(
+      makeStore([makeRepo()]) as never,
+      makeWindow() as never
+    )
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalled())
+    const disposePromise = disposeWorktreeBaseDirectoryWatchers()
+    resolveSubscribe({ unsubscribe })
+    await syncPromise
+    await disposePromise
+
+    expect(unsubscribe).toHaveBeenCalled()
   })
 
   it('matches flat workspace .git marker events without matching sibling churn', () => {
     const target = {
-      key: 'base:/workspace/worktrees',
+      key: `base:${WORKTREE_ROOT}`,
       kind: 'base' as const,
-      path: '/workspace/worktrees',
+      path: WORKTREE_ROOT,
       repos: new Map([['repo-1', { repoId: 'repo-1', repoName: 'project', nestWorkspaces: false }]])
     }
 
     expect(
       matchingWorktreeBaseRepoIds(target, {
         type: 'create',
-        path: '/workspace/worktrees/external-5104/.git'
+        path: join(WORKTREE_ROOT, 'external-5104', '.git')
       } as WatcherEvent)
     ).toEqual(['repo-1'])
     expect(
       matchingWorktreeBaseRepoIds(target, {
         type: 'update',
-        path: '/workspace/worktrees/external-5104/src/file.ts'
+        path: join(WORKTREE_ROOT, 'external-5104', 'src', 'file.ts')
       } as WatcherEvent)
     ).toEqual([])
   })

@@ -1,5 +1,5 @@
-import { basename, dirname, isAbsolute, normalize, resolve } from 'path'
-import { readFile, realpath, stat } from 'fs/promises'
+import { normalize } from 'path'
+import { realpath, stat } from 'fs/promises'
 import type { BrowserWindow } from 'electron'
 import type { AsyncSubscription } from '@parcel/watcher'
 import type { Store } from '../persistence'
@@ -13,6 +13,7 @@ import {
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { computeWorkspaceRoot, getWorktreePathSettings } from './worktree-logic'
 import { notifyWorktreesChanged } from './worktree-remote'
+import { resolveWorktreeCommonGitDirectory } from './worktree-common-git-directory'
 import {
   matchingWorktreeBaseRepoIds,
   type WorktreeBaseRepoWatchConfig,
@@ -25,6 +26,7 @@ type ActiveWatch = WorktreeBaseWatchTarget & {
   subscription: AsyncSubscription
   notifyTimer: ReturnType<typeof setTimeout> | null
   pendingRepoIds: Set<string>
+  disposed: boolean
 }
 
 const WATCH_DEBOUNCE_MS = 250
@@ -33,10 +35,7 @@ const missingRootWarnings = new Set<string>()
 const skippedWslWarnings = new Set<string>()
 let syncGeneration = 0
 let scheduledSync: ReturnType<typeof setTimeout> | null = null
-
-function isLocalGitRepo(repo: Repo): boolean {
-  return !isFolderRepo(repo) && getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID
-}
+let latestSyncContext: { mainWindow: BrowserWindow; store: Store } | null = null
 
 function normalizeWatchKey(pathValue: string): string {
   return normalizeRuntimePathForComparison(normalize(pathValue))
@@ -51,6 +50,9 @@ async function canonicalizeExistingPath(pathValue: string): Promise<string> {
 }
 
 function scheduleNotification(watch: ActiveWatch, repoIds: readonly string[]): void {
+  if (watch.disposed) {
+    return
+  }
   for (const repoId of repoIds) {
     watch.pendingRepoIds.add(repoId)
   }
@@ -58,6 +60,9 @@ function scheduleNotification(watch: ActiveWatch, repoIds: readonly string[]): v
     clearTimeout(watch.notifyTimer)
   }
   watch.notifyTimer = setTimeout(() => {
+    if (watch.disposed) {
+      return
+    }
     watch.notifyTimer = null
     const pending = [...watch.pendingRepoIds]
     watch.pendingRepoIds.clear()
@@ -77,7 +82,7 @@ async function subscribeTarget(
     target.path,
     (error, events) => {
       const currentWatch = activeWatches.get(target.key) ?? activeWatch
-      if (!currentWatch) {
+      if (!currentWatch || currentWatch.disposed) {
         return
       }
       if (error) {
@@ -105,34 +110,10 @@ async function subscribeTarget(
     mainWindow,
     subscription,
     notifyTimer: null,
-    pendingRepoIds: new Set()
+    pendingRepoIds: new Set(),
+    disposed: false
   }
   return activeWatch
-}
-
-async function resolveGitCommonDir(repo: Repo): Promise<string | null> {
-  const dotGitPath = resolve(repo.path, '.git')
-  try {
-    const dotGitStat = await stat(dotGitPath)
-    if (dotGitStat.isDirectory()) {
-      return dotGitPath
-    }
-    if (!dotGitStat.isFile()) {
-      return null
-    }
-    const content = await readFile(dotGitPath, 'utf8')
-    const gitDir = content.match(/^gitdir:\s*(.+)\s*$/m)?.[1]?.trim()
-    if (!gitDir) {
-      return null
-    }
-    const resolvedGitDir = isAbsolute(gitDir) ? gitDir : resolve(repo.path, gitDir)
-    return basename(dirname(resolvedGitDir)) === 'worktrees'
-      ? resolve(resolvedGitDir, '..', '..')
-      : resolvedGitDir
-  } catch (error) {
-    console.warn(`[worktree-base-watcher] cannot resolve git common dir for ${repo.id}:`, error)
-    return null
-  }
 }
 
 async function addTarget(
@@ -163,6 +144,7 @@ async function maybeAddBaseTarget(
 ): Promise<void> {
   const pathSettings = getWorktreePathSettings(repo, settings)
   const workspaceRoot = computeWorkspaceRoot(repo.path, pathSettings)
+  // Why: WSL UNC roots are unreliable for native watching; avoid project-level polling.
   if (isWslUncPath(workspaceRoot) || isWslUncPath(repo.path)) {
     const key = `${repo.id}:${workspaceRoot}`
     if (!skippedWslWarnings.has(key)) {
@@ -192,7 +174,7 @@ async function maybeAddBaseTarget(
     }
   }
 
-  const commonDir = await resolveGitCommonDir(repo)
+  const commonDir = await resolveWorktreeCommonGitDirectory(repo)
   if (commonDir) {
     await addTarget(targets, 'git-common', commonDir, config)
   }
@@ -202,7 +184,7 @@ async function buildTargets(store: Store): Promise<Map<string, WorktreeBaseWatch
   const settings = store.getSettings()
   const targets = new Map<string, WorktreeBaseWatchTarget>()
   for (const repo of store.getRepos()) {
-    if (!isLocalGitRepo(repo)) {
+    if (isFolderRepo(repo) || getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
       continue
     }
     await maybeAddBaseTarget(targets, repo, settings)
@@ -212,7 +194,8 @@ async function buildTargets(store: Store): Promise<Map<string, WorktreeBaseWatch
 
 async function replaceWatch(
   target: WorktreeBaseWatchTarget,
-  mainWindow: BrowserWindow
+  mainWindow: BrowserWindow,
+  generation: number
 ): Promise<void> {
   const previous = activeWatches.get(target.key)
   if (previous) {
@@ -222,6 +205,13 @@ async function replaceWatch(
   }
   try {
     const activeWatch = await subscribeTarget(target, mainWindow)
+    if (generation !== syncGeneration) {
+      activeWatch.disposed = true
+      await activeWatch.subscription.unsubscribe().catch((error) => {
+        console.warn(`[worktree-base-watcher] failed to unwatch stale ${target.path}:`, error)
+      })
+      return
+    }
     activeWatches.set(target.key, activeWatch)
   } catch (error) {
     console.warn(`[worktree-base-watcher] failed to watch ${target.path}:`, error)
@@ -234,6 +224,7 @@ async function removeWatch(key: string): Promise<void> {
     return
   }
   activeWatches.delete(key)
+  watch.disposed = true
   if (watch.notifyTimer) {
     clearTimeout(watch.notifyTimer)
   }
@@ -257,8 +248,23 @@ export async function syncWorktreeBaseDirectoryWatchers(
     }
   }
   for (const target of targets.values()) {
-    await replaceWatch(target, mainWindow)
+    await replaceWatch(target, mainWindow, generation)
+    if (generation !== syncGeneration) {
+      return
+    }
   }
+}
+
+export function setWorktreeBaseDirectoryWatcherSyncContext(
+  store: Store,
+  mainWindow: BrowserWindow
+): void {
+  latestSyncContext = { store, mainWindow }
+  mainWindow.once('closed', () => {
+    if (latestSyncContext?.mainWindow === mainWindow) {
+      latestSyncContext = null
+    }
+  })
 }
 
 export function scheduleWorktreeBaseDirectoryWatcherSync(
@@ -274,8 +280,16 @@ export function scheduleWorktreeBaseDirectoryWatcherSync(
   }, 100)
 }
 
+export function scheduleCurrentWorktreeBaseDirectoryWatcherSync(): void {
+  if (!latestSyncContext || latestSyncContext.mainWindow.isDestroyed()) {
+    return
+  }
+  scheduleWorktreeBaseDirectoryWatcherSync(latestSyncContext.store, latestSyncContext.mainWindow)
+}
+
 export async function disposeWorktreeBaseDirectoryWatchers(): Promise<void> {
   syncGeneration++
+  latestSyncContext = null
   if (scheduledSync) {
     clearTimeout(scheduledSync)
     scheduledSync = null

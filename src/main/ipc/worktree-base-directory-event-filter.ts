@@ -41,6 +41,8 @@ function isRootCompletionEvent(parts: string[], config: WorktreeBaseRepoWatchCon
   return parts.length === 1
 }
 
+// Why: root creation can arrive before Git finishes registration; the `.git`
+// marker is the checkout-complete signal, while deeper file churn is ignored.
 function isGitMarkerCompletionEvent(parts: string[], config: WorktreeBaseRepoWatchConfig): boolean {
   if (config.nestWorkspaces) {
     return (
@@ -75,6 +77,8 @@ function matchingBaseRepoIds(
   return repoIds
 }
 
+// Why: Git records linked worktrees under the common dir's `worktrees`
+// metadata, which is lower churn than watching checkout contents.
 function matchingGitCommonRepoIds(target: WorktreeBaseWatchTarget, eventPath: string): string[] {
   const parts = pathRelativeToWorktreeWatchRoot(target.path, eventPath)
   if (!parts || parts[0] !== 'worktrees') {
