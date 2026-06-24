@@ -668,6 +668,26 @@ describe('repo slice runtime routing', () => {
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
   })
 
+  it('drops persisted visit timestamps for removed unhydrated SSH repos', async () => {
+    const store = createTestStore()
+    const sshWorktreeId = `${sshRepo.id}::/home/orca/wt`
+    const localWorktreeId = `${localRepo.id}::/local/wt`
+    store.setState({
+      repos: [sshRepo, localRepo],
+      activeRepoId: sshRepo.id,
+      lastVisitedAtByWorktreeId: {
+        [sshWorktreeId]: 100,
+        [localWorktreeId]: 200
+      }
+    })
+
+    await store.getState().removeProject(sshRepo.id)
+
+    expect(store.getState().repos).toEqual([localRepo])
+    expect(store.getState().lastVisitedAtByWorktreeId).toEqual({ [localWorktreeId]: 200 })
+    expect(reposRemove).toHaveBeenCalledWith({ repoId: sshRepo.id })
+  })
+
   it('evicts GitHub caches for removed repos using repo id and legacy path keys', async () => {
     const store = createTestStore()
     store.setState({
