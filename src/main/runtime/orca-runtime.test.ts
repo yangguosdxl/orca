@@ -2068,6 +2068,85 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('创建后首次列表未命中但随后出现时返回 runtime 本地 worktree', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const mainWorktree = {
+      path: TEST_REPO_PATH,
+      head: 'main-head',
+      branch: 'refs/heads/main',
+      isBare: false,
+      isMainWorktree: true
+    }
+    const createdWorktree = {
+      path: '/tmp/workspaces/runtime-list-race',
+      head: 'created-head',
+      branch: 'refs/heads/runtime-list-race',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(createdWorktree.path)
+    ensurePathWithinWorkspaceMock.mockReturnValue(createdWorktree.path)
+    const listWorktreesCallsBeforeCreate = vi.mocked(listWorktrees).mock.calls.length
+    vi.mocked(listWorktrees)
+      .mockResolvedValueOnce([mainWorktree])
+      .mockResolvedValueOnce([mainWorktree, createdWorktree])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-list-race'
+    })
+
+    expect(listWorktrees).toHaveBeenCalledTimes(listWorktreesCallsBeforeCreate + 2)
+    expect(result.worktree).toMatchObject({
+      path: createdWorktree.path,
+      branch: 'refs/heads/runtime-list-race'
+    })
+  })
+
+  it('创建后列表路径被 Git 规范化但分支和名称匹配时返回 runtime 本地 worktree', async () => {
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        workspaceDir: 'C:\\Users\\Administrator\\orca\\workspaces\\repo'
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const createdWorktree = {
+      path: 'D:/Users/Administrator/orca/workspaces/repo/runtime-path-normalized',
+      head: 'created-head',
+      branch: 'refs/heads/runtime-path-normalized',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(
+      'C:\\Users\\Administrator\\orca\\workspaces\\repo\\runtime-path-normalized'
+    )
+    ensurePathWithinWorkspaceMock.mockReturnValue(
+      'C:\\Users\\Administrator\\orca\\workspaces\\repo\\runtime-path-normalized'
+    )
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: 'D:/Users/Administrator/AppData/Local/Temp/repo',
+        head: 'main-head',
+        branch: 'refs/heads/main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      createdWorktree
+    ])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-path-normalized'
+    })
+
+    expect(result.worktree).toMatchObject({
+      path: createdWorktree.path,
+      branch: 'refs/heads/runtime-path-normalized'
+    })
+  })
+
   it('returns runtime local base update suggestions from addWorktree', async () => {
     const runtime = new OrcaRuntimeService(store)
     const createdWorktree = {

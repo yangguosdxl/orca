@@ -600,6 +600,135 @@ describe('registerWorktreeHandlers', () => {
     expect(addWorktreeMock).toHaveBeenCalled()
   })
 
+  it('创建后列表未命中时输出本地诊断上下文', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/repo',
+        head: 'main-head',
+        branch: 'refs/heads/main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      {
+        path: '/workspace/other-worktree',
+        head: 'other-head',
+        branch: 'refs/heads/other-worktree',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    try {
+      await expect(
+        handlers['worktrees:create'](null, {
+          repoId: 'repo-1',
+          name: 'improve-dashboard'
+        })
+      ).rejects.toThrow('Worktree created but not found in listing')
+
+      expect(infoSpy).toHaveBeenCalledWith(
+        '[worktree-create] 开始创建本地 worktree',
+        expect.objectContaining({
+          repoId: 'repo-1',
+          repoPath: '/workspace/repo',
+          worktreePath: '/workspace/improve-dashboard',
+          branchName: 'improve-dashboard',
+          baseBranch: 'origin/main'
+        })
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[worktree-create] 创建后列表未找到本地 worktree',
+        expect.objectContaining({
+          repoId: 'repo-1',
+          repoPath: '/workspace/repo',
+          expectedPath: '/workspace/improve-dashboard',
+          branchName: 'improve-dashboard',
+          candidateCount: 2,
+          candidates: expect.arrayContaining([
+            expect.objectContaining({
+              path: '/workspace/other-worktree',
+              branch: 'refs/heads/other-worktree',
+              pathMatches: false,
+              branchMatches: false
+            })
+          ])
+        })
+      )
+    } finally {
+      infoSpy.mockRestore()
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('创建后首次列表未命中但随后出现时返回创建的本地 worktree', async () => {
+    const mainWorktree = {
+      path: '/workspace/repo',
+      head: 'main-head',
+      branch: 'refs/heads/main',
+      isBare: false,
+      isMainWorktree: true
+    }
+    const createdWorktree = {
+      path: '/workspace/improve-dashboard',
+      head: 'created-head',
+      branch: 'refs/heads/improve-dashboard',
+      isBare: false,
+      isMainWorktree: false
+    }
+    listWorktreesMock
+      .mockResolvedValueOnce([mainWorktree])
+      .mockResolvedValueOnce([mainWorktree, createdWorktree])
+
+    const result = (await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard'
+    })) as CreateWorktreeResult
+
+    expect(listWorktreesMock).toHaveBeenCalledTimes(2)
+    expect(result.worktree).toMatchObject({
+      path: '/workspace/improve-dashboard',
+      branch: 'refs/heads/improve-dashboard'
+    })
+  })
+
+  it('创建后列表路径被 Git 规范化但分支和名称匹配时返回本地 worktree', async () => {
+    store.getSettings.mockReturnValue({
+      branchPrefix: 'none',
+      nestWorkspaces: false,
+      refreshLocalBaseRefOnWorktreeCreate: false,
+      workspaceDir: 'C:\\Users\\Administrator\\orca\\workspaces\\repo'
+    })
+    const createdWorktree = {
+      path: 'D:/Users/Administrator/orca/workspaces/repo/improve-dashboard',
+      head: 'created-head',
+      branch: 'refs/heads/improve-dashboard',
+      isBare: false,
+      isMainWorktree: false
+    }
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: 'D:/Users/Administrator/AppData/Local/Temp/repo',
+        head: 'main-head',
+        branch: 'refs/heads/main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      createdWorktree
+    ])
+
+    const result = (await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'improve-dashboard'
+    })) as CreateWorktreeResult
+
+    expect(result.worktree).toMatchObject({
+      path: createdWorktree.path,
+      branch: 'refs/heads/improve-dashboard'
+    })
+  })
+
   function mockKnownFeatureWorktree(
     path = '/workspace/feature-wt',
     repoPath = '/workspace/repo'

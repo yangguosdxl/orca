@@ -566,6 +566,10 @@ import {
   removeWorktree
 } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
+import {
+  matchesCreatedWorktreeByPathOrBranchName,
+  waitForCreatedWorktreeInList
+} from '../git/created-worktree-list-wait'
 import { isENOENT } from '../ipc/filesystem-auth'
 import {
   createSetupRunnerScript,
@@ -12378,10 +12382,21 @@ export class OrcaRuntimeService {
       )
     }
 
-    const gitWorktrees = hasLocalWorktreeGitOptions
-      ? await listWorktrees(repo.path, localWorktreeGitOptions)
-      : await listWorktrees(repo.path)
-    const created = gitWorktrees.find((gw) => areWorktreePathsEqual(gw.path, worktreePath))
+    const { created } = await waitForCreatedWorktreeInList({
+      readWorktrees: () =>
+        hasLocalWorktreeGitOptions
+          ? listWorktrees(repo.path, localWorktreeGitOptions)
+          : listWorktrees(repo.path),
+      findCreatedWorktree: (worktrees) =>
+        worktrees.find((gw) =>
+          matchesCreatedWorktreeByPathOrBranchName(gw, {
+            expectedPath: worktreePath,
+            expectedName: effectiveSanitizedName,
+            branchName,
+            pathsEqual: areWorktreePathsEqual
+          })
+        )
+    })
     if (!created) {
       throw new Error('Worktree created but not found in listing')
     }
