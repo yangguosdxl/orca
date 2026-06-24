@@ -1,6 +1,7 @@
 import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
+import { Code } from '@tiptap/extension-code'
 import Image from '@tiptap/extension-image'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -28,6 +29,18 @@ import { createRichMarkdownAnnotationHighlightExtension } from './rich-markdown-
 
 const lowlight = createLowlight(common)
 
+const RichMarkdownLink = Link.extend({
+  // Why: link's priority must stay below code's default 100 so Markdown
+  // serializes code-styled labels as [`label`](href).
+  priority: 90
+})
+
+const RichMarkdownCode = Code.extend({
+  // Why: Markdown supports linked code labels, so code cannot exclude the link
+  // mark even though it should still stay exclusive with emphasis marks.
+  excludes: 'code bold italic strike underline'
+})
+
 export function createRichMarkdownExtensions({
   includePlaceholder = false
 }: {
@@ -39,8 +52,10 @@ export function createRichMarkdownExtensions({
     // preview and then still lose syntax on save.
     StarterKit.configure({
       link: false,
+      code: false,
       codeBlock: false
     }),
+    RichMarkdownCode,
     CodeBlockLowlight.extend({
       addNodeView() {
         return safeReactNodeViewRenderer(RichMarkdownCodeBlock)
@@ -49,7 +64,7 @@ export function createRichMarkdownExtensions({
       lowlight,
       defaultLanguage: null
     }),
-    Link.configure({
+    RichMarkdownLink.configure({
       openOnClick: false,
       autolink: true,
       linkOnPaste: true
