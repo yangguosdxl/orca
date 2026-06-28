@@ -3,7 +3,8 @@ import {
   terminalOutputContainsEastAsianRendererRisk,
   terminalOutputPrefersRenderRefresh,
   terminalRewriteOutputRenderRefreshDecision,
-  terminalRewriteOutputPrefersRenderRefresh
+  terminalRewriteOutputPrefersRenderRefresh,
+  windowsEastAsianOutputPrefersRenderRefresh
 } from './terminal-complex-script'
 
 describe('terminalOutputPrefersRenderRefresh', () => {
@@ -241,5 +242,84 @@ describe('terminalRewriteOutputRenderRefreshDecision', () => {
       nextRewriteCsiScanTail: '\x1b[',
       prefersRenderRefresh: false
     })
+  })
+})
+
+describe('windowsEastAsianOutputPrefersRenderRefresh', () => {
+  const NATIVE_CONPTY = {
+    isWindowsClient: true,
+    isNativeWindowsConpty: true,
+    hadRecentInput: false,
+    maxInteractiveRedrawChars: 128 * 1024
+  }
+
+  // Why: regression for #5921 — Codex/Antigravity repaint CJK blocks in place and
+  // the local Windows DOM renderer overprints the prior wide glyphs ("如" → "如如"),
+  // so agent *output* (no recent input) must still force a viewport refresh.
+  it('refreshes native-ConPTY agent CJK output without recent input', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('如果还在主 checkout', NATIVE_CONPTY)).toBe(
+      true
+    )
+  })
+
+  it('refreshes native-ConPTY Korean output without recent input', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('한국어 출력', NATIVE_CONPTY)).toBe(true)
+  })
+
+  it('refreshes CJK output split from its cursor-position CSI in a prior chunk', () => {
+    // Why: the main-process batch window splits the CUP move from the glyph
+    // payload, so the CJK-only chunk carries no control bytes yet still repaints.
+    expect(windowsEastAsianOutputPrefersRenderRefresh('设计专用 worktree', NATIVE_CONPTY)).toBe(true)
+  })
+
+  it('still refreshes recent-input CJK on a non-ConPTY Windows client (Pinyin commit)', () => {
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('请创建', {
+        isWindowsClient: true,
+        isNativeWindowsConpty: false,
+        hadRecentInput: true,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(true)
+  })
+
+  it('does not refresh East Asian output on non-Windows panes', () => {
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('如果还在主', {
+        isWindowsClient: false,
+        isNativeWindowsConpty: false,
+        hadRecentInput: false,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(false)
+  })
+
+  it('does not refresh East Asian output on a remote/serve Windows client without recent input', () => {
+    // Why: SSH/serve panes (win32 client, not native ConPTY) render through a
+    // different layer; refreshing every CJK chunk there is wasted work.
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('如果还在主', {
+        isWindowsClient: true,
+        isNativeWindowsConpty: false,
+        hadRecentInput: false,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(false)
+  })
+
+  it('does not refresh plain ASCII agent output', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('checkout worktree', NATIVE_CONPTY)).toBe(
+      false
+    )
+  })
+
+  it('skips bulk chunks larger than the interactive redraw bound', () => {
+    const bulk = '如'.repeat(200)
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh(bulk, {
+        ...NATIVE_CONPTY,
+        maxInteractiveRedrawChars: 100
+      })
+    ).toBe(false)
   })
 })

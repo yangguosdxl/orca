@@ -7153,7 +7153,11 @@ describe('connectPanePty', () => {
     }
   })
 
-  it('does not force the Windows CJK repaint path without recent terminal input', async () => {
+  // Why: #5921 — Codex/Antigravity repaint CJK blocks in place and the local
+  // Windows DOM renderer overprints the prior wide glyphs ("如" → "如如"). Agent
+  // output is not recent input, so native-ConPTY CJK output must still force a
+  // viewport refresh to clear the stale wide cells.
+  it('forces the Windows CJK repaint path for native-ConPTY agent output without recent input', async () => {
     const restoreNavigator = temporarilySetNavigatorUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     )
@@ -7168,6 +7172,48 @@ describe('connectPanePty', () => {
         }
       )
       transportFactoryQueue.push(transport)
+
+      const pane = createPane(1)
+      const refresh = vi.fn()
+      const terminal = pane.terminal as typeof pane.terminal & {
+        _core?: { refresh: typeof refresh }
+      }
+      terminal._core = { refresh }
+      terminal.write = vi.fn((_data: string, callback?: () => void) => {
+        callback?.()
+      })
+
+      connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+      await flushAsyncTicks(6)
+
+      capturedDataCallback.current?.('已经安装完成，软件已更新后重启。')
+
+      expect(refresh).toHaveBeenCalledWith(0, 39, true)
+    } finally {
+      restoreNavigator()
+    }
+  })
+
+  it('does not force the Windows CJK repaint path for remote/serve agent output without recent input', async () => {
+    const restoreNavigator = temporarilySetNavigatorUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    )
+    try {
+      const { connectPanePty } = await import('./pty-connection')
+      const transport = createMockTransport()
+      const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          capturedDataCallback.current = callbacks.onData ?? null
+          return 'pty-id'
+        }
+      )
+      transportFactoryQueue.push(transport)
+      // Why: a serve/remote-runtime pane is not a native local ConPTY, so its
+      // bytes render through a different layer; refreshing every CJK output
+      // chunk there is wasted work. Recent-input CJK still refreshes (separate
+      // win32-client path), but plain agent output must not.
+      enableActiveRuntimeEnvironment('env-1')
 
       const pane = createPane(1)
       const refresh = vi.fn()

@@ -260,3 +260,43 @@ export function terminalOutputContainsEastAsianRendererRisk(data: string): boole
   }
   return false
 }
+
+export type WindowsEastAsianRefreshState = {
+  // Why: the local Windows DOM renderer is the only one that overprints wide
+  // glyphs; a win32 *client* alone gates the recent-input (IME commit) path,
+  // while native ConPTY gates the agent-output path (SSH/serve panes render
+  // through a different layer and must not pay the per-chunk repaint).
+  isWindowsClient: boolean
+  isNativeWindowsConpty: boolean
+  hadRecentInput: boolean
+  maxInteractiveRedrawChars: number
+}
+
+/**
+ * Whether a Windows foreground chunk needs a forced viewport refresh because it
+ * carries East Asian double-width glyphs that the local DOM renderer can paint
+ * over a stale prior frame.
+ *
+ * Why: TUI agents (Codex, Antigravity) repaint blocks in place. The wide-char
+ * cells xterm parses are correct, but the local Windows DOM renderer can leave
+ * the previous frame's wide glyphs painted on top, so CJK/Korean text shows
+ * duplicated/overprinted ("如" → "如如") until the next redraw. Recent-input CJK
+ * (Microsoft Pinyin commits) already forced a refresh; agent *output* is not
+ * recent input and its East Asian glyphs are equally affected, so refresh those
+ * native-ConPTY chunks too. Bounded by the interactive-redraw chunk size so a
+ * bulk paste/scrollback dump does not pay a per-chunk repaint cost.
+ */
+export function windowsEastAsianOutputPrefersRenderRefresh(
+  data: string,
+  state: WindowsEastAsianRefreshState
+): boolean {
+  const recentInputRefresh = state.isWindowsClient && state.hadRecentInput
+  const agentOutputRefresh = state.isNativeWindowsConpty
+  if (!recentInputRefresh && !agentOutputRefresh) {
+    return false
+  }
+  if (data.length > state.maxInteractiveRedrawChars) {
+    return false
+  }
+  return terminalOutputContainsEastAsianRendererRisk(data)
+}

@@ -26,10 +26,10 @@ import { getFitOverrideForPty, bindPanePtyId } from '@/lib/pane-manager/mobile-f
 import { isPtyLocked } from '@/lib/pane-manager/mobile-driver-state'
 import { isPaneReplaying, replayIntoTerminal, replayIntoTerminalAsync } from './replay-guard'
 import {
-  terminalOutputContainsEastAsianRendererRisk,
   terminalOutputPrefersRenderRefresh,
   terminalRewriteOutputRenderRefreshDecision,
-  terminalRewriteOutputPrefersRenderRefresh
+  terminalRewriteOutputPrefersRenderRefresh,
+  windowsEastAsianOutputPrefersRenderRefresh
 } from '@/lib/pane-manager/terminal-complex-script'
 import {
   PANE_PTY_RESIZE_HOLD_FLUSH_EVENT,
@@ -2746,15 +2746,17 @@ export function connectPanePty(
         return true
       }
       if (
-        shouldApplyWindowsRendererUnicodeRefresh &&
-        recentInput &&
-        data.length <= FOREGROUND_INTERACTIVE_REDRAW_CHARS &&
-        terminalOutputContainsEastAsianRendererRisk(data)
+        windowsEastAsianOutputPrefersRenderRefresh(data, {
+          isWindowsClient: shouldApplyWindowsRendererUnicodeRefresh,
+          isNativeWindowsConpty: shouldApplyNativeWindowsRewriteRefresh,
+          hadRecentInput: recentInput,
+          maxInteractiveRedrawChars: FOREGROUND_INTERACTIVE_REDRAW_CHARS
+        })
       ) {
-        // Why: Microsoft Pinyin commits can surface as plain CJK foreground
-        // bytes; the prompt model is correct, but the local Windows renderer
-        // can leave individual glyph cells blank until repaint. Keep this
-        // scoped to recent East Asian text input, not all Unicode output.
+        // Why: CJK/Korean from Microsoft Pinyin commits and from TUI agents
+        // (Codex/Antigravity) repainting in place both leave stale wide-glyph
+        // cells in the local Windows DOM renderer; the buffer is correct, so a
+        // viewport repaint resolves the duplicated/overprinted glyphs (#5921).
         return true
       }
       return (
