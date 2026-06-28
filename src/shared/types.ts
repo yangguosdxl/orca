@@ -2545,7 +2545,7 @@ export type GlobalSettings = {
    *  background "Setup" tab so the user's main terminal stays immediately
    *  usable without the setup output crowding the initial pane. */
   setupScriptLaunchMode: SetupScriptLaunchMode
-  terminalScrollbackBytes: number
+  terminalScrollbackRows: number
   /** Optional app-level proxy for Electron networking and locally spawned PTYs.
    *  Empty preserves system proxy settings plus inherited proxy env behavior. */
   httpProxyUrl?: string

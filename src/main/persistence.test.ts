@@ -3858,6 +3858,102 @@ describe('Store', () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
+  it('migrates missing terminal scrollback rows to the row default and writes back rows only', async () => {
+    writeDataFile({ settings: {} })
+
+    const store = await createStore()
+
+    expect(store.getSettings().terminalScrollbackRows).toBe(5_000)
+
+    store.flush()
+    const persisted = readDataFile() as { settings?: Record<string, unknown> }
+    expect(persisted.settings?.terminalScrollbackRows).toBe(5_000)
+    expect(persisted.settings).not.toHaveProperty('terminalScrollbackBytes')
+  })
+
+  it('migrates legacy terminal scrollback byte presets by intent', async () => {
+    writeDataFile({
+      settings: {
+        terminalScrollbackBytes: 25_000_000
+      }
+    })
+
+    const store = await createStore()
+
+    expect(store.getSettings().terminalScrollbackRows).toBe(10_000)
+
+    store.flush()
+    const persisted = readDataFile() as { settings?: Record<string, unknown> }
+    expect(persisted.settings?.terminalScrollbackRows).toBe(10_000)
+    expect(persisted.settings).not.toHaveProperty('terminalScrollbackBytes')
+  })
+
+  it('lets persisted terminal scrollback rows win over legacy bytes', async () => {
+    writeDataFile({
+      settings: {
+        terminalScrollbackRows: 25_000,
+        terminalScrollbackBytes: 100_000_000
+      }
+    })
+
+    const store = await createStore()
+
+    expect(store.getSettings().terminalScrollbackRows).toBe(25_000)
+
+    store.flush()
+    const persisted = readDataFile() as { settings?: Record<string, unknown> }
+    expect(persisted.settings?.terminalScrollbackRows).toBe(25_000)
+    expect(persisted.settings).not.toHaveProperty('terminalScrollbackBytes')
+  })
+
+  it('normalizes invalid and clamped terminal scrollback rows on load', async () => {
+    writeDataFile({
+      settings: {
+        terminalScrollbackRows: '50000'
+      }
+    })
+
+    const invalidStore = await createStore()
+    expect(invalidStore.getSettings().terminalScrollbackRows).toBe(5_000)
+    invalidStore.flush()
+
+    writeDataFile({
+      settings: {
+        terminalScrollbackRows: 75_000
+      }
+    })
+
+    const clampedStore = await createStore()
+    expect(clampedStore.getSettings().terminalScrollbackRows).toBe(50_000)
+  })
+
+  it('normalizes terminal scrollback row updates and ignores stale byte updates', async () => {
+    const store = await createStore()
+    const listener = vi.fn()
+    store.onSettingsChanged(listener)
+
+    const updated = store.updateSettings(
+      {
+        terminalScrollbackRows: 75_000,
+        terminalScrollbackBytes: 250_000_000
+      } as never,
+      { notifyListeners: true }
+    )
+
+    expect(updated.terminalScrollbackRows).toBe(50_000)
+    expect(listener).toHaveBeenCalledWith(
+      { terminalScrollbackRows: 50_000 },
+      expect.objectContaining({ terminalScrollbackRows: 50_000 }),
+      undefined
+    )
+
+    store.updateSettings({ terminalScrollbackBytes: 10_000_000 } as never)
+    store.flush()
+    const persisted = readDataFile() as { settings?: Record<string, unknown> }
+    expect(persisted.settings?.terminalScrollbackRows).toBe(50_000)
+    expect(persisted.settings).not.toHaveProperty('terminalScrollbackBytes')
+  })
+
   it('normalizes disabled TUI agents on load and update', async () => {
     writeFileSync(
       join(testState.dir, 'orca-data.json'),
