@@ -3113,7 +3113,13 @@ export class OrcaRuntimeService {
     if (tab.type === 'terminal') {
       // Why: split terminal leaves share one parent tab; merge dedup must stay
       // leaf-scoped or preserved siblings collapse into a single surface.
-      return [tab.id, `${tab.parentTabId}::${tab.leafId}`]
+      const keys = [tab.id, `${tab.parentTabId}::${tab.leafId}`]
+      if (typeof tab.ptyId === 'string' && tab.ptyId.length > 0) {
+        // Why: renderer and headless sources can derive different leafIds for the same
+        // terminal; real PTYs collapse those duplicates without merging pending splits.
+        keys.push(`${tab.parentTabId}::pty:${tab.ptyId}`)
+      }
+      return keys
     }
     if (tab.type === 'browser') {
       return [tab.id, tab.browserWorkspaceId]

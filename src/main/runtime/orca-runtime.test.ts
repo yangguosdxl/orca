@@ -14283,6 +14283,177 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('collapses duplicate mobile terminal entries when renderer and headless leaf ids diverge for the same pty', async () => {
+    const rendererLeafId = HEADLESS_SECOND_LEAF_ID
+    const ptyId = 'serve-persisted-pty'
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Persisted Mobile Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => []
+    })
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    })
+    runtime.attachWindow(1)
+    const rendererSnapshot = {
+      worktree: TEST_WORKTREE_ID,
+      publicationEpoch: 'renderer-graph',
+      snapshotVersion: 1,
+      activeGroupId: 'group-1',
+      activeTabId: `host-tab::${rendererLeafId}`,
+      activeTabType: 'terminal' as const,
+      tabGroups: [
+        {
+          id: 'group-1',
+          activeTabId: 'host-tab',
+          tabOrder: ['host-tab']
+        }
+      ],
+      tabs: [
+        {
+          type: 'terminal' as const,
+          id: `host-tab::${rendererLeafId}`,
+          parentTabId: 'host-tab',
+          leafId: rendererLeafId,
+          ptyId,
+          title: 'Persisted Mobile Terminal',
+          isActive: true
+        }
+      ]
+    }
+
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [], mobileSessionTabs: [rendererSnapshot] })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [], mobileSessionTabs: [rendererSnapshot] })
+
+    const listed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const terminalTabs = listed.tabs.filter((tab) => tab.type === 'terminal')
+
+    expect(listed.tabs).toHaveLength(1)
+    expect(terminalTabs).toHaveLength(1)
+    expect(terminalTabs[0]).toMatchObject({
+      type: 'terminal',
+      id: `host-tab::${rendererLeafId}`,
+      parentTabId: 'host-tab',
+      leafId: rendererLeafId,
+      ptyId
+    })
+  })
+
+  it('keeps distinct split mobile terminal ptys under the same parent tab', async () => {
+    const rendererLeftLeafId = '33333333-3333-4333-8333-333333333333'
+    const rendererRightLeafId = '44444444-4444-4444-8444-444444444444'
+    const leftPtyId = 'serve-left'
+    const rightPtyId = 'serve-right'
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId: leftPtyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Persisted Split Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({
+            [HEADLESS_LEAF_ID]: leftPtyId,
+            [HEADLESS_SECOND_LEAF_ID]: rightPtyId
+          })
+        }
+      })
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => []
+    })
+    electronMocks.BrowserWindow.fromId.mockReturnValue({
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    })
+    runtime.attachWindow(1)
+    const rendererSnapshot = {
+      worktree: TEST_WORKTREE_ID,
+      publicationEpoch: 'renderer-split-graph',
+      snapshotVersion: 1,
+      activeGroupId: 'group-1',
+      activeTabId: `host-tab::${rendererLeftLeafId}`,
+      activeTabType: 'terminal' as const,
+      tabGroups: [
+        {
+          id: 'group-1',
+          activeTabId: 'host-tab',
+          tabOrder: ['host-tab']
+        }
+      ],
+      tabs: [
+        {
+          type: 'terminal' as const,
+          id: `host-tab::${rendererLeftLeafId}`,
+          parentTabId: 'host-tab',
+          leafId: rendererLeftLeafId,
+          ptyId: leftPtyId,
+          title: 'Left',
+          isActive: true
+        },
+        {
+          type: 'terminal' as const,
+          id: `host-tab::${rendererRightLeafId}`,
+          parentTabId: 'host-tab',
+          leafId: rendererRightLeafId,
+          ptyId: rightPtyId,
+          title: 'Right',
+          isActive: false
+        }
+      ]
+    }
+
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [], mobileSessionTabs: [rendererSnapshot] })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [], mobileSessionTabs: [rendererSnapshot] })
+
+    const listed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const terminalTabs = listed.tabs.filter((tab) => tab.type === 'terminal')
+
+    expect(listed.tabs).toHaveLength(2)
+    expect(terminalTabs).toHaveLength(2)
+    expect(terminalTabs.map((tab) => tab.ptyId).sort()).toEqual([leftPtyId, rightPtyId])
+    expect(terminalTabs.map((tab) => tab.leafId).sort()).toEqual(
+      [rendererLeftLeafId, rendererRightLeafId].sort()
+    )
+  })
+
   it('hydrates legacy persisted terminal tabs without layout entries', async () => {
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal({
