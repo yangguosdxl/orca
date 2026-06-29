@@ -5,6 +5,11 @@ import {
   canNavigateNotificationTarget,
   type NotificationNavigationTarget
 } from './notification-navigation'
+import {
+  logNotificationActivationDiagnostic,
+  summarizeActivationArguments,
+  summarizeNotificationTarget
+} from './notification-activation-diagnostics'
 
 const ORCA_NOTIFICATION_PARAM = 'orcaNotification'
 const ORCA_AGENT_SESSION_NOTIFICATION = 'agent-session'
@@ -69,26 +74,69 @@ export function withWindowsNotificationActivationOptions<T extends ToastNotifica
 
   const activationArguments = buildWindowsNotificationActivationArguments(args)
   if (!activationArguments) {
+    logNotificationActivationDiagnostic('toast-options-skip-activation', {
+      platform: process.platform,
+      source: args.source,
+      reason: args.worktreeId ? 'non-navigable-target' : 'missing-worktree-id',
+      ...summarizeNotificationTarget({ worktreeId: args.worktreeId, paneKey: args.paneKey })
+    })
     return options
   }
 
+  const toastXml = buildWindowsToastXml(options, activationArguments)
+  logNotificationActivationDiagnostic('toast-options-set-activation', {
+    platform: process.platform,
+    source: args.source,
+    activationArgumentsLength: activationArguments.length,
+    toastXmlLength: toastXml.length,
+    titlePresent: typeof options.title === 'string' && options.title.length > 0,
+    bodyPresent: typeof options.body === 'string' && options.body.length > 0,
+    silent: options.silent === true,
+    ...summarizeNotificationTarget({ worktreeId: args.worktreeId, paneKey: args.paneKey })
+  })
+
   return {
     ...options,
-    toastXml: buildWindowsToastXml(options, activationArguments)
+    toastXml
   }
 }
 
 export function registerWindowsNotificationActivationHandler(): void {
-  if (process.platform !== 'win32' || typeof Notification.handleActivation !== 'function') {
+  if (process.platform !== 'win32') {
     return
   }
 
+  if (typeof Notification.handleActivation !== 'function') {
+    logNotificationActivationDiagnostic('handle-activation-unavailable', {
+      platform: process.platform,
+      handleActivationType: typeof Notification.handleActivation
+    })
+    return
+  }
+
+  logNotificationActivationDiagnostic('handle-activation-register', {
+    platform: process.platform
+  })
+
   Notification.handleActivation((details) => {
+    logNotificationActivationDiagnostic('handle-activation-fired', {
+      activationType: details.type ?? null,
+      ...summarizeActivationArguments(details.arguments)
+    })
+
     const target = parseWindowsNotificationActivationArguments(details.arguments)
     if (!target) {
+      logNotificationActivationDiagnostic('handle-activation-ignored', {
+        reason: 'unrecognized-arguments',
+        ...summarizeActivationArguments(details.arguments)
+      })
       return
     }
-    activateNotificationTarget(target)
+    const activated = activateNotificationTarget(target)
+    logNotificationActivationDiagnostic('handle-activation-result', {
+      activated,
+      ...summarizeNotificationTarget(target)
+    })
   })
 }
 
