@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ReactModule from 'react'
-import type { Repo } from '../../../../shared/types'
+import type { NestedRepoScanResult, Repo } from '../../../../shared/types'
 
 const mocks = vi.hoisted(() => ({
   stateValues: [] as unknown[],
@@ -87,6 +87,25 @@ function makeRepo(overrides: Partial<Repo> = {}): Repo {
   }
 }
 
+function makeScan(
+  path: string,
+  overrides: Partial<NestedRepoScanResult> = {}
+): NestedRepoScanResult {
+  return {
+    selectedPath: path,
+    selectedPathKind: 'git_repo',
+    repos: [],
+    truncated: false,
+    timedOut: false,
+    stopped: false,
+    durationMs: 1,
+    maxDepth: 3,
+    maxRepos: 100,
+    timeoutMs: null,
+    ...overrides
+  }
+}
+
 describe('useRemoteRepo default-checkout handoff', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -168,6 +187,43 @@ describe('useRemoteRepo default-checkout handoff', () => {
     expect(mocks.stateSetters[3]).not.toHaveBeenCalledWith(
       'Could not refresh project worktrees. Try again.'
     )
+  })
+
+  it('adds a non-git SSH root path when nested repositories are present', async () => {
+    const repo = makeRepo()
+    const scan = makeScan('/srv/repo', {
+      selectedPathKind: 'non_git_folder',
+      repos: [{ path: '/srv/repo/app', displayName: 'app', depth: 1 }]
+    })
+    const scanNestedRepos = vi.fn(async (_path, _connectionId, controls) => {
+      controls?.onProgress?.(scan)
+      return scan
+    })
+    const showNestedRepoReview = vi.fn()
+    const onNestedScanResult = vi.fn()
+    mocks.addRemote.mockResolvedValue({ repo })
+    mocks.fetchWorktrees.mockResolvedValue(true)
+    const { useRemoteRepo } = await import('./AddRepoSteps')
+
+    const result = useRemoteRepo(
+      mocks.fetchWorktrees,
+      vi.fn(),
+      vi.fn(),
+      mocks.onGitRepoReady,
+      scanNestedRepos,
+      showNestedRepoReview,
+      onNestedScanResult
+    )
+    await result.handleAddRemoteRepo()
+
+    expect(showNestedRepoReview).not.toHaveBeenCalled()
+    expect(mocks.addRemote).toHaveBeenCalledWith({
+      connectionId: 'ssh-1',
+      remotePath: '/srv/repo'
+    })
+    expect(onNestedScanResult).toHaveBeenCalledWith(scan, 'attempt-1')
+    expect(mocks.fetchWorktrees).toHaveBeenCalledWith(repo.id, { requireAuthoritative: true })
+    expect(mocks.onGitRepoReady).toHaveBeenCalledWith(repo.id)
   })
 
   it('preselects the preferred SSH target when opening Browse for a selected host', async () => {

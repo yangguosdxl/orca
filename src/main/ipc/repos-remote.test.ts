@@ -6,12 +6,13 @@ setup. */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type * as RepoModule from '../git/repo'
 import { DEFAULT_REPO_BADGE_COLOR } from '../../shared/constants'
 import { isGitRepo } from '../git/repo'
+import { gitExecFileAsync } from '../git/runner'
 
 const {
   handleMock,
@@ -58,6 +59,7 @@ const {
   mockFilesystemProvider: {
     readDir: vi.fn().mockResolvedValue([]),
     readFile: vi.fn().mockRejectedValue(new Error('not found')),
+    writeFile: vi.fn().mockResolvedValue(undefined),
     stat: vi.fn().mockRejectedValue(new Error('not found')),
     createDir: vi.fn().mockResolvedValue(undefined),
     createDirNoClobber: vi.fn().mockResolvedValue(undefined),
@@ -167,6 +169,8 @@ describe('projectGroups IPC validation', () => {
     mockFilesystemProvider.readDir.mockResolvedValue([])
     mockFilesystemProvider.readFile.mockReset()
     mockFilesystemProvider.readFile.mockRejectedValue(new Error('not found'))
+    mockFilesystemProvider.writeFile.mockReset()
+    mockFilesystemProvider.writeFile.mockResolvedValue(undefined)
     mockFilesystemProvider.stat.mockReset()
     mockFilesystemProvider.stat.mockRejectedValue(new Error('not found'))
     mockGitProvider.isGitRepoAsync.mockReset()
@@ -855,6 +859,8 @@ describe('repos:addRemote', () => {
     })
     mockFilesystemProvider.stat.mockReset()
     mockFilesystemProvider.stat.mockRejectedValue(new Error('not found'))
+    mockFilesystemProvider.writeFile.mockReset()
+    mockFilesystemProvider.writeFile.mockResolvedValue(undefined)
     mockFilesystemProvider.createDirNoClobber.mockReset()
     mockFilesystemProvider.createDirNoClobber.mockResolvedValue(undefined)
     mockFilesystemProvider.deletePath.mockReset()
@@ -1324,15 +1330,36 @@ describe('repos:addRemote', () => {
     expect(result).toEqual({ error: 'SSH connection "unknown-conn" not found or not connected' })
   })
 
-  it('throws when remote path is not a git repo', async () => {
+  it('initializes non-git SSH directories as ignored git repos during repos:addRemote', async () => {
     mockGitProvider.isGitRepoAsync.mockResolvedValueOnce({ isRepo: false, rootPath: null })
 
     const result = await handlers.get('repos:addRemote')!(null, {
       connectionId: 'conn-1',
       remotePath: '/home/user/documents'
     })
-    expect(result).toEqual({ error: 'Not a valid git repository: /home/user/documents' })
-    expect(mockStore.addRepo).not.toHaveBeenCalled()
+    expect(mockFilesystemProvider.writeFile).toHaveBeenCalledWith(
+      '/home/user/documents/.gitignore',
+      '*\n!.gitignore\n'
+    )
+    expect(mockGitProvider.exec).toHaveBeenNthCalledWith(1, ['init'], '/home/user/documents')
+    expect(mockGitProvider.exec).toHaveBeenNthCalledWith(
+      2,
+      ['add', '-f', '.gitignore'],
+      '/home/user/documents'
+    )
+    expect(mockGitProvider.exec).toHaveBeenNthCalledWith(
+      3,
+      ['commit', '-m', 'Initial commit'],
+      '/home/user/documents'
+    )
+    expect(mockStore.addRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'git',
+        path: '/home/user/documents',
+        connectionId: 'conn-1'
+      })
+    )
+    expect(result).toHaveProperty('repo.kind', 'git')
   })
 
   it('adds as folder when kind is explicitly set', async () => {
@@ -1566,6 +1593,8 @@ describe('repos:add + repos:clone', () => {
     mockStore.updateProjectHostSetup.mockReset()
     mockWindow.webContents.send.mockReset()
     gitSpawnMock.mockReset()
+    vi.mocked(gitExecFileAsync).mockReset()
+    vi.mocked(gitExecFileAsync).mockResolvedValue({ stdout: '', stderr: '' })
     invalidateAuthorizedRootsCacheMock.mockReset()
     prepareLocalWorktreeRootForRepoMock.mockReset().mockResolvedValue(undefined)
     gitSpawnMock.mockImplementation(() => {
@@ -1603,6 +1632,31 @@ describe('repos:add + repos:clone', () => {
       })
     )
     expect(result).toHaveProperty('repo.externalWorktreeVisibility', 'hide')
+  })
+
+  it('initializes non-git local directories as ignored git repos during repos:add', async () => {
+    const directory = await createTempRoot()
+    await writeFile(join(directory, 'notes.txt'), 'do not track me\n')
+    vi.mocked(isGitRepo).mockReturnValueOnce(false)
+
+    const result = await handlers.get('repos:add')!(null, { path: directory, kind: 'git' })
+
+    await expect(readFile(join(directory, '.gitignore'), 'utf-8')).resolves.toBe('*\n!.gitignore\n')
+    expect(gitExecFileAsync).toHaveBeenNthCalledWith(1, ['init'], { cwd: directory })
+    expect(gitExecFileAsync).toHaveBeenNthCalledWith(2, ['add', '-f', '.gitignore'], {
+      cwd: directory
+    })
+    expect(gitExecFileAsync).toHaveBeenNthCalledWith(3, ['commit', '-m', 'Initial commit'], {
+      cwd: directory
+    })
+    expect(mockStore.addRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: directory,
+        kind: 'git',
+        externalWorktreeVisibility: 'hide'
+      })
+    )
+    expect(result).toHaveProperty('repo.kind', 'git')
   })
 
   it('prepares the worktree root when adding a local git repo', async () => {

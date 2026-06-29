@@ -17,4 +17,11 @@ describe('useOnboardingFlow project-added handoff', () => {
     expect(source).toContain('setHideDefaultBranchWorkspace')
     expect(source).not.toContain("openModal('project-added'")
   })
+
+  it('does not divert root folder adds to nested repository review', () => {
+    const source = readFileSync(ONBOARDING_FLOW_PATH, 'utf8')
+
+    expect(source).not.toContain("showNestedRepoReview(scan, attemptId, 'runtime')")
+    expect(source).not.toContain("showNestedRepoReview(scan, attemptId, 'local', false, scanId)")
+  })
 })

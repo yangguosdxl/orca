@@ -35,6 +35,7 @@ import {
   getClonePathComparisonKey
 } from '../git/repo-clone-path'
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
+import { initializeIgnoredLocalGitRepo } from '../git/ignored-workdir-git-init'
 import { createHash, randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve } from 'path'
@@ -9287,7 +9288,7 @@ export class OrcaRuntimeService {
       throw new Error('Project path must be an absolute path')
     }
     if (kind === 'git' && !isGitRepo(path)) {
-      throw new Error(`Not a valid git repository: ${path}`)
+      await initializeIgnoredLocalGitRepo(path)
     }
 
     const existing = this.store.getRepos().find((repo) => runtimePathsEqual(repo.path, path))

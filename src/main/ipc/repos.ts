@@ -91,6 +91,10 @@ import {
 } from '../project-groups/folder-workspace-path-status'
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
+import {
+  initializeIgnoredLocalGitRepo,
+  initializeIgnoredRemoteGitRepo
+} from '../git/ignored-workdir-git-init'
 
 // Why: `method` answers "which entry point did the user take?", not "what did
 // they add?" — so the IPC the renderer invoked IS the method. We never send
@@ -177,16 +181,19 @@ async function addLocalRepoFromPath(
   kind: 'git' | 'folder' = 'git'
 ): Promise<{ repo: Repo; alreadyExisted: boolean } | { error: string }> {
   const repoKind = kind === 'folder' ? 'folder' : 'git'
-  if (repoKind === 'git' && !isGitRepo(path)) {
-    return { error: `Not a valid git repository: ${path}` }
-  }
-
   const pathKey = normalizeRuntimePathForComparison(path)
   const existing = store
     .getRepos()
     .find((repo) => !repo.connectionId && normalizeRuntimePathForComparison(repo.path) === pathKey)
   if (existing) {
     return { repo: existing, alreadyExisted: true }
+  }
+  if (repoKind === 'git' && !isGitRepo(path)) {
+    try {
+      await initializeIgnoredLocalGitRepo(path)
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
   }
 
   const detected = await detectRepoIconAndUpstream({ repoPath: path, kind: repoKind })
@@ -253,7 +260,23 @@ async function addRemoteRepoFromPath(
           resolvedPath = check.rootPath
         }
       } else {
-        return { error: `Not a valid git repository: ${args.remotePath}` }
+        const fsProvider = getSshFilesystemProvider(args.connectionId)
+        const host = gitProvider.getHostPlatform?.()
+        if (!fsProvider || !host) {
+          return { error: `SSH connection "${args.connectionId}" not found or not connected` }
+        }
+        try {
+          await initializeIgnoredRemoteGitRepo({
+            repoPath: resolvedPath,
+            gitignorePath: joinRemotePath(host, resolvedPath, '.gitignore'),
+            gitMetadataPath: joinRemotePath(host, resolvedPath, '.git'),
+            gitProvider,
+            filesystemProvider: fsProvider
+          })
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : String(err) }
+        }
+        repoKind = 'git'
       }
     } catch (err) {
       if (err instanceof Error && err.message.includes('Not a valid git repository')) {

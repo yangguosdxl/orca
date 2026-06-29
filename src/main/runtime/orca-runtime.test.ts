@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { ipcMain } from 'electron'
@@ -4626,6 +4626,45 @@ describe('OrcaRuntimeService', () => {
 
     expect(repo.badgeColor).toBe(DEFAULT_REPO_BADGE_COLOR)
     expect(added).toEqual([expect.objectContaining({ badgeColor: DEFAULT_REPO_BADGE_COLOR })])
+  })
+
+  it('initializes non-git runtime directories as ignored git repos during addRepo', async () => {
+    const added: Record<string, unknown>[] = []
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [...added] as never,
+      addRepo: (repo: Record<string, unknown>) => {
+        added.push(repo)
+      },
+      getRepo: (id: string) => added.find((repo) => repo.id === id) as never
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-runtime-add-non-git-'))
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockResolvedValue({
+      stdout: '',
+      stderr: ''
+    })
+    try {
+      await writeFile(join(tempRoot, 'notes.txt'), 'do not track me\n')
+
+      const repo = await runtime.addRepo(tempRoot, 'git')
+
+      await expect(readFile(join(tempRoot, '.gitignore'), 'utf-8')).resolves.toBe(
+        '*\n!.gitignore\n'
+      )
+      expect(gitSpy).toHaveBeenNthCalledWith(1, ['init'], { cwd: tempRoot })
+      expect(gitSpy).toHaveBeenNthCalledWith(2, ['add', '-f', '.gitignore'], {
+        cwd: tempRoot
+      })
+      expect(gitSpy).toHaveBeenNthCalledWith(3, ['commit', '-m', 'Initial commit'], {
+        cwd: tempRoot
+      })
+      expect(repo).toMatchObject({ path: tempRoot, kind: 'git' })
+      expect(added).toEqual([expect.objectContaining({ path: tempRoot, kind: 'git' })])
+    } finally {
+      gitSpy.mockRestore()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
   })
 
   it('prepares the runtime worktree root when adding a repo', async () => {
