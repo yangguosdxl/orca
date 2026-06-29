@@ -12,13 +12,30 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 has_target=0
+has_rebuild=0
+has_help=0
 for arg in "$@"; do
   case "$arg" in
-    --target | --target=* | --help | -h)
+    --target | --target=*)
       has_target=1
+      ;;
+    --help | -h)
+      has_target=1
+      has_help=1
+      ;;
+    --rebuild)
+      has_rebuild=1
       ;;
   esac
 done
+
+if [ "$has_help" -eq 1 ]; then
+  printf '%s\n' '用法：sh scripts/build-artifacts.sh [--target current|all|win|mac|linux] [--dry-run] [--rebuild]'
+  printf '%s\n' '说明：默认执行完整重建（等同追加 --rebuild），避免复用过期 out/ 编译输出。'
+  printf '%s\n' '如需增量打包，请直接执行：node config/scripts/build-artifacts.mjs [--target current|all|win|mac|linux] [--dry-run]'
+  printf '%s\n' '安全边界：只执行本地构建，不发布、不打 tag、不 push。'
+  exit 0
+fi
 
 if [ "$has_target" -eq 0 ]; then
   printf '%s\n' '请选择构建目标：'
@@ -40,6 +57,12 @@ if [ "$has_target" -eq 0 ]; then
       exit 1
       ;;
   esac
+fi
+
+# Why: stale out/ output can silently package old source; the public wrapper
+# should favor a fresh build unless the lower-level script is invoked directly.
+if [ "$has_rebuild" -eq 0 ] && [ "$has_help" -eq 0 ]; then
+  set -- "$@" --rebuild
 fi
 
 exec node config/scripts/build-artifacts.mjs "$@"

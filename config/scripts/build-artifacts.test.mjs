@@ -256,6 +256,17 @@ describe('parseArgs', () => {
 })
 
 describe('scripts/build-artifacts.sh', () => {
+  it('帮助信息说明 shell 包装器默认执行完整重建', () => {
+    const result = spawnSync('sh', ['scripts/build-artifacts.sh', '--help'], {
+      encoding: 'utf8'
+    })
+    const output = `${result.stdout}\n${result.stderr}`
+
+    expect(result.status).toBe(0)
+    expect(output).toContain('默认执行完整重建')
+    expect(output).not.toContain('默认复用 out/ 编译输出')
+  })
+
   it('没有指定目标时先询问用户，回车默认当前平台', () => {
     const result = spawnSync('sh', ['scripts/build-artifacts.sh', '--dry-run'], {
       input: '\n',
@@ -266,7 +277,8 @@ describe('scripts/build-artifacts.sh', () => {
     expect(result.status).toBe(0)
     expect(output).toContain('请选择构建目标')
     expect(output).toContain('[构建] dry-run：不会执行实际构建命令')
-    expect(output).toContain('pnpm exec electron-builder')
+    expect(output).toContain('pnpm run build:win')
+    expect(output).not.toContain('pnpm exec electron-builder')
   })
 
   it('兼容 Windows 终端管道传入的 CRLF 回车', () => {
@@ -279,6 +291,7 @@ describe('scripts/build-artifacts.sh', () => {
     expect(result.status).toBe(0)
     expect(output).toContain('请选择构建目标')
     expect(output).toContain('[构建] dry-run：不会执行实际构建命令')
+    expect(output).toContain('pnpm run build:win')
     expect(output).not.toContain('无效选项')
   })
 })
