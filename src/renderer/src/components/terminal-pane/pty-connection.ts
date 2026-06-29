@@ -2493,15 +2493,20 @@ export function connectPanePty(
       return tail.slice(-TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS)
     }
 
-    function foregroundAnsiOutputPrefersRenderRefresh(data: string): boolean {
+    function foregroundOutputPrefersRenderRefresh(data: string): boolean {
       if (!data) {
         return false
       }
       const scanData = foregroundRefreshRiskScanTail
         ? `${foregroundRefreshRiskScanTail}${data}`
         : data
+      // Why: local Windows ConPTY can leave stale wide glyph cells even for
+      // plain Codex CJK output without ANSI rewrites; refresh those chunks too.
+      const shouldScanPlainUnicode =
+        shouldApplyNativeWindowsRewriteRefresh && containsNonAsciiOutput(scanData)
       const prefersRefresh =
-        scanData.includes('\x1b[') && terminalOutputPrefersRenderRefresh(scanData)
+        (scanData.includes('\x1b[') || shouldScanPlainUnicode) &&
+        terminalOutputPrefersRenderRefresh(scanData)
       foregroundRefreshRiskScanTail = trailingIncompleteCsiSequence(scanData)
       return prefersRefresh
     }
@@ -2726,9 +2731,9 @@ export function connectPanePty(
     }
 
     function shouldForceForegroundRenderRefresh(data: string): boolean {
-      if (foregroundAnsiOutputPrefersRenderRefresh(data)) {
-        // Why: Codex-style background SGR panels can paint cell fills while
-        // glyphs lag behind; refresh only renderer-risk ANSI chunks, not all output.
+      if (foregroundOutputPrefersRenderRefresh(data)) {
+        // Why: Codex-style SGR panels and Windows ConPTY wide glyph paints can
+        // leave fills/glyphs stale; refresh only renderer-risk chunks.
         return true
       }
       return (
