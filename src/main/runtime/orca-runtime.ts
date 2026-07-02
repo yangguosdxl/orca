@@ -39,6 +39,7 @@ import {
   getClonePathComparisonKey
 } from '../git/repo-clone-path'
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
+import { initializeIgnoredLocalGitRepo } from '../git/ignored-workdir-git-init'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
@@ -584,6 +585,10 @@ import {
   removeWorktree
 } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
+import {
+  matchesCreatedWorktreeByPathOrBranchName,
+  waitForCreatedWorktreeInList
+} from '../git/created-worktree-list-wait'
 import { isENOENT } from '../ipc/filesystem-auth'
 import {
   createSetupRunnerScript,
@@ -9715,7 +9720,7 @@ export class OrcaRuntimeService {
       throw new Error('Project path must be an absolute path')
     }
     if (kind === 'git' && !isGitRepo(path)) {
-      throw new Error(`Not a valid git repository: ${path}`)
+      await initializeIgnoredLocalGitRepo(path)
     }
 
     const existing = this.store.getRepos().find((repo) => runtimePathsEqual(repo.path, path))
@@ -12931,10 +12936,21 @@ export class OrcaRuntimeService {
       )
     }
 
-    const gitWorktrees = hasLocalWorktreeGitOptions
-      ? await listWorktrees(repo.path, localWorktreeGitOptions)
-      : await listWorktrees(repo.path)
-    const created = gitWorktrees.find((gw) => areWorktreePathsEqual(gw.path, worktreePath))
+    const { created } = await waitForCreatedWorktreeInList({
+      readWorktrees: () =>
+        hasLocalWorktreeGitOptions
+          ? listWorktrees(repo.path, localWorktreeGitOptions)
+          : listWorktrees(repo.path),
+      findCreatedWorktree: (worktrees) =>
+        worktrees.find((gw) =>
+          matchesCreatedWorktreeByPathOrBranchName(gw, {
+            expectedPath: worktreePath,
+            expectedName: effectiveSanitizedName,
+            branchName,
+            pathsEqual: areWorktreePathsEqual
+          })
+        )
+    })
     if (!created) {
       throw new Error('Worktree created but not found in listing')
     }

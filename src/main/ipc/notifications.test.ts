@@ -14,6 +14,7 @@ const {
   notificationRemoveListenerMock,
   notificationCtorMock,
   notificationIsSupportedMock,
+  notificationHandleActivationMock,
   getAllWindowsMock,
   shellOpenExternalMock
 } = vi.hoisted(() => {
@@ -34,6 +35,7 @@ const {
     }
   })
   const notificationIsSupportedMock = vi.fn(() => true)
+  const notificationHandleActivationMock = vi.fn()
   const getAllWindowsMock = vi.fn(() => [])
   const shellOpenExternalMock = vi.fn()
   return {
@@ -46,6 +48,7 @@ const {
     notificationRemoveListenerMock,
     notificationCtorMock,
     notificationIsSupportedMock,
+    notificationHandleActivationMock,
     getAllWindowsMock,
     shellOpenExternalMock
   }
@@ -57,7 +60,8 @@ vi.mock('electron', () => ({
     handle: handleMock
   },
   Notification: Object.assign(notificationCtorMock, {
-    isSupported: notificationIsSupportedMock
+    isSupported: notificationIsSupportedMock,
+    handleActivation: notificationHandleActivationMock
   }),
   BrowserWindow: {
     getAllWindows: getAllWindowsMock
@@ -98,6 +102,7 @@ describe('registerNotificationHandlers', () => {
     notificationRemoveListenerMock.mockClear()
     notificationIsSupportedMock.mockReset()
     notificationIsSupportedMock.mockReturnValue(true)
+    notificationHandleActivationMock.mockReset()
     getAllWindowsMock.mockReset()
     getAllWindowsMock.mockReturnValue([])
     shellOpenExternalMock.mockClear()
@@ -420,6 +425,110 @@ describe('registerNotificationHandlers', () => {
     })
   })
 
+  it('adds Windows toast activation arguments for navigable agent notifications', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      registerNotificationHandlers({
+        getSettings: () => ({
+          notifications: {
+            enabled: true,
+            agentTaskComplete: true,
+            terminalBell: true,
+            suppressWhenFocused: false
+          }
+        })
+      } as never)
+
+      const paneKey = 'tab-1:11111111-1111-4111-8111-111111111111'
+      const handler = getDispatchHandler()
+      expect(
+        handler(
+          {},
+          {
+            source: 'agent-task-complete',
+            worktreeId: 'repo::wt1',
+            worktreeLabel: 'feat/notis',
+            agentType: 'codex',
+            agentState: 'done',
+            paneKey
+          }
+        )
+      ).toEqual({ delivered: true })
+
+      const notificationCalls = notificationCtorMock.mock.calls as unknown as [
+        { toastXml?: string }
+      ][]
+      const toastXml = notificationCalls.at(-1)?.[0].toastXml ?? ''
+      expect(toastXml).toContain('<toast launch="')
+      expect(toastXml).toContain('orcaNotification=agent-session')
+      expect(toastXml).toContain('worktreeId=repo%3A%3Awt1')
+      expect(toastXml).toContain('paneKey=tab-1%3A11111111-1111-4111-8111-111111111111')
+      expect(toastXml).toContain('<text>feat/notis - Codex finished</text>')
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  it('routes Windows notification center activation to the originating terminal pane', () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const webContentsSend = vi.fn()
+      const focus = vi.fn()
+      getAllWindowsMock.mockReturnValue([
+        {
+          isDestroyed: () => false,
+          isFocused: () => false,
+          isMinimized: () => false,
+          focus,
+          webContents: { send: webContentsSend }
+        } as never
+      ])
+      registerNotificationHandlers({
+        getSettings: () => ({
+          notifications: {
+            enabled: true,
+            agentTaskComplete: true,
+            terminalBell: true,
+            suppressWhenFocused: false
+          }
+        })
+      } as never)
+
+      const activationHandler = notificationHandleActivationMock.mock.calls.at(-1)?.[0] as
+        | ((details: { arguments: string; type: string }) => void)
+        | undefined
+      expect(activationHandler).toEqual(expect.any(Function))
+
+      const paneKey = 'tab-1:11111111-1111-4111-8111-111111111111'
+      activationHandler?.({
+        type: 'click',
+        arguments: new URLSearchParams({
+          orcaNotification: 'agent-session',
+          worktreeId: 'repo::wt1',
+          paneKey
+        }).toString()
+      })
+
+      expect(focus).toHaveBeenCalledTimes(1)
+      expect(webContentsSend).toHaveBeenCalledWith('ui:activateWorktree', {
+        repoId: 'repo',
+        worktreeId: 'repo::wt1'
+      })
+      expect(webContentsSend).toHaveBeenCalledWith('ui:focusTerminal', {
+        tabId: 'tab-1',
+        worktreeId: 'repo::wt1',
+        leafId: '11111111-1111-4111-8111-111111111111',
+        ackPaneKeyOnSuccess: paneKey,
+        flashFocusedPane: true,
+        scrollToBottomIfOutputSinceLastView: true
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
   it('clears the retained notification fallback timer when the native notification closes', () => {
     registerNotificationHandlers({
       getSettings: () => ({
@@ -505,10 +614,12 @@ describe('registerNotificationHandlers', () => {
     ).toEqual({ delivered: true })
 
     expect(notificationCtorMock).toHaveBeenCalledWith(
-      expectedNativeNotificationOptions({
-        title: 'feat/notis - Codex finished',
-        body: 'Updated the notification body.'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'feat/notis - Codex finished',
+          body: 'Updated the notification body.'
+        })
+      )
     )
   })
 
@@ -542,10 +653,12 @@ describe('registerNotificationHandlers', () => {
     ).toEqual({ delivered: true })
 
     expect(notificationCtorMock).toHaveBeenCalledWith(
-      expectedNativeNotificationOptions({
-        title: 'orca / feat/notis - Codex finished',
-        body: 'Updated the notification body.'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'orca / feat/notis - Codex finished',
+          body: 'Updated the notification body.'
+        })
+      )
     )
   })
 
@@ -579,10 +692,12 @@ describe('registerNotificationHandlers', () => {
     ).toEqual({ delivered: true })
 
     expect(notificationCtorMock).toHaveBeenCalledWith(
-      expectedNativeNotificationOptions({
-        title: 'jinjing-work / main - Claude finished',
-        body: 'Claude finished.'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'jinjing-work / main - Claude finished',
+          body: 'Claude finished.'
+        })
+      )
     )
   })
 
@@ -630,17 +745,21 @@ describe('registerNotificationHandlers', () => {
 
     expect(notificationCtorMock).toHaveBeenNthCalledWith(
       1,
-      expectedNativeNotificationOptions({
-        title: 'feat/notis - Claude needs input',
-        body: 'Please approve the command.'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'feat/notis - Claude needs input',
+          body: 'Please approve the command.'
+        })
+      )
     )
     expect(notificationCtorMock).toHaveBeenNthCalledWith(
       2,
-      expectedNativeNotificationOptions({
-        title: 'feat/notis - Claude stopped',
-        body: 'Stopped by user.'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'feat/notis - Claude stopped',
+          body: 'Stopped by user.'
+        })
+      )
     )
   })
 
@@ -715,10 +834,12 @@ describe('registerNotificationHandlers', () => {
     ).toEqual({ delivered: true })
 
     expect(notificationCtorMock).toHaveBeenCalledWith(
-      expectedNativeNotificationOptions({
-        title: 'feat/notis - Agent finished',
-        body: 'Using Bash: pnpm test'
-      })
+      expect.objectContaining(
+        expectedNativeNotificationOptions({
+          title: 'feat/notis - Agent finished',
+          body: 'Using Bash: pnpm test'
+        })
+      )
     )
   })
 

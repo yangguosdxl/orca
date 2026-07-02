@@ -21,18 +21,7 @@ type ShowNestedRepoReview = (args: {
   scanId: string | null
 }) => void
 
-export function useAddRepoServerPathFlow({
-  addRepoPath,
-  closeModal,
-  fetchWorktrees,
-  getNestedRepoRuntimeKind,
-  scanNestedRepos,
-  setActiveNestedScanId,
-  setNestedScanInProgress,
-  showNestedRepoReview,
-  onGitRepoReady,
-  setAddProjectBusyLabel
-}: {
+type AddRepoServerPathFlowOptions = {
   addRepoPath: (path: string, kind?: 'git' | 'folder') => Promise<Repo | null>
   closeModal: () => void
   fetchWorktrees: (repoId: string, options?: { requireAuthoritative?: boolean }) => Promise<unknown>
@@ -47,7 +36,19 @@ export function useAddRepoServerPathFlow({
   showNestedRepoReview: ShowNestedRepoReview
   onGitRepoReady: (repoId: string, source: AddRepoExistingWorkspaceSource) => Promise<void>
   setAddProjectBusyLabel: (label: string | null) => void
-}): {
+}
+
+export function useAddRepoServerPathFlow({
+  addRepoPath,
+  closeModal,
+  fetchWorktrees,
+  getNestedRepoRuntimeKind,
+  scanNestedRepos,
+  setActiveNestedScanId,
+  setNestedScanInProgress,
+  onGitRepoReady,
+  setAddProjectBusyLabel
+}: AddRepoServerPathFlowOptions): {
   serverPath: string
   isAddingServerPath: boolean
   setServerPath: Dispatch<SetStateAction<string>>
@@ -83,33 +84,7 @@ export function useAddRepoServerPathFlow({
             setActiveNestedScanId(scanId)
             setNestedScanInProgress(true)
           }
-          const scan = await scanNestedRepos(
-            path,
-            undefined,
-            scanId
-              ? {
-                  scanId,
-                  onProgress: (progressScan) => {
-                    if (
-                      gen !== serverAddGenRef.current ||
-                      progressScan.selectedPathKind !== 'non_git_folder' ||
-                      progressScan.repos.length === 0
-                    ) {
-                      return
-                    }
-                    showNestedRepoReview({
-                      scan: progressScan,
-                      selectedPath: path,
-                      connectionId: null,
-                      attemptId,
-                      runtimeKind,
-                      inProgress: true,
-                      scanId
-                    })
-                  }
-                }
-              : undefined
-          )
+          const scan = await scanNestedRepos(path, undefined, scanId ? { scanId } : undefined)
           if (gen !== serverAddGenRef.current) {
             return
           }
@@ -124,18 +99,6 @@ export function useAddRepoServerPathFlow({
               scan
             })
           )
-          if (scan?.selectedPathKind === 'non_git_folder' && scan.repos.length > 0) {
-            showNestedRepoReview({
-              scan,
-              selectedPath: path,
-              connectionId: null,
-              attemptId,
-              runtimeKind,
-              inProgress: false,
-              scanId
-            })
-            return
-          }
         }
         setAddProjectBusyLabel(kind === 'git' ? 'Opening project...' : 'Opening folder...')
         const repo = await addRepoPath(path, kind)
@@ -175,8 +138,7 @@ export function useAddRepoServerPathFlow({
       serverPath,
       setActiveNestedScanId,
       setAddProjectBusyLabel,
-      setNestedScanInProgress,
-      showNestedRepoReview
+      setNestedScanInProgress
     ]
   )
 

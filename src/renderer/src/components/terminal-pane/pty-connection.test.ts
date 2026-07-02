@@ -901,6 +901,63 @@ describe('connectPanePty', () => {
     expect(pane.terminal.write).toHaveBeenCalledWith(redraw, expect.any(Function))
   })
 
+  it('refreshes local Windows ConPTY CJK Codex output after xterm parses it', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    })
+    let binding: { dispose: () => void } | null = null
+    try {
+      const pane = createPane(1)
+      const refresh = vi.fn()
+      ;(pane.terminal as unknown as { _core: { refresh: typeof refresh } })._core = { refresh }
+      pane.terminal.write.mockImplementation((_data: string, callback?: () => void) => {
+        callback?.()
+      })
+      const transport = createMockTransport('pty-1')
+      const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          capturedDataCallback.current = callbacks.onData ?? null
+          return 'pty-1'
+        }
+      )
+      transportFactoryQueue.push(transport)
+      mockStoreState = {
+        ...mockStoreState,
+        repos: [{ id: 'repo1', connectionId: null, executionHostId: 'local' }]
+      }
+
+      binding = connectPanePty(
+        pane as never,
+        createManager(1) as never,
+        createDeps({
+          cwd: 'C:\\repo',
+          startup: { command: 'codex' }
+        }) as never
+      )
+      await flushAsyncTicks()
+      expect(capturedDataCallback.current).not.toBeNull()
+
+      capturedDataCallback.current?.('我会把当前这些与非\r\n')
+
+      expect(pane.terminal.write).toHaveBeenCalledWith(
+        '我会把当前这些与非\r\n',
+        expect.any(Function)
+      )
+      expect(refresh).toHaveBeenCalledWith(0, 39, true)
+    } finally {
+      binding?.dispose()
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, 'navigator', originalNavigator)
+      } else {
+        delete (globalThis as { navigator?: Navigator }).navigator
+      }
+    }
+  })
+
   it('keeps large ANSI redraws after terminal input on the immediate xterm write path', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const pane = createPane(1)

@@ -17,6 +17,7 @@ import type {
   CreateWorktreeArgs,
   CreateWorktreeResult,
   GitPushTarget,
+  GitWorktreeInfo,
   GlobalSettings,
   LocalBaseRefRefreshResult,
   LocalBaseRefUpdateSuggestion,
@@ -27,6 +28,12 @@ import type {
 import { getPRForBranch } from '../github/client'
 import { listWorktrees, addWorktree, addSparseWorktree } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
+import {
+  branchMatchesCreatedWorktree,
+  matchesCreatedWorktreeByPathOrBranchName,
+  pathNameMatchesCreatedWorktree,
+  waitForCreatedWorktreeInList
+} from '../git/created-worktree-list-wait'
 import { getGitUsername, getBranchConflictKind, resolveDefaultBaseRefViaExec } from '../git/repo'
 import { hasCommitObjectViaGitExec } from '../git/commit-object-ref'
 import { getHostedReviewForBranch } from '../source-control/hosted-review'
@@ -885,6 +892,61 @@ async function remotePathExists(
   }
 }
 
+type WorktreeCreateCandidateDiagnostic = {
+  path: string
+  branch: string
+  head: string
+  isMainWorktree: boolean
+  pathMatches: boolean
+  branchMatches: boolean
+  nameMatches: boolean
+}
+
+function getCreatedWorktreeCandidateDiagnostics(
+  gitWorktrees: GitWorktreeInfo[],
+  args: {
+    expectedPath: string
+    expectedName: string
+    branchName: string
+  }
+): WorktreeCreateCandidateDiagnostic[] {
+  return gitWorktrees.map((worktree) => ({
+    path: worktree.path,
+    branch: worktree.branch,
+    head: worktree.head,
+    isMainWorktree: worktree.isMainWorktree,
+    pathMatches: areWorktreePathsEqual(worktree.path, args.expectedPath),
+    branchMatches: branchMatchesCreatedWorktree(worktree.branch, args.branchName),
+    nameMatches: pathNameMatchesCreatedWorktree(worktree.path, args.expectedName)
+  }))
+}
+
+function logWorktreeCreateStart(
+  kind: '本地' | 'SSH',
+  diagnostics: Record<string, unknown>
+): void {
+  console.info(`[worktree-create] 开始创建${kind} worktree`, diagnostics)
+}
+
+function logWorktreeCreateListRead(
+  kind: '本地' | 'SSH',
+  diagnostics: Record<string, unknown>
+): void {
+  console.info(`[worktree-create] git worktree add 已完成，开始读取${kind} worktree 列表`, diagnostics)
+}
+
+function logCreatedWorktreeListMiss(
+  kind: '本地' | 'SSH',
+  diagnostics: Record<string, unknown> & {
+    candidates: WorktreeCreateCandidateDiagnostic[]
+  }
+): void {
+  console.warn(`[worktree-create] 创建后列表未找到${kind} worktree`, {
+    ...diagnostics,
+    candidateCount: diagnostics.candidates.length
+  })
+}
+
 export async function prepareWorktreePushTarget(
   repoPath: string,
   target: GitPushTarget,
@@ -1646,6 +1708,16 @@ export async function createRemoteWorktree(
   }
 
   // Create worktree via relay
+  logWorktreeCreateStart('SSH', {
+    repoId: repo.id,
+    connectionId: repo.connectionId,
+    repoPath: repo.path,
+    worktreePath: remotePath,
+    branchName,
+    baseBranch,
+    checkoutExistingBranch,
+    sparseCheckout: sparseDirectories.length > 0
+  })
   try {
     await timing.time('git_worktree_add', async () =>
       provider.addWorktree(
@@ -1699,13 +1771,42 @@ export async function createRemoteWorktree(
   }
 
   // Re-list to get the created worktree info
-  const gitWorktrees = await timing.time('list_created_worktree', async () =>
-    provider.listWorktrees(repo.path)
-  )
-  const created = gitWorktrees.find(
-    (gw) => gw.branch?.endsWith(branchName) || gw.path.endsWith(effectiveSanitizedName)
+  logWorktreeCreateListRead('SSH', {
+    repoId: repo.id,
+    repoPath: repo.path,
+    expectedPath: remotePath,
+    branchName
+  })
+  const {
+    created,
+    worktrees: gitWorktrees,
+    attempts: listAttempts
+  } = await timing.time('list_created_worktree', async () =>
+    waitForCreatedWorktreeInList({
+      readWorktrees: () => provider.listWorktrees(repo.path),
+      findCreatedWorktree: (worktrees) =>
+        worktrees.find(
+          (gw) => gw.branch?.endsWith(branchName) || gw.path.endsWith(effectiveSanitizedName)
+        )
+    })
   )
   if (!created) {
+    logCreatedWorktreeListMiss('SSH', {
+      repoId: repo.id,
+      connectionId: repo.connectionId,
+      repoPath: repo.path,
+      expectedPath: remotePath,
+      expectedName: effectiveSanitizedName,
+      branchName,
+      baseBranch,
+      checkoutExistingBranch,
+      listAttempts,
+      candidates: getCreatedWorktreeCandidateDiagnostics(gitWorktrees, {
+        expectedPath: remotePath,
+        expectedName: effectiveSanitizedName,
+        branchName
+      })
+    })
     throw new Error('Worktree created but not found in listing')
   }
 
@@ -2181,6 +2282,16 @@ export async function createLocalWorktree(
     ...remoteTrackingBaseOption,
     ...(suggestLocalBaseRefUpdate ? { suggestLocalBaseRefUpdate } : {})
   }
+  logWorktreeCreateStart('本地', {
+    repoId: repo.id,
+    repoPath: repo.path,
+    worktreePath,
+    branchName,
+    baseBranch,
+    checkoutExistingBranch,
+    sparseCheckout: sparseDirectories.length > 0,
+    ...(localWorktreeGitOptions.wslDistro ? { wslDistro: localWorktreeGitOptions.wslDistro } : {})
+  })
   const addResult: AddWorktreeResult =
     (await timing.time('git_worktree_add', async () => {
       if (sparseDirectories.length > 0) {
@@ -2284,13 +2395,53 @@ export async function createLocalWorktree(
   }
 
   // Re-list to get the freshly created worktree info
-  const gitWorktrees = await timing.time('list_created_worktree', async () =>
-    hasLocalWorktreeGitOptions
-      ? listWorktrees(repo.path, localWorktreeGitOptions)
-      : listWorktrees(repo.path)
+  logWorktreeCreateListRead('本地', {
+    repoId: repo.id,
+    repoPath: repo.path,
+    expectedPath: worktreePath,
+    branchName,
+    ...(localWorktreeGitOptions.wslDistro ? { wslDistro: localWorktreeGitOptions.wslDistro } : {})
+  })
+  const {
+    created,
+    worktrees: gitWorktrees,
+    attempts: listAttempts
+  } = await timing.time('list_created_worktree', async () =>
+    waitForCreatedWorktreeInList({
+      readWorktrees: () =>
+        hasLocalWorktreeGitOptions
+          ? listWorktrees(repo.path, localWorktreeGitOptions)
+          : listWorktrees(repo.path),
+      findCreatedWorktree: (worktrees) =>
+        worktrees.find((gw) =>
+          matchesCreatedWorktreeByPathOrBranchName(gw, {
+            expectedPath: worktreePath,
+            expectedName: effectiveSanitizedName,
+            branchName,
+            pathsEqual: areWorktreePathsEqual
+          })
+        )
+    })
   )
-  const created = gitWorktrees.find((gw) => areWorktreePathsEqual(gw.path, worktreePath))
   if (!created) {
+    logCreatedWorktreeListMiss('本地', {
+      repoId: repo.id,
+      repoPath: repo.path,
+      expectedPath: worktreePath,
+      expectedName: effectiveSanitizedName,
+      branchName,
+      baseBranch,
+      checkoutExistingBranch,
+      listAttempts,
+      ...(localWorktreeGitOptions.wslDistro
+        ? { wslDistro: localWorktreeGitOptions.wslDistro }
+        : {}),
+      candidates: getCreatedWorktreeCandidateDiagnostics(gitWorktrees, {
+        expectedPath: worktreePath,
+        expectedName: effectiveSanitizedName,
+        branchName
+      })
+    })
     throw new Error('Worktree created but not found in listing')
   }
 

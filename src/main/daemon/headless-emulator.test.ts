@@ -35,6 +35,13 @@ describe('HeadlessEmulator', () => {
       expect(snapshot.snapshotAnsi).toContain('hello world')
     })
 
+    it('reads CJK visible lines without duplicating wide cells', async () => {
+      emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
+      await emulator.write('我会把当前这些与非')
+
+      expect(emulator.getVisibleLines()[0]?.trimEnd()).toBe('我会把当前这些与非')
+    })
+
     it('captures PTY output in immediate snapshots without waiting for queued parsing', () => {
       emulator = new HeadlessEmulator({ cols: 80, rows: 24 })
 

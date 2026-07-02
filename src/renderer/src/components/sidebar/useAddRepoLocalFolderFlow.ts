@@ -22,27 +22,9 @@ type ShowNestedRepoReview = (args: {
   scanId: string | null
 }) => void
 
-type LocalPathAddResult =
-  | { status: 'completed'; repo: Repo }
-  | { status: 'cancelled' | 'paused' | 'skipped' }
+type LocalPathAddResult = { status: 'completed'; repo: Repo } | { status: 'cancelled' | 'paused' }
 
-type LocalPathAddMode = 'single' | 'batch'
-
-export function useAddRepoLocalFolderFlow({
-  isOpen,
-  droppedLocalPath,
-  activeRuntimeEnvironmentId,
-  addRepoPath,
-  closeModal,
-  fetchWorktrees,
-  scanNestedRepos,
-  setActiveNestedScanId,
-  setNestedScanInProgress,
-  showNestedRepoReview,
-  onGitRepoReady,
-  setIsAdding,
-  setAddProjectBusyLabel
-}: {
+type AddRepoLocalFolderFlowOptions = {
   isOpen: boolean
   droppedLocalPath: string
   activeRuntimeEnvironmentId: string | null | undefined
@@ -60,7 +42,22 @@ export function useAddRepoLocalFolderFlow({
   onGitRepoReady: (repoId: string, source: AddRepoExistingWorkspaceSource) => Promise<void>
   setIsAdding: (isAdding: boolean) => void
   setAddProjectBusyLabel: (label: string | null) => void
-}): {
+}
+
+export function useAddRepoLocalFolderFlow({
+  isOpen,
+  droppedLocalPath,
+  activeRuntimeEnvironmentId,
+  addRepoPath,
+  closeModal,
+  fetchWorktrees,
+  scanNestedRepos,
+  setActiveNestedScanId,
+  setNestedScanInProgress,
+  onGitRepoReady,
+  setIsAdding,
+  setAddProjectBusyLabel
+}: AddRepoLocalFolderFlowOptions): {
   handleBrowse: () => Promise<void>
   resetLocalFolderFlow: () => void
 } {
@@ -82,7 +79,7 @@ export function useAddRepoLocalFolderFlow({
       path: string,
       source: AddRepoExistingWorkspaceSource,
       gen: number,
-      mode: LocalPathAddMode = 'single'
+      deferGitRepoReady = false
     ): Promise<LocalPathAddResult> => {
       if (activeRuntimeEnvironmentId?.trim()) {
         toast.error(
@@ -100,28 +97,7 @@ export function useAddRepoLocalFolderFlow({
         const scanId = createNestedRepoScanId()
         setActiveNestedScanId(scanId)
         setNestedScanInProgress(true)
-        const scan = await scanNestedRepos(path, undefined, {
-          scanId,
-          onProgress: (progressScan) => {
-            if (
-              gen !== localAddGenRef.current ||
-              mode === 'batch' ||
-              progressScan.selectedPathKind !== 'non_git_folder' ||
-              progressScan.repos.length === 0
-            ) {
-              return
-            }
-            showNestedRepoReview({
-              scan: progressScan,
-              selectedPath: path,
-              connectionId: null,
-              attemptId,
-              runtimeKind: 'local',
-              inProgress: true,
-              scanId
-            })
-          }
-        })
+        const scan = await scanNestedRepos(path, undefined, { scanId })
         if (gen !== localAddGenRef.current) {
           return { status: 'cancelled' }
         }
@@ -135,23 +111,6 @@ export function useAddRepoLocalFolderFlow({
             scan
           })
         )
-        if (scan?.selectedPathKind === 'non_git_folder' && mode === 'batch') {
-          return { status: 'skipped' }
-        }
-        if (scan?.selectedPathKind === 'non_git_folder' && scan.repos.length > 0) {
-          // Why: the existing nested-repo review is a single-folder decision point.
-          // Pause batch imports here instead of queueing competing review states.
-          showNestedRepoReview({
-            scan,
-            selectedPath: path,
-            connectionId: null,
-            attemptId,
-            runtimeKind: 'local',
-            inProgress: false,
-            scanId
-          })
-          return { status: 'paused' }
-        }
         setAddProjectBusyLabel('Opening project...')
         const repo = await addRepoPath(path)
         if (gen !== localAddGenRef.current) {
@@ -167,7 +126,7 @@ export function useAddRepoLocalFolderFlow({
           if (gen !== localAddGenRef.current) {
             return { status: 'cancelled' }
           }
-          if (mode === 'batch') {
+          if (deferGitRepoReady) {
             return { status: 'completed', repo }
           }
           await onGitRepoReady(repo.id, source)
@@ -193,21 +152,16 @@ export function useAddRepoLocalFolderFlow({
       scanNestedRepos,
       setActiveNestedScanId,
       setAddProjectBusyLabel,
-      setNestedScanInProgress,
-      showNestedRepoReview
+      setNestedScanInProgress
     ]
   )
 
   const handleAddLocalPath = useCallback(
-    async (
-      path: string,
-      source: AddRepoExistingWorkspaceSource,
-      mode: LocalPathAddMode = 'single'
-    ): Promise<LocalPathAddResult> => {
+    async (path: string, source: AddRepoExistingWorkspaceSource): Promise<LocalPathAddResult> => {
       const gen = ++localAddGenRef.current
       setIsAdding(true)
       try {
-        return await addLocalPathForGeneration(path, source, gen, mode)
+        return await addLocalPathForGeneration(path, source, gen)
       } finally {
         if (gen === localAddGenRef.current) {
           clearNestedScanState()
@@ -223,18 +177,8 @@ export function useAddRepoLocalFolderFlow({
     async (paths: string[], source: AddRepoExistingWorkspaceSource, gen: number): Promise<void> => {
       const gitRepoIds: string[] = []
       const shouldDeferGitRepoReady = paths.length > 1
-      let skippedCount = 0
       for (const path of paths) {
-        const result = await addLocalPathForGeneration(
-          path,
-          source,
-          gen,
-          shouldDeferGitRepoReady ? 'batch' : 'single'
-        )
-        if (result.status === 'skipped') {
-          skippedCount++
-          continue
-        }
+        const result = await addLocalPathForGeneration(path, source, gen, shouldDeferGitRepoReady)
         if (result.status !== 'completed') {
           return
         }
@@ -244,20 +188,6 @@ export function useAddRepoLocalFolderFlow({
       }
       if (gen !== localAddGenRef.current) {
         return
-      }
-      if (skippedCount > 0) {
-        toast.info(
-          translate(
-            'auto.components.sidebar.useAddRepoLocalFolderFlow.skippedBatchFolders',
-            'Some folders were skipped'
-          ),
-          {
-            description: translate(
-              'auto.components.sidebar.useAddRepoLocalFolderFlow.skippedBatchFoldersDescription',
-              'Add skipped folders individually to review or confirm them.'
-            )
-          }
-        )
       }
       if (shouldDeferGitRepoReady && gitRepoIds.length > 0) {
         await onGitRepoReady(gitRepoIds[0], source)

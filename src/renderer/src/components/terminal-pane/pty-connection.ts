@@ -3240,6 +3240,8 @@ export function connectPanePty(
       const scanData = foregroundRefreshRiskScanTail
         ? `${foregroundRefreshRiskScanTail}${data}`
         : data
+      // Why: local Windows ConPTY can leave stale wide glyph cells even for
+      // plain Codex CJK output without ANSI rewrites; refresh those chunks too.
       const prefersRefresh =
         (scanData.includes('\x1b[') || containsNonAsciiOutput(scanData)) &&
         terminalOutputPrefersRenderRefresh(scanData)

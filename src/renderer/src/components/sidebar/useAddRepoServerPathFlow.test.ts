@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as ReactModule from 'react'
-import type { Repo } from '../../../../shared/types'
+import type { NestedRepoScanResult, Repo } from '../../../../shared/types'
 
 const mocks = vi.hoisted(() => ({
   stateValues: [] as unknown[],
@@ -61,12 +61,32 @@ function makeRepo(overrides: Partial<Repo> = {}): Repo {
   }
 }
 
+function makeScan(
+  path: string,
+  overrides: Partial<NestedRepoScanResult> = {}
+): NestedRepoScanResult {
+  return {
+    selectedPath: path,
+    selectedPathKind: 'git_repo',
+    repos: [],
+    truncated: false,
+    timedOut: false,
+    stopped: false,
+    durationMs: 1,
+    maxDepth: 3,
+    maxRepos: 100,
+    timeoutMs: null,
+    ...overrides
+  }
+}
+
 describe('useAddRepoServerPathFlow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.stateIndex = 0
     mocks.stateSetters = []
     mocks.stateValues = ['/server/docs', false]
+    mocks.getNestedRepoRuntimeKind.mockReturnValue('local')
   })
 
   it('marks onboarding folder progress before closing server folder adds', async () => {
@@ -94,5 +114,39 @@ describe('useAddRepoServerPathFlow', () => {
     expect(mocks.onGitRepoReady).not.toHaveBeenCalled()
     expect(mocks.markOnboardingProjectAdded).toHaveBeenCalledWith('addedFolder')
     expect(mocks.closeModal).toHaveBeenCalled()
+  })
+
+  it('adds a non-git server root path when nested repositories are present', async () => {
+    const repo = makeRepo({ id: 'docs', kind: 'git' })
+    const scan = makeScan('/server/docs', {
+      selectedPathKind: 'non_git_folder',
+      repos: [{ path: '/server/docs/app', displayName: 'app', depth: 1 }]
+    })
+    mocks.addRepoPath.mockResolvedValue(repo)
+    mocks.fetchWorktrees.mockResolvedValue(true)
+    mocks.scanNestedRepos.mockImplementation(async (_path, _connectionId, controls) => {
+      controls?.onProgress?.(scan)
+      return scan
+    })
+    const { useAddRepoServerPathFlow } = await import('./useAddRepoServerPathFlow')
+
+    const result = useAddRepoServerPathFlow({
+      addRepoPath: mocks.addRepoPath,
+      closeModal: mocks.closeModal,
+      fetchWorktrees: mocks.fetchWorktrees,
+      getNestedRepoRuntimeKind: mocks.getNestedRepoRuntimeKind,
+      scanNestedRepos: mocks.scanNestedRepos,
+      setActiveNestedScanId: mocks.setActiveNestedScanId,
+      setNestedScanInProgress: mocks.setNestedScanInProgress,
+      showNestedRepoReview: mocks.showNestedRepoReview,
+      onGitRepoReady: mocks.onGitRepoReady,
+      setAddProjectBusyLabel: mocks.setAddProjectBusyLabel
+    })
+    await result.handleAddServerPath('git')
+
+    expect(mocks.showNestedRepoReview).not.toHaveBeenCalled()
+    expect(mocks.addRepoPath).toHaveBeenCalledWith('/server/docs', 'git')
+    expect(mocks.fetchWorktrees).toHaveBeenCalledWith('docs', { requireAuthoritative: true })
+    expect(mocks.onGitRepoReady).toHaveBeenCalledWith('docs', 'runtime_server_path')
   })
 })
