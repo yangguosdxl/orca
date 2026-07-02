@@ -24,7 +24,7 @@ export function useRemoteRepo(
     connectionId?: string,
     controls?: { scanId?: string; onProgress?: (scan: NestedRepoScanResult) => void }
   ) => Promise<NestedRepoScanResult | null>,
-  showNestedRepoReview?: (
+  _showNestedRepoReview?: (
     scan: NestedRepoScanResult,
     selectedPath: string,
     connectionId: string,
@@ -144,36 +144,11 @@ export function useRemoteRepo(
       const attemptId = createNestedRepoTelemetryAttemptId()
       const scanId = `nested-repo-scan-${Date.now()}-${Math.random().toString(36).slice(2)}`
       setRemoteNestedScanId(scanId)
-      const scan = await scanNestedRepos?.(trimmedRemotePath, selectedTargetId, {
-        scanId,
-        onProgress: (progressScan) => {
-          if (
-            gen !== remoteGenRef.current ||
-            !mountedRef.current ||
-            progressScan.selectedPathKind !== 'non_git_folder' ||
-            progressScan.repos.length === 0
-          ) {
-            return
-          }
-          showNestedRepoReview?.(
-            progressScan,
-            trimmedRemotePath,
-            selectedTargetId,
-            attemptId,
-            true,
-            scanId
-          )
-        }
-      })
+      const scan = await scanNestedRepos?.(trimmedRemotePath, selectedTargetId, { scanId })
       if (!mountedRef.current || gen !== remoteGenRef.current) {
         return
       }
       onNestedScanResult?.(scan ?? null, attemptId)
-      if (scan?.selectedPathKind === 'non_git_folder' && scan.repos.length > 0) {
-        showNestedRepoReview?.(scan, trimmedRemotePath, selectedTargetId, attemptId, false, scanId)
-        setRemoteNestedScanId(null)
-        return
-      }
       setRemoteNestedScanId(null)
       const result = await window.api.repos.addRemote({
         connectionId: selectedTargetId,
@@ -231,7 +206,6 @@ export function useRemoteRepo(
     selectedTargetId,
     remotePath,
     scanNestedRepos,
-    showNestedRepoReview,
     onNestedScanResult,
     fetchWorktrees,
     mountedRef,

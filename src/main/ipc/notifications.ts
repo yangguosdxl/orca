@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Why: notification IPC keeps permission, dispatch, custom sound asset, and sound-loading handlers colocated so renderer/main contracts stay auditable. */
-import { app, BrowserWindow, Notification, ipcMain, shell } from 'electron'
+import { BrowserWindow, Notification, ipcMain, shell } from 'electron'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, isAbsolute, normalize } from 'node:path'
 import beepSoundPath from '../../../resources/notification-sounds/beep.mp3?asset'
@@ -20,10 +20,13 @@ import type {
   NotificationSettings,
   NotificationSoundDataResult
 } from '../../shared/types'
-import { getRepoIdFromWorktreeId } from '../../shared/worktree-id'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { buildNotificationOptions } from './notification-options'
-import { parsePaneKey } from '../../shared/stable-pane-id'
+import { activateNotificationTarget } from './notification-navigation'
+import {
+  registerWindowsNotificationActivationHandler,
+  withWindowsNotificationActivationOptions
+} from './windows-notification-activation'
 
 const NOTIFICATION_COOLDOWN_MS = 5000
 const MAX_RECENT_NOTIFICATION_KEYS = 50
@@ -203,6 +206,7 @@ function pruneRecentNotifications(recentNotifications: Map<string, number>, now:
 
 export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntimeService): void {
   const recentNotifications = new Map<string, number>()
+  registerWindowsNotificationActivationHandler()
 
   ipcMain.removeHandler('notifications:openSystemSettings')
   ipcMain.removeHandler('notifications:getPermissionStatus')
@@ -324,7 +328,9 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
         // using the OS sound, ask Electron for the default notification sound.
         notificationOptions.sound = 'default'
       }
-      const notification = new Notification(notificationOptions)
+      const notification = new Notification(
+        withWindowsNotificationActivationOptions(notificationOptions, args)
+      )
       if (args.notificationId) {
         const previous = activeNotificationsById.get(args.notificationId)
         if (previous) {
@@ -377,36 +383,14 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
       // separator is missing we cannot reliably extract a repoId, so skip
       // the click-to-navigate binding — the notification still fires but
       // clicking it will not attempt to switch to an unknown worktree.
-      if (args.worktreeId && args.worktreeId.includes('::')) {
-        const repoId = getRepoIdFromWorktreeId(args.worktreeId)
+      const navigationTarget =
+        args.worktreeId && args.worktreeId.includes('::')
+          ? { worktreeId: args.worktreeId, paneKey: args.paneKey }
+          : null
+      if (navigationTarget) {
         clickHandler = () => {
           release()
-          const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
-          if (!win) {
-            return
-          }
-          if (process.platform === 'darwin') {
-            app.focus({ steal: true })
-          }
-          if (win.isMinimized()) {
-            win.restore()
-          }
-          win.focus()
-          win.webContents.send('ui:activateWorktree', {
-            repoId,
-            worktreeId: args.worktreeId
-          })
-          const paneTarget = args.paneKey ? parsePaneKey(args.paneKey) : null
-          if (paneTarget) {
-            win.webContents.send('ui:focusTerminal', {
-              tabId: paneTarget.tabId,
-              worktreeId: args.worktreeId,
-              leafId: paneTarget.leafId,
-              ackPaneKeyOnSuccess: args.paneKey,
-              flashFocusedPane: true,
-              scrollToBottomIfOutputSinceLastView: true
-            })
-          }
+          activateNotificationTarget(navigationTarget)
         }
         notification.on('click', clickHandler)
       }

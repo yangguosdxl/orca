@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ipcMain } from 'electron'
@@ -2235,6 +2235,85 @@ describe('OrcaRuntimeService', () => {
     } finally {
       gitSpy.mockRestore()
     }
+  })
+
+  it('创建后首次列表未命中但随后出现时返回 runtime 本地 worktree', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const mainWorktree = {
+      path: TEST_REPO_PATH,
+      head: 'main-head',
+      branch: 'refs/heads/main',
+      isBare: false,
+      isMainWorktree: true
+    }
+    const createdWorktree = {
+      path: '/tmp/workspaces/runtime-list-race',
+      head: 'created-head',
+      branch: 'refs/heads/runtime-list-race',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(createdWorktree.path)
+    ensurePathWithinWorkspaceMock.mockReturnValue(createdWorktree.path)
+    const listWorktreesCallsBeforeCreate = vi.mocked(listWorktrees).mock.calls.length
+    vi.mocked(listWorktrees)
+      .mockResolvedValueOnce([mainWorktree])
+      .mockResolvedValueOnce([mainWorktree, createdWorktree])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-list-race'
+    })
+
+    expect(listWorktrees).toHaveBeenCalledTimes(listWorktreesCallsBeforeCreate + 2)
+    expect(result.worktree).toMatchObject({
+      path: createdWorktree.path,
+      branch: 'refs/heads/runtime-list-race'
+    })
+  })
+
+  it('创建后列表路径被 Git 规范化但分支和名称匹配时返回 runtime 本地 worktree', async () => {
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        workspaceDir: 'C:\\Users\\Administrator\\orca\\workspaces\\repo'
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const createdWorktree = {
+      path: 'D:/Users/Administrator/orca/workspaces/repo/runtime-path-normalized',
+      head: 'created-head',
+      branch: 'refs/heads/runtime-path-normalized',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(
+      'C:\\Users\\Administrator\\orca\\workspaces\\repo\\runtime-path-normalized'
+    )
+    ensurePathWithinWorkspaceMock.mockReturnValue(
+      'C:\\Users\\Administrator\\orca\\workspaces\\repo\\runtime-path-normalized'
+    )
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: 'D:/Users/Administrator/AppData/Local/Temp/repo',
+        head: 'main-head',
+        branch: 'refs/heads/main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      createdWorktree
+    ])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-path-normalized'
+    })
+
+    expect(result.worktree).toMatchObject({
+      path: createdWorktree.path,
+      branch: 'refs/heads/runtime-path-normalized'
+    })
   })
 
   it('returns runtime local base update suggestions from addWorktree', async () => {
@@ -4831,6 +4910,45 @@ describe('OrcaRuntimeService', () => {
 
     expect(repo.badgeColor).toBe(DEFAULT_REPO_BADGE_COLOR)
     expect(added).toEqual([expect.objectContaining({ badgeColor: DEFAULT_REPO_BADGE_COLOR })])
+  })
+
+  it('initializes non-git runtime directories as ignored git repos during addRepo', async () => {
+    const added: Record<string, unknown>[] = []
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [...added] as never,
+      addRepo: (repo: Record<string, unknown>) => {
+        added.push(repo)
+      },
+      getRepo: (id: string) => added.find((repo) => repo.id === id) as never
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-runtime-add-non-git-'))
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockResolvedValue({
+      stdout: '',
+      stderr: ''
+    })
+    try {
+      await writeFile(join(tempRoot, 'notes.txt'), 'do not track me\n')
+
+      const repo = await runtime.addRepo(tempRoot, 'git')
+
+      await expect(readFile(join(tempRoot, '.gitignore'), 'utf-8')).resolves.toBe(
+        '*\n!.gitignore\n'
+      )
+      expect(gitSpy).toHaveBeenNthCalledWith(1, ['init'], { cwd: tempRoot })
+      expect(gitSpy).toHaveBeenNthCalledWith(2, ['add', '-f', '.gitignore'], {
+        cwd: tempRoot
+      })
+      expect(gitSpy).toHaveBeenNthCalledWith(3, ['commit', '-m', 'Initial commit'], {
+        cwd: tempRoot
+      })
+      expect(repo).toMatchObject({ path: tempRoot, kind: 'git' })
+      expect(added).toEqual([expect.objectContaining({ path: tempRoot, kind: 'git' })])
+    } finally {
+      gitSpy.mockRestore()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
   })
 
   it('prepares the runtime worktree root when adding a repo', async () => {

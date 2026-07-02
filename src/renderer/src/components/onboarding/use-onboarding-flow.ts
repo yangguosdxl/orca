@@ -750,24 +750,6 @@ export function useOnboardingFlow(
     ]
   )
 
-  const showNestedRepoReview = useCallback(
-    (
-      scan: NestedRepoScanResult,
-      attemptId: string,
-      runtimeKind: NestedRepoTelemetryRuntimeKind,
-      inProgress = false,
-      scanId: string | null = null
-    ) => {
-      setNestedScan(scan)
-      setNestedSelectedPaths(new Set(scan.repos.map((repo) => repo.path)))
-      setNestedAttemptId(attemptId)
-      setNestedRuntimeKind(runtimeKind)
-      setNestedScanInProgress(inProgress)
-      setNestedImportScanId(scanId)
-    },
-    []
-  )
-
   const onboardingNestedRepoRuntimeKind: NestedRepoTelemetryRuntimeKind =
     settings?.activeRuntimeEnvironmentId?.trim() ? 'runtime' : 'local'
 
@@ -800,10 +782,6 @@ export function useOnboardingFlow(
                 scan
               })
             )
-            if (scan?.selectedPathKind === 'non_git_folder' && scan.repos.length > 0) {
-              showNestedRepoReview(scan, attemptId, 'runtime')
-              return
-            }
           }
           setBusyLabel(kind === 'git' ? 'Opening project…' : 'Opening folder…')
           const repo = await addRepoPath(path, kind)
@@ -837,19 +815,7 @@ export function useOnboardingFlow(
           const scanId = createNestedRepoScanId()
           nestedScanIdRef.current = scanId
           setNestedScanInProgress(true)
-          const scan = await scanNestedRepos(path, undefined, {
-            scanId,
-            onProgress: (progressScan) => {
-              if (
-                nestedScanIdRef.current !== scanId ||
-                progressScan.selectedPathKind !== 'non_git_folder' ||
-                progressScan.repos.length === 0
-              ) {
-                return
-              }
-              showNestedRepoReview(progressScan, attemptId, 'local', true, scanId)
-            }
-          })
+          const scan = await scanNestedRepos(path, undefined, { scanId })
           if (nestedScanIdRef.current !== scanId) {
             return
           }
@@ -864,10 +830,6 @@ export function useOnboardingFlow(
               scan
             })
           )
-          if (scan?.selectedPathKind === 'non_git_folder' && scan.repos.length > 0) {
-            showNestedRepoReview(scan, attemptId, 'local', false, scanId)
-            return
-          }
           result = await window.api.repos.add({ path, kind: 'folder' })
         }
         if ('error' in result) {
@@ -889,7 +851,6 @@ export function useOnboardingFlow(
       completeRepo,
       scanNestedRepos,
       serverPath,
-      showNestedRepoReview,
       settings?.activeRuntimeEnvironmentId
     ]
   )

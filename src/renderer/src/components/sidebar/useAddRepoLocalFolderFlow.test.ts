@@ -114,8 +114,40 @@ describe('useAddRepoLocalFolderFlow', () => {
     expect(onGitRepoReady).toHaveBeenCalledWith('alpha', 'local_folder_picker')
   })
 
-  it('skips nested-review folders in a multi-folder add and continues with git folders', async () => {
-    pickFolders.mockResolvedValue(['/projects/monorepo', '/projects/later'])
+  it('adds every selected non-git folder when no nested repositories need review', async () => {
+    pickFolders.mockResolvedValue(['/projects/docs', '/projects/assets'])
+    scanNestedRepos.mockImplementation(async (path: string) =>
+      makeScan(path, { selectedPathKind: 'non_git_folder', repos: [] })
+    )
+    const { useAddRepoLocalFolderFlow } = await import('./useAddRepoLocalFolderFlow')
+
+    const { handleBrowse } = useAddRepoLocalFolderFlow({
+      isOpen: true,
+      droppedLocalPath: '',
+      activeRuntimeEnvironmentId: null,
+      addRepoPath,
+      closeModal,
+      fetchWorktrees,
+      scanNestedRepos,
+      setActiveNestedScanId,
+      setNestedScanInProgress,
+      showNestedRepoReview,
+      onGitRepoReady,
+      setIsAdding,
+      setAddProjectBusyLabel
+    })
+
+    await handleBrowse()
+
+    expect(showNestedRepoReview).not.toHaveBeenCalled()
+    expect(addRepoPath).toHaveBeenCalledTimes(2)
+    expect(addRepoPath).toHaveBeenNthCalledWith(1, '/projects/docs')
+    expect(addRepoPath).toHaveBeenNthCalledWith(2, '/projects/assets')
+    expect(onGitRepoReady).toHaveBeenCalledWith('docs', 'local_folder_picker')
+  })
+
+  it('adds a selected non-git root folder when nested repositories are present', async () => {
+    pickFolders.mockResolvedValue(['/projects/monorepo'])
     scanNestedRepos.mockImplementationOnce(async (_path, _connectionId, controls) => {
       const scan = makeScan('/projects/monorepo', {
         selectedPathKind: 'non_git_folder',
@@ -146,12 +178,49 @@ describe('useAddRepoLocalFolderFlow', () => {
 
     expect(showNestedRepoReview).not.toHaveBeenCalled()
     expect(addRepoPath).toHaveBeenCalledTimes(1)
-    expect(addRepoPath).toHaveBeenCalledWith('/projects/later')
-    expect(scanNestedRepos).toHaveBeenCalledTimes(2)
-    expect(onGitRepoReady).toHaveBeenCalledWith('later', 'local_folder_picker')
+    expect(addRepoPath).toHaveBeenCalledWith('/projects/monorepo')
+    expect(onGitRepoReady).toHaveBeenCalledWith('monorepo', 'local_folder_picker')
   })
 
-  it('still completes handoff when a later selected folder is skipped', async () => {
+  it('adds nested-review folders in a multi-folder add and continues with git folders', async () => {
+    pickFolders.mockResolvedValue(['/projects/monorepo', '/projects/later'])
+    scanNestedRepos.mockImplementationOnce(async (_path, _connectionId, controls) => {
+      const scan = makeScan('/projects/monorepo', {
+        selectedPathKind: 'non_git_folder',
+        repos: [{ path: '/projects/monorepo/app', displayName: 'app', depth: 1 }]
+      })
+      controls?.onProgress?.(scan)
+      return scan
+    })
+    const { useAddRepoLocalFolderFlow } = await import('./useAddRepoLocalFolderFlow')
+
+    const { handleBrowse } = useAddRepoLocalFolderFlow({
+      isOpen: true,
+      droppedLocalPath: '',
+      activeRuntimeEnvironmentId: null,
+      addRepoPath,
+      closeModal,
+      fetchWorktrees,
+      scanNestedRepos,
+      setActiveNestedScanId,
+      setNestedScanInProgress,
+      showNestedRepoReview,
+      onGitRepoReady,
+      setIsAdding,
+      setAddProjectBusyLabel
+    })
+
+    await handleBrowse()
+
+    expect(showNestedRepoReview).not.toHaveBeenCalled()
+    expect(addRepoPath).toHaveBeenCalledTimes(2)
+    expect(addRepoPath).toHaveBeenNthCalledWith(1, '/projects/monorepo')
+    expect(addRepoPath).toHaveBeenNthCalledWith(2, '/projects/later')
+    expect(scanNestedRepos).toHaveBeenCalledTimes(2)
+    expect(onGitRepoReady).toHaveBeenCalledWith('monorepo', 'local_folder_picker')
+  })
+
+  it('still completes handoff when a later selected folder contains nested repositories', async () => {
     pickFolders.mockResolvedValue(['/projects/git', '/projects/monorepo'])
     scanNestedRepos.mockResolvedValueOnce(makeScan('/projects/git')).mockResolvedValueOnce(
       makeScan('/projects/monorepo', {
@@ -180,8 +249,9 @@ describe('useAddRepoLocalFolderFlow', () => {
     await handleBrowse()
 
     expect(showNestedRepoReview).not.toHaveBeenCalled()
-    expect(addRepoPath).toHaveBeenCalledTimes(1)
-    expect(addRepoPath).toHaveBeenCalledWith('/projects/git')
+    expect(addRepoPath).toHaveBeenCalledTimes(2)
+    expect(addRepoPath).toHaveBeenNthCalledWith(1, '/projects/git')
+    expect(addRepoPath).toHaveBeenNthCalledWith(2, '/projects/monorepo')
     expect(onGitRepoReady).toHaveBeenCalledWith('git', 'local_folder_picker')
   })
 })
