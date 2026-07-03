@@ -3600,8 +3600,8 @@ export function connectPanePty(
           maxInteractiveRedrawChars: FOREGROUND_INTERACTIVE_REDRAW_CHARS
         })
       ) {
-        // Why: CJK/Korean from Microsoft Pinyin commits and native ConPTY agent
-        // output can leave stale wide-glyph cells in the local Windows DOM renderer.
+        // 原因：微软拼音提交和 TUI Agent 原地重绘 CJK/Korean 时，Windows DOM
+        // 渲染器可能残留宽字形单元；xterm 缓冲区正确，强制视口刷新即可修复 #5921。
         return { refresh: true, inPlaceRewrite: false, recoverWebglAtlasAfterParse: false }
       }
       return {

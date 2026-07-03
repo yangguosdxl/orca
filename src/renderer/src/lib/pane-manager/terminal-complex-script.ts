@@ -283,8 +283,8 @@ export function terminalOutputContainsEastAsianRendererRisk(data: string): boole
 }
 
 export type WindowsEastAsianRefreshState = {
-  // Why: recent IME commits are a Windows-client renderer issue, while agent
-  // output repainting is only forced for native ConPTY to avoid remote costs.
+  // 原因：宽字形叠印只出现在本地 Windows DOM 渲染器；最近输入按 Windows
+  // 客户端判断，Agent 输出只限 native ConPTY，避免 SSH/serve 远程层逐块刷新。
   isWindowsClient: boolean
   isNativeWindowsConpty: boolean
   hadRecentInput: boolean
@@ -292,8 +292,12 @@ export type WindowsEastAsianRefreshState = {
 }
 
 /**
- * Whether a Windows foreground chunk needs a viewport refresh because it carries
- * East Asian double-width glyphs the local DOM renderer can paint over stale cells.
+ * 判断 Windows 前景输出块是否需要强制刷新视口，因为东亚双宽字形可能被
+ * 本地 DOM 渲染器叠印到上一帧残留单元上。
+ *
+ * 原因：TUI Agent 会原地重绘块；xterm 解析的宽字形单元正确，但本地
+ * Windows DOM 渲染器可能留下上一帧宽字形。最近输入的 CJK 已会刷新，
+ * Agent 输出没有最近输入，所以 native-ConPTY CJK/Korean 块也要刷新。
  */
 export function windowsEastAsianOutputPrefersRenderRefresh(
   data: string,

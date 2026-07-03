@@ -328,12 +328,8 @@ describe('terminalRewriteOutputRenderRefreshDecision', () => {
 })
 
 describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
-  // Why: Claude Code (issue #5656/#5653) echoes prompt keystrokes by redrawing
-  // the input line in place with CR + CHA + reprint + erase-line, split across
-  // ConPTY chunks, and WITHOUT DEC 2026 synchronized output. Replay that exact
-  // pattern through the rewrite decision and assert that on native Windows it
-  // requests a follow-up next-frame repaint, which is what stops the phantom /
-  // overwritten characters without the user resizing the window.
+  // 原因：Claude Code 会用 CR + CHA + 重印 + erase-line 原地回显输入行；
+  // 在 native Windows 上需要下一帧补刷，避免用户只能靠调整窗口修复残影。
   function rewriteIsInPlace(chunks: string[]): boolean[] {
     const state: TerminalRewriteOutputRenderRefreshState = {
       previousChunkEndsWithCarriageReturn: false,
@@ -348,7 +344,7 @@ describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
   }
 
   it('schedules a follow-up repaint for the split Claude prompt redraw on native Windows', () => {
-    // "> " prompt, then user types z, z, z, x — each keystroke redraws in place.
+    // "> " 提示符后用户输入 z、z、z、x；每次按键都会原地重绘。
     const claudeRedrawChunks = [
       '\r\x1b[3G',
       'z\x1b[K',
@@ -360,7 +356,7 @@ describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
       'zzzx\x1b[K'
     ]
     const inPlace = rewriteIsInPlace(claudeRedrawChunks)
-    // Every redraw chunk is an in-place rewrite (CR continuation or erase-line).
+    // 每个重绘块都是原地改写：要么延续 CR，要么包含 erase-line。
     expect(inPlace.every(Boolean)).toBe(true)
     for (const isInPlaceRewrite of inPlace) {
       expect(
@@ -400,6 +396,86 @@ describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
         isNativeWindowsConpty: true,
         isForeground: false,
         isInPlaceRewrite: true
+      })
+    ).toBe(false)
+  })
+})
+
+describe('windowsEastAsianOutputPrefersRenderRefresh', () => {
+  const NATIVE_CONPTY = {
+    isWindowsClient: true,
+    isNativeWindowsConpty: true,
+    hadRecentInput: false,
+    maxInteractiveRedrawChars: 128 * 1024
+  }
+
+  // 原因：回归覆盖 #5921；Codex/Antigravity 原地重绘 CJK 块时，本地 Windows
+  // DOM 渲染器可能叠印上一帧宽字形，所以无最近输入的 Agent 输出也要刷新。
+  it('refreshes native-ConPTY agent CJK output without recent input', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('如果还在主 checkout', NATIVE_CONPTY)).toBe(
+      true
+    )
+  })
+
+  it('refreshes native-ConPTY Korean output without recent input', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('한국어 출력', NATIVE_CONPTY)).toBe(true)
+  })
+
+  it('refreshes CJK output split from its cursor-position CSI in a prior chunk', () => {
+    // 原因：主进程批处理窗口可能把 CUP 光标移动和字形载荷切到不同块；
+    // 只有 CJK 的块没有控制字节，也仍然需要重绘。
+    expect(windowsEastAsianOutputPrefersRenderRefresh('设计专用 worktree', NATIVE_CONPTY)).toBe(
+      true
+    )
+  })
+
+  it('still refreshes recent-input CJK on a non-ConPTY Windows client (Pinyin commit)', () => {
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('请创建', {
+        isWindowsClient: true,
+        isNativeWindowsConpty: false,
+        hadRecentInput: true,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(true)
+  })
+
+  it('does not refresh East Asian output on non-Windows panes', () => {
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('如果还在主', {
+        isWindowsClient: false,
+        isNativeWindowsConpty: false,
+        hadRecentInput: false,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(false)
+  })
+
+  it('does not refresh East Asian output on a remote/serve Windows client without recent input', () => {
+    // 原因：SSH/serve pane 是 win32 client 但不是 native ConPTY，渲染层不同；
+    // 无最近输入时不能为每个 CJK 块付出刷新成本。
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh('如果还在主', {
+        isWindowsClient: true,
+        isNativeWindowsConpty: false,
+        hadRecentInput: false,
+        maxInteractiveRedrawChars: 128 * 1024
+      })
+    ).toBe(false)
+  })
+
+  it('does not refresh plain ASCII agent output', () => {
+    expect(windowsEastAsianOutputPrefersRenderRefresh('checkout worktree', NATIVE_CONPTY)).toBe(
+      false
+    )
+  })
+
+  it('skips bulk chunks larger than the interactive redraw bound', () => {
+    const bulk = '如'.repeat(200)
+    expect(
+      windowsEastAsianOutputPrefersRenderRefresh(bulk, {
+        ...NATIVE_CONPTY,
+        maxInteractiveRedrawChars: 100
       })
     ).toBe(false)
   })

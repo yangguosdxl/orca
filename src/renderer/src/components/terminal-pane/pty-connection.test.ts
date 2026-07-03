@@ -8774,7 +8774,9 @@ describe('connectPanePty', () => {
     }
   })
 
-  it('forces the native Windows CJK repaint path for foreground agent output without recent terminal input', async () => {
+  // 原因：#5921 中 Codex/Antigravity 会原地重绘 CJK 块，本地 Windows DOM
+  // 渲染器可能把上一帧宽字形叠印出来；Agent 输出没有最近输入，也必须刷新。
+  it('forces the Windows CJK repaint path for native-ConPTY agent output without recent input', async () => {
     const restoreNavigator = temporarilySetNavigatorUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     )
