@@ -86,7 +86,6 @@ import {
   type SshTarget
 } from '../shared/ssh-types'
 import { isFolderRepo } from '../shared/repo-kind'
-import { getGitUsername } from './git/repo'
 import { getRepoExecutionHostId, parseExecutionHostId } from '../shared/execution-host'
 import {
   getDefaultPersistedState,
@@ -112,6 +111,7 @@ import {
   type ExecutionHostId
 } from '../shared/execution-host'
 import { toRelaySshPtyId } from './providers/ssh-pty-id'
+import { isWslUncPath } from '../shared/wsl-paths'
 import {
   isTerminalLeafId,
   makePaneKey,
@@ -125,9 +125,14 @@ import {
 import { agentHookServer } from './agent-hooks/server'
 import { pruneLocalTerminalScrollbackBuffers } from '../shared/workspace-session-terminal-buffers'
 import { pruneWorkspaceSessionBrowserHistory } from '../shared/workspace-session-browser-history'
-import { getRepoIdFromWorktreeId, getWorktreePathBasenameFromId } from '../shared/worktree-id'
+import {
+  FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
+  getRepoIdFromWorktreeId,
+  getWorktreePathBasenameFromId
+} from '../shared/worktree-id'
 import {
   isPathInsideOrEqual,
+  isWindowsAbsolutePathLike,
   normalizeRuntimePathForComparison
 } from '../shared/cross-platform-path'
 import { normalizeTerminalQuickCommands } from '../shared/terminal-quick-commands'
@@ -323,6 +328,110 @@ function getDataFile(): string {
     _dataFile = join(userDataDir, 'orca-data.json')
   }
   return _dataFile
+}
+
+// Why a sidecar: githubCache is a refetchable 5-min-TTL poll cache whose
+// fetchedAt stamps change on every refresh — keeping it inside orca-data.json
+// made every poll cycle rewrite the whole multi-MB durable state (defeating
+// the content-hash guard by design). It lives in memory during the session
+// and is snapshotted here best-effort at quit so PR/issue badges still paint
+// instantly on the next launch. Loss of this file costs nothing.
+function getGithubCacheFile(): string {
+  return join(dirname(getDataFile()), 'orca-github-cache.json')
+}
+
+// Why: worktrees deleted outside Orca (git CLI worktree remove, rm -rf,
+// agent scripts) purge renderer session state but nothing removed their
+// worktreeMeta, so the map grew monotonically (63% dead entries measured on
+// a heavy install). GC is deliberately narrow: local-host entries only
+// (SSH/runtime metas embed remote paths a local existsSync would falsely
+// condemn; WSL UNC paths are skipped the same way), and only after a
+// 30-day idle grace so pushTarget cleanup for recently-vanished worktrees
+// and quick recreations keep their metadata.
+const WORKTREE_META_GC_GRACE_MS = 30 * 24 * 60 * 60 * 1000
+
+function gcStaleWorktreeMeta(state: PersistedState): number {
+  // Why: a hand-corrupted file with `"worktreeMeta": null` overrides the
+  // defaults merge; normalize instead of throwing outside the parse guard.
+  state.worktreeMeta ??= {}
+  const repoById = new Map(state.repos.map((repo) => [repo.id, repo]))
+  const projectIds = new Set((state.projects ?? []).map((project) => project.id))
+  const now = Date.now()
+  let removed = 0
+  for (const key of Object.keys(state.worktreeMeta)) {
+    // Why: folder-project workspace instances are keyed
+    // `repoId::path::workspace:<uuid>` and their meta IS the workspace
+    // record — never a filesystem-checkout row. Skip them entirely.
+    if (key.includes(FOLDER_WORKSPACE_INSTANCE_SEPARATOR)) {
+      continue
+    }
+    const separator = key.indexOf('::')
+    if (separator === -1) {
+      continue
+    }
+    const ownerId = key.slice(0, separator)
+    const worktreePath = key.slice(separator + 2)
+    const meta = state.worktreeMeta[key]
+    const repo = repoById.get(ownerId)
+    if (repo) {
+      if (repo.connectionId || getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
+        continue
+      }
+    } else if (projectIds.has(ownerId)) {
+      // Project-owned metas keep project/host semantics on the entry itself;
+      // stay conservative and leave them to their own lifecycle.
+      continue
+    }
+    // Unowned entries (repo removed before removeProject pruned metas) fall
+    // through to the same missing-path + idle-grace gate.
+    if (meta?.hostId && meta.hostId !== LOCAL_EXECUTION_HOST_ID) {
+      continue
+    }
+    if (!isAbsolute(worktreePath) || isWslUncPath(worktreePath)) {
+      continue
+    }
+    // Why: WSL linked worktrees on Windows carry Linux-style paths from git
+    // porcelain; a Windows existsSync cannot probe those and would falsely
+    // condemn live worktrees.
+    if (process.platform === 'win32' && !isWindowsAbsolutePathLike(worktreePath)) {
+      continue
+    }
+    // Why keep timestamp-less entries: without lastActivityAt/createdAt we
+    // cannot prove the 30-day idle grace elapsed; the measured dead entries
+    // all carry timestamps, so this costs almost nothing in reclaimed bytes.
+    // Grace runs before the stat so healthy profiles skip the existsSync
+    // fan-out (and its slow-NFS tail) for active entries entirely.
+    const newestTouch = Math.max(meta?.lastActivityAt ?? 0, meta?.createdAt ?? 0)
+    if (newestTouch === 0 || now - newestTouch < WORKTREE_META_GC_GRACE_MS) {
+      continue
+    }
+    if (existsSync(worktreePath)) {
+      continue
+    }
+    delete state.worktreeMeta[key]
+    delete state.worktreeLineageById[key]
+    delete state.workspaceLineageByChildKey[worktreeWorkspaceKey(key)]
+    removed++
+  }
+  return removed
+}
+
+function readGithubCacheSnapshot(): PersistedState['githubCache'] | null {
+  try {
+    const parsed = JSON.parse(readFileSync(getGithubCacheFile(), 'utf-8')) as unknown
+    const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+    if (
+      isPlainRecord(parsed) &&
+      isPlainRecord((parsed as { pr?: unknown }).pr) &&
+      isPlainRecord((parsed as { issue?: unknown }).issue)
+    ) {
+      return parsed as PersistedState['githubCache']
+    }
+  } catch {
+    // Missing or corrupt snapshot: start with an empty cache and refetch.
+  }
+  return null
 }
 
 /**
@@ -2242,6 +2351,7 @@ function createMinimalPersistedTerminalTab(args: {
   tabId: string
   ptyId: string
   existingTabCount: number
+  startupCwd?: string
 }): TerminalTab {
   const ordinal = args.existingTabCount + 1
   const defaultTitle = `Terminal ${ordinal}`
@@ -2255,6 +2365,7 @@ function createMinimalPersistedTerminalTab(args: {
     color: null,
     sortOrder: args.existingTabCount,
     createdAt: Date.now(),
+    ...(args.startupCwd ? { startupCwd: args.startupCwd } : {}),
     pendingActivationSpawn: true
   }
 }
@@ -2451,6 +2562,7 @@ export class Store {
   // on-disk bytes differ even for identical state.
   private lastWrittenStateHash: string | null = null
   private firstPendingSaveAt: number | null = null
+  private githubCacheDirty = false
   private gitUsernameCache = new Map<string, string>()
   private loadNeedsSave = false
   private settingsChangeListeners = new Set<
@@ -3293,7 +3405,29 @@ export class Store {
     }
     result = folderScopeConnectionMigration.state
 
+    if (gcStaleWorktreeMeta(result) > 0) {
+      this.loadNeedsSave = true
+    }
+
     const migrated = this.migrateTelemetry(result, fileExistedOnLoad)
+
+    // githubCache lives in a sidecar file now (see getGithubCacheFile). A
+    // legacy in-file cache (pre-sidecar build, or a downgrade round-trip) is
+    // kept as this session's seed and stripped from the durable file by the
+    // save scheduled below; otherwise seed from the sidecar snapshot.
+    const legacyCache = migrated.githubCache
+    const hasLegacyCache =
+      Object.keys(legacyCache?.pr ?? {}).length > 0 ||
+      Object.keys(legacyCache?.issue ?? {}).length > 0
+    if (hasLegacyCache) {
+      this.loadNeedsSave = true
+      // Why: mark dirty so the first flush writes the sidecar even if no
+      // poll refresh happens this session — the seed survives the migration.
+      this.githubCacheDirty = true
+    } else {
+      migrated.githubCache = readGithubCacheSnapshot() ?? migrated.githubCache
+    }
+
     logPersistenceStartupMilestone('persistence-load-done', {
       repos: migrated.repos.length,
       workspaceSessionBytes: Buffer.byteLength(JSON.stringify(migrated.workspaceSession))
@@ -3403,8 +3537,16 @@ export class Store {
     }
   }
 
+  // Why githubCache is omitted: it is memory-only during the session (see
+  // getGithubCacheFile) — excluding it from both the payload and the hash
+  // keeps cache refreshes from ever touching the durable file.
+  private getDurableState(): Omit<PersistedState, 'githubCache'> {
+    const { githubCache: _memoryOnly, ...durable } = this.state
+    return durable
+  }
+
   private computeStateHash(): string {
-    return createHash('sha1').update(JSON.stringify(this.state)).digest('hex')
+    return createHash('sha1').update(JSON.stringify(this.getDurableState())).digest('hex')
   }
 
   // Why: builds the on-disk payload synchronously so the hash and the
@@ -3414,7 +3556,7 @@ export class Store {
     // Why: secrets must be encrypted on disk. Clone state so the in-memory
     // this.state stays plaintext for the rest of the app.
     const stateToSave = {
-      ...this.state,
+      ...this.getDurableState(),
       settings: {
         ...this.state.settings,
         opencodeSessionCookie: encrypt(this.state.settings.opencodeSessionCookie),
@@ -3662,9 +3804,8 @@ export class Store {
 
   /**
    * O(1) read of the persisted repo count. Use this when you only need the
-   * count (e.g. cohort-classifier) — `getRepos()` hydrates each repo and
-   * may run a synchronous git subprocess via `getGitUsername()`, which is
-   * wasteful when the caller only reads `.length`.
+   * count (e.g. cohort-classifier) — `getRepos()` hydrates each repo, which
+   * is wasteful when the caller only reads `.length`.
    */
   getRepoCount(): number {
     return this.state.repos.length
@@ -3673,6 +3814,32 @@ export class Store {
   getRepo(id: string): Repo | undefined {
     const repo = this.state.repos.find((r) => r.id === id)
     return repo ? this.hydrateRepo(repo) : undefined
+  }
+
+  /**
+   * Record a background-resolved git username (repo-git-username-enrichment).
+   * Kept out of updateRepo's whitelist so the renderer-facing update surface
+   * cannot write it directly. Returns true when the hydrated value changed.
+   */
+  setResolvedRepoGitUsername(id: string, username: string): boolean {
+    const repo = this.state.repos.find((r) => r.id === id)
+    if (!repo) {
+      return false
+    }
+    const previous = this.gitUsernameCache.get(repo.path) ?? repo.gitUsername ?? ''
+    this.gitUsernameCache.set(repo.path, username)
+    if (previous === username) {
+      return false
+    }
+    if (username) {
+      // Why: persisting the resolved value lets the next launch hydrate repos
+      // with the right branch prefix before enrichment has re-run.
+      repo.gitUsername = username
+    } else {
+      delete repo.gitUsername
+    }
+    this.scheduleSave()
+    return true
   }
 
   getProjectGroups(): ProjectGroup[] {
@@ -4208,14 +4375,15 @@ export class Store {
     const sourceControlAi = normalizeRepoSourceControlAiOverrides(rawSourceControlAi)
     const projectHostSetupMethod = sanitizeRepoProjectHostSetupMethod(rawProjectHostSetupMethod)
     const forkSyncMode = sanitizeForkSyncMode(rawForkSyncMode)
+    // Why: username resolution spawns git/gh subprocesses, so it must never
+    // run inside hydration — the first getRepos() of a launch executes on the
+    // Electron main thread and a stuck probe froze startup for minutes on
+    // Windows (issue #7225). Hydration only reads the enrichment cache or the
+    // value persisted by a previous launch; repo-git-username-enrichment.ts
+    // refreshes both in the background.
     const gitUsername = isFolderRepo(repo)
       ? ''
-      : (this.gitUsernameCache.get(repo.path) ??
-        (() => {
-          const username = getGitUsername(repo.path)
-          this.gitUsernameCache.set(repo.path, username)
-          return username
-        })())
+      : (this.gitUsernameCache.get(repo.path) ?? repo.gitUsername ?? '')
 
     return {
       ...repoWithoutIcon,
@@ -5241,8 +5409,12 @@ export class Store {
   }
 
   setGitHubCache(cache: PersistedState['githubCache']): void {
+    // Why no scheduleSave: the cache is memory-only during the session and
+    // snapshotted to its sidecar file at flush (quit/reload) time. Every poll
+    // refresh restamps fetchedAt, so persisting here rewrote the whole
+    // durable state file once per poll cycle for refetchable data.
     this.state.githubCache = cache
-    this.scheduleSave()
+    this.githubCacheDirty = true
   }
 
   // ── Workspace Session ─────────────────────────────────────────────
@@ -5604,6 +5776,7 @@ export class Store {
     tabId: string
     leafId: string
     ptyId: string
+    startupCwd?: string
   }): void {
     const session = this.state.workspaceSession
     if (!session) {
@@ -5946,6 +6119,29 @@ export class Store {
       this.flushOrThrow()
     } catch (err) {
       console.error('[persistence] Failed to flush state:', err)
+    }
+    this.writeGithubCacheSnapshotSync()
+  }
+
+  // Why best-effort: the sidecar is a refetchable cache — a failed write only
+  // costs a cold badge paint on next launch, never data.
+  private writeGithubCacheSnapshotSync(): void {
+    if (!this.githubCacheDirty) {
+      return
+    }
+    const cacheFile = getGithubCacheFile()
+    const tmpFile = `${cacheFile}.${process.pid}.tmp`
+    try {
+      writeFileSync(tmpFile, JSON.stringify(this.state.githubCache), 'utf-8')
+      renameSync(tmpFile, cacheFile)
+      this.githubCacheDirty = false
+    } catch (err) {
+      try {
+        unlinkSync(tmpFile)
+      } catch {
+        // Best-effort cleanup.
+      }
+      console.warn('[persistence] Failed to write github cache snapshot:', err)
     }
   }
 }
