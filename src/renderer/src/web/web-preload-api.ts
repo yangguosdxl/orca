@@ -1127,6 +1127,12 @@ function createReposApi(): NonNullable<Partial<PreloadApi>['repos']> {
       await callRuntimeResult('repo.rm', { repo: repoId })
       invalidateRuntimeWorktreeCaches()
     },
+    // Why: host-scoped forget targets a disconnected/removed SSH host owned by
+    // the desktop app. A paired web client talks to a single Orca runtime and
+    // has no ghost-host state to reconcile.
+    removeForHost: () => {
+      throw new Error('Forgetting a host is unavailable in paired web clients.')
+    },
     reorder: async ({ orderedIds }) => callRuntimeResult('repo.reorder', { orderedIds }),
     update: async ({ repoId, updates }) =>
       (await callRuntimeResult<{ repo: Repo }>('repo.update', { repo: repoId, updates })).repo,
@@ -1289,6 +1295,11 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         worktree: toRuntimeWorktreeSelector(worktreeId),
         force
       })
+    },
+    // Why: forget-locally clears a workspace pinned to a disconnected/removed
+    // SSH host on the desktop app; a paired web client has no such ghost state.
+    forgetLocal: () => {
+      throw new Error('Forgetting a workspace is unavailable in paired web clients.')
     },
     forceDeletePreservedBranch: ({ worktreeId, branchName, expectedHead }) =>
       callRuntimeResult<ForceDeleteWorktreeBranchResult>('worktree.forceDeleteBranch', {
@@ -1805,6 +1816,7 @@ function createGitHubApi(): WebGitHubApi {
         branch: candidate.branch,
         linkedPRNumber: candidate.linkedPRNumber ?? null,
         fallbackPRNumber: candidate.fallbackPRNumber ?? null,
+        currentHeadOid: candidate.currentHeadOid ?? null,
         ...(acceptMergedFallbackPR ? { acceptMergedFallbackPR: true } : {})
       })
       return pr
@@ -2222,6 +2234,9 @@ function createWebUiApi(): NonNullable<Partial<PreloadApi>['ui']> {
     onCloseTerminal: () => noopUnsubscribe,
     onSleepWorktree: () => noopUnsubscribe,
     onTerminalZoom: () => noopUnsubscribe,
+    // Why: a paired web client has no OS sleep signal; occlusion-driven
+    // visibilitychange already covers its wake recovery.
+    onSystemResumed: () => noopUnsubscribe,
     onFileDrop: () => noopUnsubscribe,
     syncTrafficLights: () => {},
     setMarkdownEditorFocused: () => {},
@@ -2604,6 +2619,7 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
 function createSshApi(): NonNullable<Partial<PreloadApi>['ssh']> {
   return {
     listTargets: () => Promise.resolve([]),
+    listRemovedTargetLabels: () => Promise.resolve({}),
     addTarget: () =>
       Promise.reject(new Error('SSH target management is unavailable in the web client.')),
     updateTarget: () =>

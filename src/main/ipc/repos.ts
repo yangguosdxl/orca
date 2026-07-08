@@ -680,7 +680,7 @@ function emitCloneProgressFromText(mainWindow: BrowserWindow, text: string): voi
     if (match && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('repos:clone-progress', {
         phase: match[1].trim(),
-        percent: parseInt(match[2], 10)
+        percent: Number.parseInt(match[2], 10)
       })
     }
   }
@@ -1141,6 +1141,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:list')
   ipcMain.removeHandler('repos:add')
   ipcMain.removeHandler('repos:remove')
+  ipcMain.removeHandler('repos:removeForHost')
   ipcMain.removeHandler('repos:reorder')
   ipcMain.removeHandler('repos:update')
   ipcMain.removeHandler('projects:list')
@@ -1948,6 +1949,22 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     invalidateAuthorizedRootsCache()
     notifyReposChanged(mainWindow)
   })
+
+  // Why: forget a project on a single execution host without disturbing the
+  // same repo id on other hosts (local or a re-added SSH target). Used by the
+  // SSH-workspace forget flow when a host is removed/disconnected.
+  ipcMain.handle(
+    'repos:removeForHost',
+    async (_event, args: { repoId: string; hostId: string }) => {
+      const hostId = normalizeExecutionHostId(args.hostId)
+      if (!hostId) {
+        throw new Error(`Invalid host ID: ${args.hostId}`)
+      }
+      store.removeProjectForHost(args.repoId, hostId)
+      invalidateAuthorizedRootsCache()
+      notifyReposChanged(mainWindow)
+    }
+  )
 
   ipcMain.handle(
     'repos:update',
